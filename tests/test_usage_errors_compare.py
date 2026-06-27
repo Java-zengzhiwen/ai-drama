@@ -79,6 +79,60 @@ def test_runtime_timeout_error_code_is_stable(monkeypatch):
         raise AssertionError("timeout should fail")
 
 
+def test_failed_run_persists_resolved_env_model(monkeypatch, tmp_path):
+    package = load_skill_package(SKILL_ROOT)
+    monkeypatch.setenv("AI_DRAMA_MODEL", "env-model")
+    monkeypatch.setenv("AI_DRAMA_API_KEY", "secret")
+
+    def fake_openai(runtime_request, started):
+        assert runtime_request.to_dict()["runtime_config"]["model"] == "env-model"
+        raise RuntimeErrorBase("RUNTIME_PROVIDER_ERROR", "fake provider")
+
+    monkeypatch.setattr("ai_drama_runtime.runtime._run_openai_compatible", fake_openai)
+
+    with _service(tmp_path) as service:
+        result = service.run_acceptance(package, ACCEPTANCE_ROOT, "openai-compatible", "")
+        stored = service.store.get_run(result.run.run_id)
+        snapshot = service.store.read_text(stored.request_object_id)
+
+    assert stored.status == "RUNTIME_FAILED"
+    assert stored.model == "env-model"
+    assert '"model":"env-model"' in snapshot
+
+
+def test_runtime_failures_persist_complete_metadata(monkeypatch, tmp_path):
+    package = load_skill_package(SKILL_ROOT)
+    cases = [
+        ("CONFIG_MISSING_API_KEY", {}, "model"),
+        ("CONFIG_MISSING_MODEL", {"AI_DRAMA_API_KEY": "secret"}, ""),
+        ("RUNTIME_TIMEOUT", {"AI_DRAMA_API_KEY": "secret"}, "model"),
+        ("RUNTIME_PROVIDER_ERROR", {"AI_DRAMA_API_KEY": "secret"}, "model"),
+    ]
+
+    for code, env, model in cases:
+        monkeypatch.delenv("AI_DRAMA_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        if code in {"RUNTIME_TIMEOUT", "RUNTIME_PROVIDER_ERROR"}:
+            monkeypatch.setattr(
+                "ai_drama_runtime.runtime._run_openai_compatible",
+                lambda runtime_request, started, code=code: (_ for _ in ()).throw(
+                    RuntimeErrorBase(code, "openai-compatible runtime failed")
+                ),
+            )
+        with _service(tmp_path / code) as service:
+            result = service.run_acceptance(package, ACCEPTANCE_ROOT, "openai-compatible", model)
+            stored = service.store.get_run(result.run.run_id)
+        assert stored.status == "RUNTIME_FAILED"
+        assert stored.provider == "openai-compatible"
+        assert stored.model == model
+        assert stored.error_code == code
+        assert stored.error_message
+        assert stored.completed_at
+        assert stored.duration_ms >= 0
+
+
 def test_compare_includes_input_and_request_hash_diffs(tmp_path):
     service = _service(tmp_path)
     package = load_skill_package(SKILL_ROOT)

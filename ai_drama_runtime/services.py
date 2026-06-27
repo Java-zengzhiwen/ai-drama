@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import time
 from .store import now_iso
 
 from .acceptance import load_acceptance_bundle
@@ -52,6 +53,7 @@ class RuntimeService:
         self.close()
 
     def run_acceptance(self, skill, acceptance_root, runtime, model, mock_mode="success"):
+        started = time.time()
         bundle = load_acceptance_bundle(acceptance_root)
         artifact_id = bundle.manifest["id"]
         project_id = bundle.manifest.get("project_id") or artifact_id
@@ -70,7 +72,7 @@ class RuntimeService:
             skill_hash=skill.content_hash,
             runtime=runtime,
             provider=runtime,
-            model=model or "",
+            model=resolved_model or "",
             status="RUNNING",
             request_object_id=request_object_id,
             input_hash=runtime_request.sha256,
@@ -90,6 +92,9 @@ class RuntimeService:
             run = self.store.update_run(
                 run.run_id,
                 status="RUNTIME_FAILED",
+                provider=runtime,
+                model=resolved_model or "",
+                duration_ms=int((time.time() - started) * 1000),
                 error_code=exc.code,
                 error_message=exc.safe_message,
             )
@@ -148,8 +153,15 @@ class RuntimeService:
             parser_version=PARSER_VERSION,
         )
         validations = run_declared_validators(self.store, skill, revision, bundle.root, repo_root=self.repo_root)
-        if any(item.required and item.status not in {"PASS", "NOT_APPLICABLE"} for item in validations):
-            run = self.store.update_run(run.run_id, status="VALIDATION_FAILED")
+        blocking = [item for item in validations if item.required and item.status not in {"PASS", "NOT_APPLICABLE"}]
+        if blocking:
+            validator_ids = ", ".join(item.validator_id for item in blocking)
+            run = self.store.update_run(
+                run.run_id,
+                status="VALIDATION_FAILED",
+                error_code="VALIDATION_REQUIRED_FAILED",
+                error_message="required validators did not pass: %s" % validator_ids,
+            )
         return RunResult(run=run, revision=revision, validation_results=validations, adapter_request_json=request_json)
 
     def approve_revision(self, revision_id, reviewer, note=""):
