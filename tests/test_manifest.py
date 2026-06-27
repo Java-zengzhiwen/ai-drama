@@ -20,6 +20,7 @@ def _write_skill(root, **overrides):
     (root / "schemas" / "a.json").write_text("{}", encoding="utf-8")
     (root / "contracts" / "a.md").write_text("contract", encoding="utf-8")
     (root / "validators" / "ok.py").write_text("print('ok')\n", encoding="utf-8")
+    (root / "validators" / "common.py").write_text("HELPER = 'ok'\n", encoding="utf-8")
     data = {
         "package_format_version": "1",
         "skill_id": "skill-a",
@@ -33,6 +34,7 @@ def _write_skill(root, **overrides):
         "output_types": ["drama_script"],
         "schemas": ["schemas/a.json"],
         "contracts": ["contracts/a.md"],
+        "validator_support_files": ["validators/common.py"],
         "validators": [
             {
                 "validator_id": "ok",
@@ -117,6 +119,59 @@ def test_package_hash_uses_declared_active_files_only(tmp_path):
     assert load_skill_package(root).content_hash == first
     (root / "references" / "a.md").write_text("changed", encoding="utf-8")
     assert load_skill_package(root).content_hash != first
+
+
+def test_package_hash_includes_declared_validator_support_files(tmp_path):
+    root = tmp_path / "skill"
+    root.mkdir()
+    _write_skill(root)
+    first = load_skill_package(root).content_hash
+
+    (root / "validators" / "common.py").write_text("HELPER = 'changed'\n", encoding="utf-8")
+
+    assert load_skill_package(root).content_hash != first
+
+
+def test_package_hash_ignores_undeclared_validator_files(tmp_path):
+    root = tmp_path / "skill"
+    root.mkdir()
+    _write_skill(root)
+    first = load_skill_package(root).content_hash
+
+    (root / "validators" / "scratch.py").write_text("print('ignored')\n", encoding="utf-8")
+
+    assert load_skill_package(root).content_hash == first
+
+
+def test_manifest_rejects_missing_validator_support_file(tmp_path):
+    root = tmp_path / "skill"
+    root.mkdir()
+    _write_skill(root)
+    (root / "validators" / "common.py").unlink()
+
+    with pytest.raises(SkillManifestError, match="validator_support_files"):
+        load_skill_package(root)
+
+
+def test_manifest_rejects_validator_support_file_escape(tmp_path):
+    root = tmp_path / "skill"
+    root.mkdir()
+    _write_skill(root, validator_support_files=["/tmp/outside.py"])
+
+    with pytest.raises(SkillManifestError, match="escapes"):
+        load_skill_package(root)
+
+    _write_skill(root, validator_support_files=["../outside.py"])
+    with pytest.raises(SkillManifestError, match="escapes"):
+        load_skill_package(root)
+
+    outside = tmp_path / "outside.py"
+    outside.write_text("print('bad')\n", encoding="utf-8")
+    _write_skill(root)
+    (root / "validators" / "common.py").unlink()
+    (root / "validators" / "common.py").symlink_to(outside)
+    with pytest.raises(SkillManifestError, match="escapes"):
+        load_skill_package(root)
 
 
 def test_registry_indexes_gets_and_isolates_invalid_packages(tmp_path):

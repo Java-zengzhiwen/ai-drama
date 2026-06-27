@@ -21,6 +21,7 @@ REQUIRED_FIELDS = {
     "output_types": list,
     "schemas": list,
     "contracts": list,
+    "validator_support_files": list,
     "validators": list,
     "runtime_requirements": dict,
     "dependency_requirements": list,
@@ -73,6 +74,7 @@ class SkillPackage:
     context_files: list
     schemas: list
     contracts: list
+    validator_support_files: list
     validators: list
     content_hash: str
     metadata: dict
@@ -143,6 +145,7 @@ def load_skill_package(root):
     context_files = _safe_path_list(root, data["context_files"], "context_files")
     schemas = _safe_path_list(root, data["schemas"], "schemas")
     contracts = _safe_path_list(root, data["contracts"], "contracts")
+    validator_support_files = _safe_path_list(root, data["validator_support_files"], "validator_support_files")
 
     validators = []
     for item in data["validators"]:
@@ -169,7 +172,7 @@ def load_skill_package(root):
             )
         )
 
-    active_files = [root / "skill.json", instructions] + context_files + schemas + contracts
+    active_files = [root / "skill.json", instructions] + context_files + schemas + contracts + validator_support_files
     active_files += [validator.entrypoint for validator in validators]
     return SkillPackage(
         root=root,
@@ -182,6 +185,7 @@ def load_skill_package(root):
         context_files=context_files,
         schemas=schemas,
         contracts=contracts,
+        validator_support_files=validator_support_files,
         validators=validators,
         content_hash=_hash_files(root, active_files),
         metadata=data,

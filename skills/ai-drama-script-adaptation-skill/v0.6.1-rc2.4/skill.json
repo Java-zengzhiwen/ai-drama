@@ -48,6 +48,9 @@
     "contracts/script-approval-creator-presentation-contract-v2.md",
     "contracts/script-revision-presentation-contract-v2.md"
   ],
+  "validator_support_files": [
+    "validators/common.py"
+  ],
   "validators": [
     {
       "validator_id": "runtime_script_revision_structure",
