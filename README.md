@@ -2,12 +2,16 @@
 
 Local, single-user, CLI-first runtime for the migrated Script Adaptation skill.
 
+Current execution profile: `markdown-script-mvp-v1`.
+
 ## MVP Scope
 
 - Discover and validate local Skill Packages through `skill-id@version`.
 - Run the Shengsi Chapter 001 acceptance corpus with `mock` or one-shot `openai-compatible` runtime.
 - Persist immutable input snapshots, normalized requests, raw responses, runs, script revisions, validator results, approvals, exports, and provenance.
 - Compare revisions, approve/reject script revisions, and export the current approved script.
+
+This profile produces only a creator-facing Markdown DramaScript revision. It does not claim to run the complete rc2.4 artifact bundle pipeline.
 
 ## Non-Goals
 
@@ -41,6 +45,10 @@ OpenAI-compatible runtime config priority:
 - Model: CLI `--model`, then `AI_DRAMA_MODEL`, otherwise explicit error
 
 See `.env.example`. API keys are not saved in request snapshots or printed in errors.
+
+## Runtime Request Snapshot
+
+The persisted request snapshot is the same normalized request object passed to the runtime adapter. It contains package hash, execution profile, system instruction, full `SKILL.md`, manifest-declared context/schema/contract files, acceptance inputs with hashes, output contract, provider/model/timeout, and no API keys or reference outputs.
 
 ## CLI
 
@@ -80,7 +88,7 @@ Export refuses to overwrite existing files unless `--force` is supplied and writ
 
 ## Skill Package Contract
 
-`skill.json` must include `package_format_version`, `skill_id`, `version`, `display_name`, `description`, `package_status`, `instructions_entry`, `context_files`, `input_types`, `output_types`, `schemas`, `contracts`, `validators`, `runtime_requirements`, `dependency_requirements`, and `provenance`.
+`skill.json` must include `package_format_version`, `skill_id`, `version`, `display_name`, `description`, `package_status`, `instructions_entry`, `context_files`, `input_types`, `output_types`, `schemas`, `contracts`, `validators`, `runtime_requirements`, `dependency_requirements`, `provenance`, and `execution_profiles`.
 
 All declared paths must stay inside the Skill Package root. Absolute paths, `..`, and symlink escapes are rejected. Package hashes cover only declared active files.
 
@@ -93,11 +101,19 @@ Validator statuses:
 
 Required validators must all be `PASS` before approval.
 
+See `docs/runtime-validator-matrix.md` for the markdown profile applicability matrix.
+
+## Persistence Semantics
+
+Runs persist provider/model/duration, request hash, per-input references and hashes, raw usage where available, stable error codes, and safe error messages. Compare output includes metadata, request hash, input hash/reference differences, validator differences, approval differences, and unified text diff.
+
+Approval records have deterministic sequence ordering. Export provenance sidecars include the latest approval record, input references/hashes, request hash, content hash, provider/model, package hash, and export time.
+
 ## Test
 
 ```bash
 python3 migration/tools/verify_migration.py
-python3 -m py_compile migration/tools/verify_migration.py skills/ai-drama-script-adaptation-skill/v0.6.1-rc2.4/validators/*.py ai_drama_runtime/*.py
+python3 -m py_compile migration/tools/verify_migration.py skills/ai-drama-script-adaptation-skill/v0.6.1-rc2.4/validators/*.py skills/ai-drama-script-adaptation-skill/v0.6.1-rc2.4/runtime-validators/*.py ai_drama_runtime/*.py
 PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' python3 -m pytest -q
 ```
 
@@ -105,4 +121,4 @@ Real OpenAI-compatible smoke tests are skipped unless credentials are provided. 
 
 ## Current Limits
 
-The migrated Skill business validators that require a full artifact bundle are recorded as `NOT_APPLICABLE` for a single Markdown DramaScript revision. The runtime-level structure validator is package-contained and required for approval.
+The migrated Skill business validators that require a full artifact bundle are recorded as `NOT_APPLICABLE` for a single Markdown DramaScript revision. Full bundle artifacts such as JSON script, beat registry, coverage report, source-claim-audit, handoff, creator presentation, and test reports are future scope.
