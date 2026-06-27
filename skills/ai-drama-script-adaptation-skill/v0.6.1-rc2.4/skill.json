@@ -1,0 +1,81 @@
+{
+  "skill_id": "ai-drama-script-adaptation-skill",
+  "version": "v0.6.1-rc2.4",
+  "instructions_entry": "SKILL.md",
+  "description": "Self-contained local package metadata for the migrated script adaptation skill.",
+  "validators": [
+    {
+      "name": "runtime_script_revision_structure",
+      "entrypoint": "../../../ai_drama_runtime/script_validator.py",
+      "required": true,
+      "command": [
+        "python3",
+        "{entrypoint}",
+        "--revision",
+        "{revision_path}",
+        "--report",
+        "{report_path}"
+      ]
+    },
+    {
+      "name": "genericity",
+      "entrypoint": "validators/validate_genericity.py",
+      "required": false,
+      "command": [
+        "python3",
+        "{entrypoint}",
+        "--root",
+        "{skill_root}",
+        "--forbidden-terms",
+        "{repo_root}/reference/ai-drama-script-adaptation-skill/v0.6.1-rc2.4/tests/forbidden-terms.txt",
+        "--report",
+        "{report_path}"
+      ]
+    },
+    {
+      "name": "schema",
+      "entrypoint": "validators/validate_schema.py",
+      "required": false
+    },
+    {
+      "name": "source_claim_audit",
+      "entrypoint": "validators/validate_source_claim_audit.py",
+      "required": false
+    },
+    {
+      "name": "assumptions_and_extensions",
+      "entrypoint": "validators/validate_assumptions_and_extensions.py",
+      "required": false
+    },
+    {
+      "name": "handoff_contract",
+      "entrypoint": "validators/validate_handoff_contract.py",
+      "required": false
+    },
+    {
+      "name": "creator_presentation",
+      "entrypoint": "validators/validate_creator_presentation.py",
+      "required": false
+    },
+    {
+      "name": "coverage_evidence",
+      "entrypoint": "validators/validate_coverage_evidence.py",
+      "required": false
+    },
+    {
+      "name": "artifact_integrity",
+      "entrypoint": "validators/validate_artifact_integrity.py",
+      "required": false
+    },
+    {
+      "name": "core_story_beats",
+      "entrypoint": "validators/validate_core_story_beats.py",
+      "required": false
+    },
+    {
+      "name": "markdown_json_equivalence",
+      "entrypoint": "validators/validate_markdown_json_equivalence.py",
+      "required": false
+    }
+  ]
+}
