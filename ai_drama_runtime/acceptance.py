@@ -11,6 +11,7 @@ class AcceptanceError(ValueError):
 class AcceptanceFile:
     key: str
     path: Path
+    relative_path: str
     text: str
 
 
@@ -60,7 +61,10 @@ def _relative_file(root, value, field):
         raise AcceptanceError("%s contains an absolute path: %s" % (field, value))
     if ".." in path.parts:
         raise AcceptanceError("%s escapes acceptance root: %s" % (field, value))
-    resolved = root / path
+    resolved = (root / path).resolve()
+    root_resolved = root.resolve()
+    if resolved != root_resolved and root_resolved not in resolved.parents:
+        raise AcceptanceError("%s escapes acceptance root: %s" % (field, value))
     if not resolved.is_file():
         raise AcceptanceError("%s does not exist: %s" % (field, value))
     return resolved
@@ -93,7 +97,7 @@ def load_acceptance_bundle(root):
     input_files = {}
     for key, value in inputs.items():
         path = _relative_file(root, value, "inputs.%s" % key)
-        input_files[key] = AcceptanceFile(key=key, path=path, text=path.read_text(encoding="utf-8"))
+        input_files[key] = AcceptanceFile(key=key, path=path, relative_path=value, text=path.read_text(encoding="utf-8"))
 
     approved = (
         manifest.get("reference_outputs", {})
@@ -112,6 +116,7 @@ def load_acceptance_bundle(root):
         reference_output=AcceptanceFile(
             key="approved_script",
             path=approved_path,
+            relative_path=approved.get("path"),
             text=approved_path.read_text(encoding="utf-8"),
         ),
     )

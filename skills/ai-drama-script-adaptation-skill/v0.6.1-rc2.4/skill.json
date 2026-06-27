@@ -1,13 +1,60 @@
 {
+  "package_format_version": "1",
   "skill_id": "ai-drama-script-adaptation-skill",
   "version": "v0.6.1-rc2.4",
+  "display_name": "AI Drama Script Adaptation Skill",
+  "description": "Self-contained migrated script adaptation skill package for local runtime execution.",
+  "package_status": "active",
   "instructions_entry": "SKILL.md",
-  "description": "Self-contained local package metadata for the migrated script adaptation skill.",
+  "context_files": [
+    "README.md",
+    "CHANGELOG.md",
+    "MIGRATION-NOTES.md",
+    "requirements.txt",
+    "references/adaptation-rules.md",
+    "references/atomic-core-story-beat-rules.md",
+    "references/body-evidence-policy.md",
+    "references/core-story-beat-rules.md",
+    "references/coverage-qc-rubric.md",
+    "references/creative-draft-rules.md",
+    "references/creator-presentation-rules.md",
+    "references/emotional-progression-rules.md",
+    "references/production-assumption-policy.md",
+    "references/source-conflict-policy.md",
+    "templates/core-story-beats.template.json",
+    "templates/coverage-report.template.json",
+    "templates/production-assumption-log.template.json",
+    "templates/script-approval-presentation.template.md",
+    "templates/script-handoff-manifest.template.json",
+    "templates/source-claim-audit.template.json",
+    "templates/source-conflict-registry.template.json"
+  ],
+  "input_types": [
+    "source_chapter",
+    "series_canon",
+    "characters",
+    "production_brief"
+  ],
+  "output_types": [
+    "drama_script_revision"
+  ],
+  "schemas": [
+    "schemas/core-story-beat-coverage.schema.json",
+    "schemas/core-story-beats.schema.json",
+    "schemas/hybrid-script.schema.json"
+  ],
+  "contracts": [
+    "contracts/script-approval-creator-presentation-contract-v2.md",
+    "contracts/script-revision-presentation-contract-v2.md"
+  ],
   "validators": [
     {
-      "name": "runtime_script_revision_structure",
-      "entrypoint": "../../../ai_drama_runtime/script_validator.py",
+      "validator_id": "runtime_script_revision_structure",
+      "entrypoint": "runtime-validators/script_revision_structure.py",
       "required": true,
+      "applies_to": [
+        "drama_script_revision"
+      ],
       "command": [
         "python3",
         "{entrypoint}",
@@ -15,12 +62,18 @@
         "{revision_path}",
         "--report",
         "{report_path}"
-      ]
+      ],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass"
     },
     {
-      "name": "genericity",
+      "validator_id": "genericity",
       "entrypoint": "validators/validate_genericity.py",
       "required": false,
+      "applies_to": [
+        "skill_package"
+      ],
       "command": [
         "python3",
         "{entrypoint}",
@@ -30,52 +83,60 @@
         "{repo_root}/reference/ai-drama-script-adaptation-skill/v0.6.1-rc2.4/tests/forbidden-terms.txt",
         "--report",
         "{report_path}"
-      ]
+      ],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass"
     },
     {
-      "name": "schema",
+      "validator_id": "schema",
       "entrypoint": "validators/validate_schema.py",
-      "required": false
+      "required": false,
+      "applies_to": [
+        "full_artifact_bundle"
+      ],
+      "command": [],
+      "dependencies": [
+        "jsonschema"
+      ],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass"
     },
     {
-      "name": "source_claim_audit",
+      "validator_id": "source_claim_audit",
       "entrypoint": "validators/validate_source_claim_audit.py",
-      "required": false
+      "required": false,
+      "applies_to": [
+        "full_artifact_bundle"
+      ],
+      "command": [],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass"
     },
     {
-      "name": "assumptions_and_extensions",
-      "entrypoint": "validators/validate_assumptions_and_extensions.py",
-      "required": false
-    },
-    {
-      "name": "handoff_contract",
+      "validator_id": "handoff_contract",
       "entrypoint": "validators/validate_handoff_contract.py",
-      "required": false
-    },
-    {
-      "name": "creator_presentation",
-      "entrypoint": "validators/validate_creator_presentation.py",
-      "required": false
-    },
-    {
-      "name": "coverage_evidence",
-      "entrypoint": "validators/validate_coverage_evidence.py",
-      "required": false
-    },
-    {
-      "name": "artifact_integrity",
-      "entrypoint": "validators/validate_artifact_integrity.py",
-      "required": false
-    },
-    {
-      "name": "core_story_beats",
-      "entrypoint": "validators/validate_core_story_beats.py",
-      "required": false
-    },
-    {
-      "name": "markdown_json_equivalence",
-      "entrypoint": "validators/validate_markdown_json_equivalence.py",
-      "required": false
+      "required": false,
+      "applies_to": [
+        "full_artifact_bundle"
+      ],
+      "command": [],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass"
     }
-  ]
+  ],
+  "runtime_requirements": {
+    "python": ">=3.9",
+    "runtime": "local-cli"
+  },
+  "dependency_requirements": [
+    "PyYAML>=6.0",
+    "openai>=1.0; optional for openai-compatible runtime"
+  ],
+  "provenance": {
+    "migration_baseline": "ed5d47534287b1dc14bed1ccedc87085be58ea08",
+    "runtime_metadata": "added without changing migrated business validators"
+  }
 }

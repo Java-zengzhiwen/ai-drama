@@ -1,14 +1,20 @@
 from dataclasses import dataclass
 import difflib
 import hashlib
+import json
 from pathlib import Path
 
 from .acceptance import load_acceptance_bundle
-from .runtime import run_runtime
+from .parser import PARSER_VERSION, ParseError, parse_script_response
+from .runtime import RuntimeErrorBase, run_runtime
 from .validators import run_declared_validators
 
 
 class ApprovalBlocked(RuntimeError):
+    pass
+
+
+class ExportConflict(RuntimeError):
     pass
 
 
@@ -32,60 +38,115 @@ class RuntimeService:
         self.store = store
         self.repo_root = Path(repo_root or Path.cwd()).resolve()
 
-    def run_acceptance(self, skill, acceptance_root, runtime, model):
+    def run_acceptance(self, skill, acceptance_root, runtime, model, mock_mode="success"):
         bundle = load_acceptance_bundle(acceptance_root)
+        artifact_id = bundle.manifest["id"]
+        project_id = bundle.manifest.get("project_id") or artifact_id
+        chapter_id = bundle.manifest.get("chapter_id") or artifact_id
+        self.store.ensure_artifact(artifact_id, "drama_script", project_id, chapter_id)
         request_text = bundle.to_runtime_request_text()
-        skill_instructions = skill.instructions_entry.read_text(encoding="utf-8")
-        response = run_runtime(runtime, model, request_text, skill_instructions)
-
         request_object_id = self.store.write_text_object(request_text)
-        response_object_id = self.store.write_text_object(response.raw)
-        content_object_id = self.store.write_text_object(response.text)
-        run = self.store.insert_run(
-            artifact_id=bundle.manifest["id"],
+        run = self.store.create_run(
+            artifact_id=artifact_id,
+            project_id=project_id,
+            chapter_id=chapter_id,
             skill_id=skill.skill_id,
             skill_version=skill.version,
             skill_hash=skill.content_hash,
             runtime=runtime,
-            model=response.model,
-            status="succeeded",
+            provider=runtime,
+            model=model or "",
+            status="RUNNING",
             request_object_id=request_object_id,
-            response_object_id=response_object_id,
             input_hash=_sha256_text(request_text),
         )
+        for key, item in bundle.input_files.items():
+            self.store.insert_input_snapshot(
+                run.run_id,
+                logical_type=key,
+                source_relative_path=item.relative_path,
+                source_path=item.path,
+                text=item.text,
+            )
+        skill_instructions = skill.instructions_entry.read_text(encoding="utf-8")
+        try:
+            response = run_runtime(runtime, model, request_text, skill_instructions, mock_mode=mock_mode)
+        except RuntimeErrorBase as exc:
+            run = self.store.update_run(
+                run.run_id,
+                status="RUNTIME_FAILED",
+                error_code="RUNTIME_FAILED",
+                error_message=exc.safe_message,
+            )
+            return RunResult(run=run, revision=None, validation_results=[])
+
+        response_object_id = self.store.write_text_object(response.raw)
+        try:
+            script_text = parse_script_response(response.raw)
+        except ParseError as exc:
+            run = self.store.update_run(
+                run.run_id,
+                status="PARSE_FAILED",
+                response_object_id=response_object_id,
+                provider=response.provider,
+                model=response.model,
+                duration_ms=response.duration_ms,
+                error_code="PARSE_FAILED",
+                error_message=str(exc),
+            )
+            return RunResult(run=run, revision=None, validation_results=[])
+
+        content_object_id = self.store.write_text_object(script_text)
+        content_hash = _sha256_text(script_text)
+        run = self.store.update_run(
+            run.run_id,
+            status="SUCCEEDED",
+            response_object_id=response_object_id,
+            provider=response.provider,
+            model=response.model,
+            duration_ms=response.duration_ms,
+        )
         revision = self.store.insert_revision(
-            artifact_id=bundle.manifest["id"],
+            artifact_id=artifact_id,
+            artifact_type="drama_script",
+            project_id=project_id,
+            chapter_id=chapter_id,
             run_id=run.run_id,
+            skill_id=skill.skill_id,
+            skill_version=skill.version,
+            skill_package_hash=skill.content_hash,
+            runtime_provider=response.provider,
+            runtime_model=response.model,
             content_object_id=content_object_id,
-            content_hash=_sha256_text(response.text),
+            content_hash=content_hash,
+            raw_response_object_id=response_object_id,
+            parser_version=PARSER_VERSION,
         )
-        validations = run_declared_validators(
-            self.store,
-            skill,
-            revision,
-            bundle.root,
-            repo_root=self.repo_root,
-        )
+        validations = run_declared_validators(self.store, skill, revision, bundle.root, repo_root=self.repo_root)
+        if any(item.required and item.status != "PASS" for item in validations):
+            run = self.store.update_run(run.run_id, status="VALIDATION_FAILED")
         return RunResult(run=run, revision=revision, validation_results=validations)
 
     def approve_revision(self, revision_id, reviewer, note=""):
         revision = self._revision_or_raise(revision_id)
-        blocking = [
-            result
-            for result in self.store.validation_results(revision_id)
-            if result.required and result.status != "passed"
-        ]
+        run = self.store.get_run(revision.run_id)
+        if run.status not in {"SUCCEEDED", "VALIDATION_FAILED"}:
+            raise ApprovalBlocked("run status does not allow approval: %s" % run.status)
+        if not self.store.read_text(revision.content_object_id).strip():
+            raise ApprovalBlocked("revision content is empty")
+        results = self.store.validation_results(revision_id)
+        required = [item for item in results if item.required]
+        if not required:
+            raise ApprovalBlocked("missing required validator result")
+        blocking = [item for item in required if item.status != "PASS"]
         if blocking:
-            names = ", ".join(result.validator_name for result in blocking)
-            raise ApprovalBlocked("required validators did not pass: %s" % names)
-        self.store.set_approved(revision)
-        self.store.record_approval(revision_id, revision.artifact_id, "script_approved", reviewer, note)
+            raise ApprovalBlocked("required validators did not pass: %s" % ", ".join(item.validator_id for item in blocking))
+        self.store.approve_in_transaction(revision, reviewer, note)
         return self.store.get_revision(revision_id)
 
     def reject_revision(self, revision_id, reviewer, note=""):
         revision = self._revision_or_raise(revision_id)
-        self.store.set_rejected(revision)
-        self.store.record_approval(revision_id, revision.artifact_id, "script_rejected", reviewer, note)
+        self.store.record_rejection(revision, reviewer, note)
         return self.store.get_revision(revision_id)
 
     def current_approved(self, artifact_id):
@@ -97,27 +158,59 @@ class RuntimeService:
     def compare_revisions(self, left_revision_id, right_revision_id):
         left = self._revision_or_raise(left_revision_id)
         right = self._revision_or_raise(right_revision_id)
+        metadata = {
+            "skill": [left.skill_id, right.skill_id],
+            "version": [left.skill_version, right.skill_version],
+            "package_hash": [left.skill_package_hash, right.skill_package_hash],
+            "provider": [left.runtime_provider, right.runtime_provider],
+            "model": [left.runtime_model, right.runtime_model],
+            "content_hash": [left.content_hash, right.content_hash],
+            "approval_status": [left.approval_status, right.approval_status],
+            "validator_status": [
+                {item.validator_id: item.status for item in self.store.validation_results(left.revision_id)},
+                {item.validator_id: item.status for item in self.store.validation_results(right.revision_id)},
+            ],
+        }
         left_text = self.store.read_text(left.content_object_id).splitlines(keepends=True)
         right_text = self.store.read_text(right.content_object_id).splitlines(keepends=True)
-        return "".join(
-            difflib.unified_diff(
-                left_text,
-                right_text,
-                fromfile=left.revision_id,
-                tofile=right.revision_id,
-            )
+        return "metadata:\n%s\nvalidator_status:\n%s\ntext_diff:\n%s" % (
+            json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True),
+            json.dumps(metadata["validator_status"], ensure_ascii=False, indent=2, sort_keys=True),
+            "".join(difflib.unified_diff(left_text, right_text, fromfile=left.revision_id, tofile=right.revision_id)),
         )
 
-    def export_approved(self, artifact_id, output):
+    def export_approved(self, artifact_id, output, force=False):
         revision = self.current_approved(artifact_id)
         output = Path(output)
+        sidecar = output.with_name(output.name + ".provenance.json")
+        if output.exists() and not force:
+            raise ExportConflict("output exists; use --force")
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(self.store.read_text(revision.content_object_id), encoding="utf-8")
+        approval = self.store.latest_approval(revision.revision_id)
+        provenance = {
+            "artifact_id": artifact_id,
+            "revision_id": revision.revision_id,
+            "run_id": revision.run_id,
+            "skill_id": revision.skill_id,
+            "skill_version": revision.skill_version,
+            "package_hash": revision.skill_package_hash,
+            "provider": revision.runtime_provider,
+            "model": revision.runtime_model,
+            "content_hash": revision.content_hash,
+            "approval_record": approval.__dict__ if approval else None,
+            "export_time": self.store.record_export.__name__,
+        }
+        provenance_object_id = self.store.write_text_object(json.dumps(provenance, ensure_ascii=False, sort_keys=True))
+        provenance["provenance_object_id"] = provenance_object_id
+        sidecar.write_text(json.dumps(provenance, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         return self.store.record_export(
             artifact_id=artifact_id,
             revision_id=revision.revision_id,
+            run_id=revision.run_id,
             content_hash=revision.content_hash,
-            destination=output,
+            destination=str(output),
+            provenance_object_id=provenance_object_id,
         )
 
     def _revision_or_raise(self, revision_id):
