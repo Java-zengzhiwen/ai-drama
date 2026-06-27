@@ -1,4 +1,5 @@
 from pathlib import Path
+import shutil
 
 from ai_drama_runtime.manifest import load_skill_package
 from ai_drama_runtime.services import RuntimeService
@@ -16,7 +17,9 @@ def _service(tmp_path):
 
 def test_success_run_snapshots_each_input_and_excludes_reference_output(tmp_path):
     service = _service(tmp_path)
-    result = service.run_acceptance(load_skill_package(SKILL_ROOT), ACCEPTANCE_ROOT, "mock", "mock-a")
+    case_root = tmp_path / "case"
+    shutil.copytree(ACCEPTANCE_ROOT, case_root)
+    result = service.run_acceptance(load_skill_package(SKILL_ROOT), case_root, "mock", "mock-a")
 
     assert result.run.status == "SUCCEEDED"
     assert result.revision is not None
@@ -29,7 +32,7 @@ def test_success_run_snapshots_each_input_and_excludes_reference_output(tmp_path
     }
     request_text = service.store.read_text(result.run.request_object_id)
     assert "approved-script.md" not in request_text
-    assert (ACCEPTANCE_ROOT / "approved-script.md").read_text(encoding="utf-8") not in request_text
+    assert (case_root / "approved-script.md").read_text(encoding="utf-8") not in request_text
 
     original_hash = snapshots[0].sha256
     snapshots[0].source_path.write_text("mutated", encoding="utf-8")
