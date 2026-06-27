@@ -50,10 +50,13 @@ source_basis: manifest
 """ % model
 
 
-def run_runtime(runtime, runtime_request, mock_mode="success", timeout_seconds=60):
+def run_runtime(runtime_request, mock_mode="success"):
     started = time.time()
     request_json = runtime_request.to_json()
-    model = runtime_request.to_dict()["runtime_config"]["model"]
+    config = runtime_request.to_dict()["runtime_config"]
+    runtime = config["provider"]
+    model = config["model"]
+    timeout_seconds = config["timeout_seconds"]
     if runtime == "mock":
         if mock_mode == "runtime_failure":
             raise RuntimeErrorBase("RUNTIME_PROVIDER_ERROR", "mock runtime failure")
@@ -77,15 +80,17 @@ def run_runtime(runtime, runtime_request, mock_mode="success", timeout_seconds=6
             duration_ms=int((time.time() - started) * 1000),
         )
     if runtime == "openai-compatible":
-        return _run_openai_compatible(model, runtime_request, timeout_seconds, started)
-    raise RuntimeErrorBase("UNKNOWN_RUNTIME", "unknown runtime: %s" % runtime)
+        return _run_openai_compatible(runtime_request, started)
+    raise RuntimeErrorBase("RUNTIME_PROVIDER_ERROR", "unknown runtime: %s" % runtime)
 
 
-def _run_openai_compatible(model, runtime_request, timeout_seconds, started):
+def _run_openai_compatible(runtime_request, started):
+    config = runtime_request.to_dict()["runtime_config"]
+    model = config["model"]
+    timeout_seconds = config["timeout_seconds"]
     api_key = os.environ.get("AI_DRAMA_API_KEY") or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeErrorBase("CONFIG_MISSING_API_KEY", "API key is required")
-    model = model or os.environ.get("AI_DRAMA_MODEL")
     if not model:
         raise RuntimeErrorBase("CONFIG_MISSING_MODEL", "model is required")
     try:

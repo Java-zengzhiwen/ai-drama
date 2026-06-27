@@ -4,6 +4,7 @@ import shutil
 
 from ai_drama_runtime.manifest import load_skill_package
 from ai_drama_runtime.request import build_runtime_request
+from ai_drama_runtime.runtime import RuntimeErrorBase
 from ai_drama_runtime.services import RuntimeService
 from ai_drama_runtime.store import RuntimeStore
 
@@ -69,6 +70,10 @@ def test_persisted_request_snapshot_is_actual_adapter_input(tmp_path):
 def test_env_model_is_resolved_before_request_snapshot(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_DRAMA_API_KEY", "secret")
     monkeypatch.setenv("AI_DRAMA_MODEL", "env-model")
+    monkeypatch.setattr(
+        "ai_drama_runtime.runtime._run_openai_compatible",
+        lambda runtime_request, started: (_ for _ in ()).throw(RuntimeErrorBase("RUNTIME_PROVIDER_ERROR", "fake provider")),
+    )
     service = RuntimeService(RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects"))
 
     result = service.run_acceptance(load_skill_package(SKILL_ROOT), ACCEPTANCE_ROOT, "openai-compatible", "")

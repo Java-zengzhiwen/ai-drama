@@ -1,6 +1,8 @@
 from pathlib import Path
 
 from ai_drama_runtime.manifest import load_skill_package
+from ai_drama_runtime.request import build_runtime_request
+from ai_drama_runtime.runtime import RuntimeErrorBase, run_runtime
 from ai_drama_runtime.services import RuntimeService
 from ai_drama_runtime.store import RuntimeStore
 
@@ -41,6 +43,40 @@ def test_usage_and_stable_error_codes_are_persisted(tmp_path, monkeypatch):
     invalid = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "mock", mock_mode="parse_failure")
     assert invalid.run.error_code == "PARSER_INVALID_OUTPUT"
     service.store.close()
+
+
+def test_runtime_reads_provider_and_timeout_from_request(monkeypatch):
+    package = load_skill_package(SKILL_ROOT)
+    request = build_runtime_request(package, ACCEPTANCE_ROOT, "mock", "model", timeout_seconds=7)
+
+    assert run_runtime(request).provider == "mock"
+    assert request.to_dict()["runtime_config"]["timeout_seconds"] == 7
+
+    bad = build_runtime_request(package, ACCEPTANCE_ROOT, "missing-provider", "model", timeout_seconds=7)
+    try:
+        run_runtime(bad)
+    except RuntimeErrorBase as exc:
+        assert exc.code == "RUNTIME_PROVIDER_ERROR"
+    else:
+        raise AssertionError("missing provider should fail")
+
+
+def test_runtime_timeout_error_code_is_stable(monkeypatch):
+    package = load_skill_package(SKILL_ROOT)
+    request = build_runtime_request(package, ACCEPTANCE_ROOT, "openai-compatible", "model", timeout_seconds=1)
+
+    def fake_openai(runtime_request, started):
+        raise RuntimeErrorBase("RUNTIME_TIMEOUT", "openai-compatible runtime failed")
+
+    monkeypatch.setenv("AI_DRAMA_API_KEY", "secret")
+    monkeypatch.setattr("ai_drama_runtime.runtime._run_openai_compatible", fake_openai)
+
+    try:
+        run_runtime(request)
+    except RuntimeErrorBase as exc:
+        assert exc.code == "RUNTIME_TIMEOUT"
+    else:
+        raise AssertionError("timeout should fail")
 
 
 def test_compare_includes_input_and_request_hash_diffs(tmp_path):

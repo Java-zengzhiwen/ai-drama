@@ -85,7 +85,7 @@ class RuntimeService:
                 text=item.text,
             )
         try:
-            response = run_runtime(runtime, runtime_request, mock_mode=mock_mode)
+            response = run_runtime(runtime_request, mock_mode=mock_mode)
         except RuntimeErrorBase as exc:
             run = self.store.update_run(
                 run.run_id,
