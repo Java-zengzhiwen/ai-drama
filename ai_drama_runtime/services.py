@@ -184,8 +184,8 @@ class RuntimeService:
         revision = self.current_approved(artifact_id)
         output = Path(output)
         sidecar = output.with_name(output.name + ".provenance.json")
-        if output.exists() and not force:
-            raise ExportConflict("output exists; use --force")
+        if not force and (output.exists() or sidecar.exists()):
+            raise ExportConflict("output or provenance sidecar exists; use --force")
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(self.store.read_text(revision.content_object_id), encoding="utf-8")
         approval = self.store.latest_approval(revision.revision_id)
@@ -202,9 +202,9 @@ class RuntimeService:
             "approval_record": approval.__dict__ if approval else None,
             "export_time": now_iso(),
         }
-        provenance_object_id = self.store.write_text_object(json.dumps(provenance, ensure_ascii=False, sort_keys=True))
-        provenance["provenance_object_id"] = provenance_object_id
-        sidecar.write_text(json.dumps(provenance, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        sidecar_text = json.dumps(provenance, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        provenance_object_id = self.store.write_text_object(sidecar_text)
+        sidecar.write_text(sidecar_text, encoding="utf-8")
         return self.store.record_export(
             artifact_id=artifact_id,
             revision_id=revision.revision_id,

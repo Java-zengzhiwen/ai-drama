@@ -17,6 +17,10 @@ def parse_script_response(raw):
         text = raw
     else:
         text = data.get("script_markdown") if isinstance(data, dict) else None
+        if text is None and isinstance(data, dict):
+            choices = data.get("choices") or []
+            if choices and isinstance(choices[0], dict):
+                text = (choices[0].get("message") or {}).get("content")
     if not isinstance(text, str) or not text.strip():
         raise ParseError("runtime response does not contain script_markdown")
     if not text.lstrip().startswith("#"):

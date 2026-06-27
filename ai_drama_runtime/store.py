@@ -443,6 +443,13 @@ class RuntimeStore:
             self.conn.execute("SELECT * FROM export_records WHERE export_id = ?", (values["export_id"],)).fetchone()
         )
 
+    def export_records(self, artifact_id):
+        rows = self.conn.execute(
+            "SELECT * FROM export_records WHERE artifact_id = ? ORDER BY created_at, export_id",
+            (artifact_id,),
+        ).fetchall()
+        return [self._export_from_row(row) for row in rows]
+
     def artifacts(self):
         return [dict(row) for row in self.conn.execute("SELECT * FROM artifacts ORDER BY artifact_id").fetchall()]
 

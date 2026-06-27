@@ -77,11 +77,17 @@ def test_compare_includes_metadata_and_export_needs_force_with_sidecar(tmp_path)
     service.export_approved("shengsi-chapter-001", output)
     with pytest.raises(ExportConflict):
         service.export_approved("shengsi-chapter-001", output)
+    output.unlink()
+    with pytest.raises(ExportConflict):
+        service.export_approved("shengsi-chapter-001", output)
     service.export_approved("shengsi-chapter-001", output, force=True)
     sidecar = json.loads((tmp_path / "approved.md.provenance.json").read_text(encoding="utf-8"))
     assert sidecar["artifact_id"] == "shengsi-chapter-001"
     assert sidecar["revision_id"] == second.revision.revision_id
     assert sidecar["export_time"].endswith("Z")
+    assert service.store.read_text(service.store.export_records("shengsi-chapter-001")[-1].provenance_object_id) == (
+        tmp_path / "approved.md.provenance.json"
+    ).read_text(encoding="utf-8")
 
 
 def test_validator_dependency_missing_timeout_and_crash_continue(tmp_path):

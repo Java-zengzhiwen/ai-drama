@@ -142,3 +142,5 @@ def test_real_skill_package_is_valid_and_paths_are_inside_root():
     assert package.schemas
     assert package.contracts
     assert all(SKILL_ROOT.resolve() in path.parents for path in [v.entrypoint for v in package.validators])
+    genericity = [v for v in package.validators if v.validator_id == "genericity"][0]
+    assert not any("{repo_root}" in part for part in genericity.command)
