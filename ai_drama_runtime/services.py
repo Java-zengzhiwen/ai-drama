@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import difflib
 import hashlib
 import json
+import os
 from pathlib import Path
 from .store import now_iso
 
@@ -56,7 +57,8 @@ class RuntimeService:
         project_id = bundle.manifest.get("project_id") or artifact_id
         chapter_id = bundle.manifest.get("chapter_id") or artifact_id
         self.store.ensure_artifact(artifact_id, "drama_script", project_id, chapter_id)
-        runtime_request = build_runtime_request(skill, acceptance_root, runtime, model)
+        resolved_model = model or (os.environ.get("AI_DRAMA_MODEL") if runtime == "openai-compatible" else model)
+        runtime_request = build_runtime_request(skill, acceptance_root, runtime, resolved_model or "")
         request_json = runtime_request.to_json()
         request_object_id = self.store.write_text_object(request_json)
         run = self.store.create_run(
@@ -104,6 +106,11 @@ class RuntimeService:
                 provider=response.provider,
                 model=response.model,
                 duration_ms=response.duration_ms,
+                usage_status=response.usage.get("usage_status", "NOT_PROVIDED"),
+                prompt_tokens=int(response.usage.get("prompt_tokens") or 0),
+                completion_tokens=int(response.usage.get("completion_tokens") or 0),
+                total_tokens=int(response.usage.get("total_tokens") or 0),
+                usage_raw_object_id=self.store.write_text_object(json.dumps(response.usage.get("raw") or {}, ensure_ascii=False, sort_keys=True)),
                 error_code=exc.code,
                 error_message=str(exc),
             )
@@ -141,7 +148,7 @@ class RuntimeService:
             parser_version=PARSER_VERSION,
         )
         validations = run_declared_validators(self.store, skill, revision, bundle.root, repo_root=self.repo_root)
-        if any(item.required and item.status != "PASS" for item in validations):
+        if any(item.required and item.status not in {"PASS", "NOT_APPLICABLE"} for item in validations):
             run = self.store.update_run(run.run_id, status="VALIDATION_FAILED")
         return RunResult(run=run, revision=revision, validation_results=validations, adapter_request_json=request_json)
 

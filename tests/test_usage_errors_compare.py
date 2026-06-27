@@ -32,6 +32,14 @@ def test_usage_and_stable_error_codes_are_persisted(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_DRAMA_API_KEY", "secret")
     missing_model = service.run_acceptance(package, ACCEPTANCE_ROOT, "openai-compatible", "")
     assert missing_model.run.error_code == "CONFIG_MISSING_MODEL"
+
+    empty = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "mock", mock_mode="empty_response")
+    assert empty.run.status == "PARSE_FAILED"
+    assert empty.run.error_code == "PARSER_EMPTY_OUTPUT"
+    assert service.store.get_run(empty.run.run_id).usage_status == "PROVIDED"
+
+    invalid = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "mock", mock_mode="parse_failure")
+    assert invalid.run.error_code == "PARSER_INVALID_OUTPUT"
     service.store.close()
 
 

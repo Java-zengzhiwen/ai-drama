@@ -61,6 +61,34 @@ def test_required_failed_validator_blocks_approval(tmp_path):
         service.approve_revision(result.revision.revision_id, "tester")
 
 
+def test_required_not_applicable_validator_does_not_mark_run_failed(tmp_path):
+    service = _service(tmp_path)
+    package = load_skill_package(SKILL_ROOT)
+    validators = list(package.validators) + [
+        SkillValidator(
+            "bundle_required",
+            "bundle_required",
+            package.validators[0].entrypoint,
+            True,
+            ["full_artifact_bundle"],
+            [],
+            [],
+            1,
+            "zero_is_pass",
+            "migrated_skill",
+            ["drama_script_json"],
+            "NOT_APPLICABLE",
+            "requires complete bundle",
+        )
+    ]
+    package = type("Pkg", (), {**package.__dict__, "validators": validators})()
+
+    result = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "mock")
+
+    assert result.run.status == "SUCCEEDED"
+    assert {item.validator_id: item.status for item in result.validation_results}["bundle_required"] == "NOT_APPLICABLE"
+
+
 def test_compare_includes_metadata_and_export_needs_force_with_sidecar(tmp_path):
     service = _service(tmp_path)
     package = load_skill_package(SKILL_ROOT)

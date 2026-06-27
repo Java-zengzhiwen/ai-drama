@@ -99,7 +99,7 @@ Validator statuses:
 - `SKIPPED_DEPENDENCY_MISSING`
 - `NOT_APPLICABLE`
 
-Required validators must all be `PASS` before approval.
+Required validators that are applicable to the current execution profile must be `PASS` before approval. Required validators explicitly marked `NOT_APPLICABLE` for the current profile do not block Markdown revision approval.
 
 See `docs/runtime-validator-matrix.md` for the markdown profile applicability matrix.
 

@@ -51,6 +51,7 @@ def test_runtime_failure_and_parse_failure_are_persisted_without_revision(tmp_pa
 
     parsed = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "mock", mock_mode="parse_failure")
     assert parsed.run.status == "PARSE_FAILED"
+    assert parsed.run.error_code == "PARSER_INVALID_OUTPUT"
     assert parsed.revision is None
     assert service.store.revisions_for_artifact("shengsi-chapter-001") == []
 

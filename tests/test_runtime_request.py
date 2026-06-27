@@ -64,3 +64,17 @@ def test_persisted_request_snapshot_is_actual_adapter_input(tmp_path):
     assert snapshot["skill_instruction"]["relative_path"] == "SKILL.md"
     assert snapshot == json.loads(result.adapter_request_json)
     service.store.close()
+
+
+def test_env_model_is_resolved_before_request_snapshot(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_DRAMA_API_KEY", "secret")
+    monkeypatch.setenv("AI_DRAMA_MODEL", "env-model")
+    service = RuntimeService(RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects"))
+
+    result = service.run_acceptance(load_skill_package(SKILL_ROOT), ACCEPTANCE_ROOT, "openai-compatible", "")
+
+    snapshot = json.loads(service.store.read_text(result.run.request_object_id))
+    assert snapshot["runtime_config"]["model"] == "env-model"
+    assert result.run.error_code != "CONFIG_MISSING_MODEL"
+    assert "secret" not in service.store.read_text(result.run.request_object_id)
+    service.store.close()
