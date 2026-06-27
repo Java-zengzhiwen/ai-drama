@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from ai_drama_runtime.manifest import load_skill_package
 from ai_drama_runtime.request import build_runtime_request
@@ -17,32 +18,31 @@ def _service(tmp_path):
 
 
 def test_usage_and_stable_error_codes_are_persisted(tmp_path, monkeypatch):
-    service = _service(tmp_path)
     package = load_skill_package(SKILL_ROOT)
-    ok = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "mock")
-    run = service.store.get_run(ok.run.run_id)
-    assert run.usage_status == "PROVIDED"
-    assert run.prompt_tokens >= 0
-    assert run.total_tokens >= run.prompt_tokens
+    with _service(tmp_path) as service:
+        ok = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "mock")
+        run = service.store.get_run(ok.run.run_id)
+        assert run.usage_status == "PROVIDED"
+        assert run.prompt_tokens >= 0
+        assert run.total_tokens >= run.prompt_tokens
 
-    monkeypatch.delenv("AI_DRAMA_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    missing_key = service.run_acceptance(package, ACCEPTANCE_ROOT, "openai-compatible", "model")
-    assert missing_key.run.status == "RUNTIME_FAILED"
-    assert missing_key.run.error_code == "CONFIG_MISSING_API_KEY"
+        monkeypatch.delenv("AI_DRAMA_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        missing_key = service.run_acceptance(package, ACCEPTANCE_ROOT, "openai-compatible", "model")
+        assert missing_key.run.status == "RUNTIME_FAILED"
+        assert missing_key.run.error_code == "CONFIG_MISSING_API_KEY"
 
-    monkeypatch.setenv("AI_DRAMA_API_KEY", "secret")
-    missing_model = service.run_acceptance(package, ACCEPTANCE_ROOT, "openai-compatible", "")
-    assert missing_model.run.error_code == "CONFIG_MISSING_MODEL"
+        monkeypatch.setenv("AI_DRAMA_API_KEY", "secret")
+        missing_model = service.run_acceptance(package, ACCEPTANCE_ROOT, "openai-compatible", "")
+        assert missing_model.run.error_code == "CONFIG_MISSING_MODEL"
 
-    empty = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "mock", mock_mode="empty_response")
-    assert empty.run.status == "PARSE_FAILED"
-    assert empty.run.error_code == "PARSER_EMPTY_OUTPUT"
-    assert service.store.get_run(empty.run.run_id).usage_status == "PROVIDED"
+        empty = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "mock", mock_mode="empty_response")
+        assert empty.run.status == "PARSE_FAILED"
+        assert empty.run.error_code == "PARSER_EMPTY_OUTPUT"
+        assert service.store.get_run(empty.run.run_id).usage_status == "PROVIDED"
 
-    invalid = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "mock", mock_mode="parse_failure")
-    assert invalid.run.error_code == "PARSER_INVALID_OUTPUT"
-    service.store.close()
+        invalid = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "mock", mock_mode="parse_failure")
+        assert invalid.run.error_code == "PARSER_INVALID_OUTPUT"
 
 
 def test_runtime_reads_provider_and_timeout_from_request(monkeypatch):
@@ -134,13 +134,56 @@ def test_runtime_failures_persist_complete_metadata(monkeypatch, tmp_path):
 
 
 def test_compare_includes_input_and_request_hash_diffs(tmp_path):
-    service = _service(tmp_path)
     package = load_skill_package(SKILL_ROOT)
-    first = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "a")
-    second = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "b")
-    diff = service.compare_revisions(first.revision.revision_id, second.revision.revision_id)
+    with _service(tmp_path) as service:
+        first = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "a")
+        second = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "b")
+        diff = service.compare_revisions(first.revision.revision_id, second.revision.revision_id)
 
-    assert "input_hash_diff:" in diff
-    assert "request_hash_diff:" in diff
-    assert "source_chapter" in diff
-    service.store.close()
+        assert "input_hash_diff:" in diff
+        assert "request_hash_diff:" in diff
+        assert "source_chapter" in diff
+
+
+def test_compare_validator_status_contains_only_left_and_right(tmp_path):
+    package = load_skill_package(SKILL_ROOT)
+    with _service(tmp_path) as service:
+        left = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "left")
+        right = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "right")
+        service.store.insert_validation(
+            revision_id=left.revision.revision_id,
+            validator_id="left_only",
+            validator_name="left_only",
+            status="PASS",
+            required=0,
+            exit_code=0,
+            error_code="",
+            duration_ms=1,
+            stdout_object_id=service.store.write_text_object(""),
+            stderr_object_id=service.store.write_text_object(""),
+            report_object_id=service.store.write_text_object("{}"),
+        )
+        service.store.insert_validation(
+            revision_id=right.revision.revision_id,
+            validator_id="right_only",
+            validator_name="right_only",
+            status="FAIL",
+            required=0,
+            exit_code=1,
+            error_code="ERR_RIGHT",
+            duration_ms=1,
+            stdout_object_id=service.store.write_text_object(""),
+            stderr_object_id=service.store.write_text_object(""),
+            report_object_id=service.store.write_text_object("{}"),
+        )
+        diff = service.compare_revisions(left.revision.revision_id, right.revision.revision_id)
+
+    metadata_text = diff.split("input_hash_diff:\n", 1)[0].removeprefix("metadata:\n")
+    metadata = json.loads(metadata_text)
+    validator_status = metadata["validator_status"]
+
+    assert set(validator_status) == {"left", "right"}
+    assert validator_status["left"]["left_only"] == "PASS"
+    assert "right_only" not in validator_status["left"]
+    assert validator_status["right"]["right_only"] == "FAIL"
+    assert "left_only" not in validator_status["right"]

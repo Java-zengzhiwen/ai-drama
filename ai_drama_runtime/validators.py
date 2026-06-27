@@ -31,6 +31,14 @@ def _insert(store, revision, validator, status, exit_code=0, error_code="", dura
     )
 
 
+def _as_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
 def run_declared_validators(store, skill, revision, acceptance_root, repo_root=None):
     results = []
     revision_path = store.object_path(revision.content_object_id)
@@ -123,6 +131,7 @@ def run_declared_validators(store, skill, revision, acceptance_root, repo_root=N
                     )
                 )
             except subprocess.TimeoutExpired as exc:
+                stderr = _as_text(exc.stderr) or "validator timed out"
                 results.append(
                     _insert(
                         store,
@@ -132,8 +141,8 @@ def run_declared_validators(store, skill, revision, acceptance_root, repo_root=N
                         exit_code=-1,
                         error_code="VALIDATOR_TIMEOUT",
                         duration_ms=int((time.time() - started) * 1000),
-                        stdout=exc.stdout or "",
-                        stderr=exc.stderr or "validator timed out",
+                        stdout=_as_text(exc.stdout),
+                        stderr=stderr,
                     )
                 )
             except Exception as exc:

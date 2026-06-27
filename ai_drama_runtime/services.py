@@ -215,10 +215,10 @@ class RuntimeService:
                 {item.logical_type: item.sha256 for item in self.store.input_snapshots(left.run_id)},
                 {item.logical_type: item.sha256 for item in self.store.input_snapshots(right.run_id)},
             ],
-            "validator_status": [
-                {item.validator_id: item.status for item in self.store.validation_results(left.revision_id)},
-                {item.validator_id: item.status for item in self.store.validation_results(right.revision_id)},
-            ],
+            "validator_status": {
+                "left": {item.validator_id: item.status for item in self.store.validation_results(left.revision_id)},
+                "right": {item.validator_id: item.status for item in self.store.validation_results(right.revision_id)},
+            },
         }
         left_text = self.store.read_text(left.content_object_id).splitlines(keepends=True)
         right_text = self.store.read_text(right.content_object_id).splitlines(keepends=True)

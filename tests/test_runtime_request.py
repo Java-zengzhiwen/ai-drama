@@ -58,13 +58,12 @@ def test_request_hash_changes_for_context_or_input_changes(tmp_path):
 
 
 def test_persisted_request_snapshot_is_actual_adapter_input(tmp_path):
-    service = RuntimeService(RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects"))
-    result = service.run_acceptance(load_skill_package(SKILL_ROOT), ACCEPTANCE_ROOT, "mock", "mock-model")
-    snapshot = json.loads(service.store.read_text(result.run.request_object_id))
+    with RuntimeService(RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects")) as service:
+        result = service.run_acceptance(load_skill_package(SKILL_ROOT), ACCEPTANCE_ROOT, "mock", "mock-model")
+        snapshot = json.loads(service.store.read_text(result.run.request_object_id))
 
-    assert snapshot["skill_instruction"]["relative_path"] == "SKILL.md"
-    assert snapshot == json.loads(result.adapter_request_json)
-    service.store.close()
+        assert snapshot["skill_instruction"]["relative_path"] == "SKILL.md"
+        assert snapshot == json.loads(result.adapter_request_json)
 
 
 def test_env_model_is_resolved_before_request_snapshot(tmp_path, monkeypatch):
@@ -74,12 +73,10 @@ def test_env_model_is_resolved_before_request_snapshot(tmp_path, monkeypatch):
         "ai_drama_runtime.runtime._run_openai_compatible",
         lambda runtime_request, started: (_ for _ in ()).throw(RuntimeErrorBase("RUNTIME_PROVIDER_ERROR", "fake provider")),
     )
-    service = RuntimeService(RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects"))
+    with RuntimeService(RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects")) as service:
+        result = service.run_acceptance(load_skill_package(SKILL_ROOT), ACCEPTANCE_ROOT, "openai-compatible", "")
 
-    result = service.run_acceptance(load_skill_package(SKILL_ROOT), ACCEPTANCE_ROOT, "openai-compatible", "")
-
-    snapshot = json.loads(service.store.read_text(result.run.request_object_id))
-    assert snapshot["runtime_config"]["model"] == "env-model"
-    assert result.run.error_code != "CONFIG_MISSING_MODEL"
-    assert "secret" not in service.store.read_text(result.run.request_object_id)
-    service.store.close()
+        snapshot = json.loads(service.store.read_text(result.run.request_object_id))
+        assert snapshot["runtime_config"]["model"] == "env-model"
+        assert result.run.error_code != "CONFIG_MISSING_MODEL"
+        assert "secret" not in service.store.read_text(result.run.request_object_id)
