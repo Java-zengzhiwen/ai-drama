@@ -23,12 +23,11 @@ def test_all_migrated_validators_are_registered_except_common():
     assert "common" not in registered
 
 
-def test_markdown_profile_records_bundle_validators_as_not_applicable():
-    service = RuntimeService(RuntimeStore(":memory:", Path("/tmp/ai-drama-test-objects")))
-    result = service.run_acceptance(load_skill_package(SKILL_ROOT), ACCEPTANCE_ROOT, "mock", "mock")
-    statuses = {item.validator_id: item.status for item in result.validation_results}
+def test_markdown_profile_records_bundle_validators_as_not_applicable(tmp_path):
+    with RuntimeService(RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects")) as service:
+        result = service.run_acceptance(load_skill_package(SKILL_ROOT), ACCEPTANCE_ROOT, "mock", "mock")
+        statuses = {item.validator_id: item.status for item in result.validation_results}
 
-    assert statuses["runtime_script_revision_structure"] == "PASS"
-    assert statuses["schema"] == "NOT_APPLICABLE"
-    assert statuses["source_claim_audit"] == "NOT_APPLICABLE"
-    service.store.close()
+        assert statuses["runtime_script_revision_structure"] == "PASS"
+        assert statuses["schema"] == "NOT_APPLICABLE"
+        assert statuses["source_claim_audit"] == "NOT_APPLICABLE"
