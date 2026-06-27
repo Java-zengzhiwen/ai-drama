@@ -1,6 +1,7 @@
 from pathlib import Path
 import importlib.util
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -35,6 +36,17 @@ def run_declared_validators(store, skill, revision, acceptance_root, repo_root=N
     revision_path = store.object_path(revision.content_object_id)
     repo_root = Path(repo_root or Path.cwd()).resolve()
     for validator in skill.validators:
+        if validator.current_profile_status == "NOT_APPLICABLE":
+            results.append(
+                _insert(
+                    store,
+                    revision,
+                    validator,
+                    "NOT_APPLICABLE",
+                    stderr=(validator.current_profile_reason or "not applicable to current execution profile") + "\n",
+                )
+            )
+            continue
         if "drama_script_revision" not in validator.applies_to and "skill_package" not in validator.applies_to:
             results.append(
                 _insert(
@@ -81,6 +93,7 @@ def run_declared_validators(store, skill, revision, acceptance_root, repo_root=N
                 "acceptance_root": str(acceptance_root),
                 "repo_root": str(repo_root),
                 "report_path": str(report_path),
+                "python": sys.executable,
             }
             command = [part.format(**substitutions) for part in validator.command]
             started = time.time()

@@ -43,11 +43,25 @@ def _write_skill(root, **overrides):
                 "dependencies": [],
                 "timeout_seconds": 5,
                 "expected_exit_behavior": "zero_is_pass",
+                "validator_origin": "migrated_skill",
+                "required_artifacts": ["creator_facing_markdown_script"],
+                "current_profile_status": "APPLICABLE",
+                "current_profile_reason": "test",
             }
         ],
         "runtime_requirements": {"python": ">=3.9"},
         "dependency_requirements": [],
         "provenance": {"source": "test"},
+        "execution_profiles": [
+            {
+                "profile_id": "markdown-script-mvp-v1",
+                "output_artifact_type": "drama_script_markdown",
+                "output_format": "markdown",
+                "parser_version": "drama-script-markdown-v1",
+                "supported_artifacts": ["creator_facing_markdown_script"],
+                "unsupported_bundle_artifacts": [],
+            }
+        ],
     }
     data.update(overrides)
     import json

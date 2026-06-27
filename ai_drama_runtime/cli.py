@@ -30,6 +30,22 @@ def _service(args):
     return RuntimeService(_store(args), repo_root=Path.cwd())
 
 
+def _with_store(args, fn):
+    store = _store(args)
+    try:
+        return fn(store)
+    finally:
+        store.close()
+
+
+def _with_service(args, fn):
+    service = _service(args)
+    try:
+        return fn(service)
+    finally:
+        service.close()
+
+
 def _registry(args):
     return SkillRegistry.scan([args.skills_root])
 
@@ -50,12 +66,15 @@ def _skills_validate(args):
 def _run_create(args):
     registry = _registry(args)
     package = registry.get_ref(args.skill)
-    result = _service(args).run_acceptance(
-        package,
-        args.input,
-        args.runtime,
-        args.model,
-        mock_mode=args.mock_mode,
+    result = _with_service(
+        args,
+        lambda service: service.run_acceptance(
+            package,
+            args.input,
+            args.runtime,
+            args.model,
+            mock_mode=args.mock_mode,
+        ),
     )
     payload = {
         "run_id": result.run.run_id,
@@ -82,39 +101,39 @@ def _run_create(args):
 
 
 def _runs_show(args):
-    run = _store(args).get_run(args.run_id)
+    run = _with_store(args, lambda store: store.get_run(args.run_id))
     if not run:
         raise NotFound("run not found: %s" % args.run_id)
     _json(run.__dict__)
 
 
 def _artifacts_list(args):
-    _json(_store(args).artifacts())
+    _json(_with_store(args, lambda store: store.artifacts()))
 
 
 def _artifacts_revisions(args):
-    _json([item.__dict__ for item in _store(args).revisions_for_artifact(args.artifact_id)])
+    _json(_with_store(args, lambda store: [item.__dict__ for item in store.revisions_for_artifact(args.artifact_id)]))
 
 
 def _artifacts_compare(args):
-    sys.stdout.write(_service(args).compare_revisions(args.left_revision_id, args.right_revision_id))
+    sys.stdout.write(_with_service(args, lambda service: service.compare_revisions(args.left_revision_id, args.right_revision_id)))
 
 
 def _artifacts_approved(args):
-    _json(_service(args).current_approved(args.artifact_id).__dict__)
+    _json(_with_service(args, lambda service: service.current_approved(args.artifact_id).__dict__))
 
 
 def _artifacts_export(args):
-    _json(_service(args).export_approved(args.artifact_id, args.output, force=args.force).__dict__)
+    _json(_with_service(args, lambda service: service.export_approved(args.artifact_id, args.output, force=args.force).__dict__))
 
 
 def _approvals_approve(args):
-    revision = _service(args).approve_revision(args.revision_id, args.reviewer, args.note)
+    revision = _with_service(args, lambda service: service.approve_revision(args.revision_id, args.reviewer, args.note))
     _json({"revision_id": revision.revision_id, "artifact_id": revision.artifact_id, "approval_status": revision.approval_status})
 
 
 def _approvals_reject(args):
-    revision = _service(args).reject_revision(args.revision_id, args.reviewer, args.note)
+    revision = _with_service(args, lambda service: service.reject_revision(args.revision_id, args.reviewer, args.note))
     _json({"revision_id": revision.revision_id, "artifact_id": revision.artifact_id, "approval_status": revision.approval_status})
 
 

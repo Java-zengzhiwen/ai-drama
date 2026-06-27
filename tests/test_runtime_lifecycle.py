@@ -47,7 +47,7 @@ def test_runtime_failure_and_parse_failure_are_persisted_without_revision(tmp_pa
     failed = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "mock", mock_mode="runtime_failure")
     assert failed.run.status == "RUNTIME_FAILED"
     assert failed.revision is None
-    assert service.store.get_run(failed.run.run_id).error_code == "RUNTIME_FAILED"
+    assert service.store.get_run(failed.run.run_id).error_code == "RUNTIME_PROVIDER_ERROR"
 
     parsed = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "mock", mock_mode="parse_failure")
     assert parsed.run.status == "PARSE_FAILED"

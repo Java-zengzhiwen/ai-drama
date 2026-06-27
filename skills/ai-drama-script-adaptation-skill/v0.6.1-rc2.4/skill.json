@@ -57,7 +57,7 @@
         "drama_script_revision"
       ],
       "command": [
-        "python3",
+        "{python}",
         "{entrypoint}",
         "--revision",
         "{revision_path}",
@@ -66,7 +66,13 @@
       ],
       "dependencies": [],
       "timeout_seconds": 10,
-      "expected_exit_behavior": "zero_is_pass"
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "runtime_policy",
+      "required_artifacts": [
+        "creator_facing_markdown_script"
+      ],
+      "current_profile_status": "APPLICABLE",
+      "current_profile_reason": "validates markdown revision shape"
     },
     {
       "validator_id": "genericity",
@@ -76,7 +82,7 @@
         "skill_package"
       ],
       "command": [
-        "python3",
+        "{python}",
         "{entrypoint}",
         "--root",
         "{skill_root}",
@@ -87,7 +93,13 @@
       ],
       "dependencies": [],
       "timeout_seconds": 10,
-      "expected_exit_behavior": "zero_is_pass"
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "migrated_skill",
+      "required_artifacts": [
+        "skill_package"
+      ],
+      "current_profile_status": "APPLICABLE",
+      "current_profile_reason": "validates generic package content"
     },
     {
       "validator_id": "schema",
@@ -101,7 +113,21 @@
         "jsonschema"
       ],
       "timeout_seconds": 10,
-      "expected_exit_behavior": "zero_is_pass"
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "migrated_skill",
+      "required_artifacts": [
+        "drama_script_json",
+        "beat_registry",
+        "coverage_report",
+        "assumption_log",
+        "conflict_registry",
+        "source_claim_audit",
+        "handoff",
+        "creator_presentation",
+        "test_reports"
+      ],
+      "current_profile_status": "NOT_APPLICABLE",
+      "current_profile_reason": "markdown-script-mvp-v1 persists only creator-facing Markdown, not the complete rc2.4 artifact bundle"
     },
     {
       "validator_id": "source_claim_audit",
@@ -113,7 +139,47 @@
       "command": [],
       "dependencies": [],
       "timeout_seconds": 10,
-      "expected_exit_behavior": "zero_is_pass"
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "migrated_skill",
+      "required_artifacts": [
+        "drama_script_json",
+        "beat_registry",
+        "coverage_report",
+        "assumption_log",
+        "conflict_registry",
+        "source_claim_audit",
+        "handoff",
+        "creator_presentation",
+        "test_reports"
+      ],
+      "current_profile_status": "NOT_APPLICABLE",
+      "current_profile_reason": "markdown-script-mvp-v1 persists only creator-facing Markdown, not the complete rc2.4 artifact bundle"
+    },
+    {
+      "validator_id": "assumptions_and_extensions",
+      "entrypoint": "validators/validate_assumptions_and_extensions.py",
+      "required": false,
+      "applies_to": [
+        "full_artifact_bundle"
+      ],
+      "command": [],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "migrated_skill",
+      "required_artifacts": [
+        "drama_script_json",
+        "beat_registry",
+        "coverage_report",
+        "assumption_log",
+        "conflict_registry",
+        "source_claim_audit",
+        "handoff",
+        "creator_presentation",
+        "test_reports"
+      ],
+      "current_profile_status": "NOT_APPLICABLE",
+      "current_profile_reason": "markdown-script-mvp-v1 persists only creator-facing Markdown, not the complete rc2.4 artifact bundle"
     },
     {
       "validator_id": "handoff_contract",
@@ -125,7 +191,151 @@
       "command": [],
       "dependencies": [],
       "timeout_seconds": 10,
-      "expected_exit_behavior": "zero_is_pass"
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "migrated_skill",
+      "required_artifacts": [
+        "drama_script_json",
+        "beat_registry",
+        "coverage_report",
+        "assumption_log",
+        "conflict_registry",
+        "source_claim_audit",
+        "handoff",
+        "creator_presentation",
+        "test_reports"
+      ],
+      "current_profile_status": "NOT_APPLICABLE",
+      "current_profile_reason": "markdown-script-mvp-v1 persists only creator-facing Markdown, not the complete rc2.4 artifact bundle"
+    },
+    {
+      "validator_id": "creator_presentation",
+      "entrypoint": "validators/validate_creator_presentation.py",
+      "required": false,
+      "applies_to": [
+        "full_artifact_bundle"
+      ],
+      "command": [],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "migrated_skill",
+      "required_artifacts": [
+        "drama_script_json",
+        "beat_registry",
+        "coverage_report",
+        "assumption_log",
+        "conflict_registry",
+        "source_claim_audit",
+        "handoff",
+        "creator_presentation",
+        "test_reports"
+      ],
+      "current_profile_status": "NOT_APPLICABLE",
+      "current_profile_reason": "markdown-script-mvp-v1 persists only creator-facing Markdown, not the complete rc2.4 artifact bundle"
+    },
+    {
+      "validator_id": "coverage_evidence",
+      "entrypoint": "validators/validate_coverage_evidence.py",
+      "required": false,
+      "applies_to": [
+        "full_artifact_bundle"
+      ],
+      "command": [],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "migrated_skill",
+      "required_artifacts": [
+        "drama_script_json",
+        "beat_registry",
+        "coverage_report",
+        "assumption_log",
+        "conflict_registry",
+        "source_claim_audit",
+        "handoff",
+        "creator_presentation",
+        "test_reports"
+      ],
+      "current_profile_status": "NOT_APPLICABLE",
+      "current_profile_reason": "markdown-script-mvp-v1 persists only creator-facing Markdown, not the complete rc2.4 artifact bundle"
+    },
+    {
+      "validator_id": "artifact_integrity",
+      "entrypoint": "validators/validate_artifact_integrity.py",
+      "required": false,
+      "applies_to": [
+        "full_artifact_bundle"
+      ],
+      "command": [],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "migrated_skill",
+      "required_artifacts": [
+        "drama_script_json",
+        "beat_registry",
+        "coverage_report",
+        "assumption_log",
+        "conflict_registry",
+        "source_claim_audit",
+        "handoff",
+        "creator_presentation",
+        "test_reports"
+      ],
+      "current_profile_status": "NOT_APPLICABLE",
+      "current_profile_reason": "markdown-script-mvp-v1 persists only creator-facing Markdown, not the complete rc2.4 artifact bundle"
+    },
+    {
+      "validator_id": "core_story_beats",
+      "entrypoint": "validators/validate_core_story_beats.py",
+      "required": false,
+      "applies_to": [
+        "full_artifact_bundle"
+      ],
+      "command": [],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "migrated_skill",
+      "required_artifacts": [
+        "drama_script_json",
+        "beat_registry",
+        "coverage_report",
+        "assumption_log",
+        "conflict_registry",
+        "source_claim_audit",
+        "handoff",
+        "creator_presentation",
+        "test_reports"
+      ],
+      "current_profile_status": "NOT_APPLICABLE",
+      "current_profile_reason": "markdown-script-mvp-v1 persists only creator-facing Markdown, not the complete rc2.4 artifact bundle"
+    },
+    {
+      "validator_id": "markdown_json_equivalence",
+      "entrypoint": "validators/validate_markdown_json_equivalence.py",
+      "required": false,
+      "applies_to": [
+        "full_artifact_bundle"
+      ],
+      "command": [],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "migrated_skill",
+      "required_artifacts": [
+        "drama_script_json",
+        "beat_registry",
+        "coverage_report",
+        "assumption_log",
+        "conflict_registry",
+        "source_claim_audit",
+        "handoff",
+        "creator_presentation",
+        "test_reports"
+      ],
+      "current_profile_status": "NOT_APPLICABLE",
+      "current_profile_reason": "markdown-script-mvp-v1 persists only creator-facing Markdown, not the complete rc2.4 artifact bundle"
     }
   ],
   "runtime_requirements": {
@@ -139,5 +349,27 @@
   "provenance": {
     "migration_baseline": "ed5d47534287b1dc14bed1ccedc87085be58ea08",
     "runtime_metadata": "added without changing migrated business validators"
-  }
+  },
+  "execution_profiles": [
+    {
+      "profile_id": "markdown-script-mvp-v1",
+      "output_artifact_type": "drama_script_markdown",
+      "output_format": "markdown",
+      "parser_version": "drama-script-markdown-v1",
+      "supported_artifacts": [
+        "creator_facing_markdown_script"
+      ],
+      "unsupported_bundle_artifacts": [
+        "drama_script_json",
+        "beat_registry",
+        "coverage_report",
+        "assumption_log",
+        "conflict_registry",
+        "source_claim_audit",
+        "handoff",
+        "creator_presentation",
+        "test_reports"
+      ]
+    }
+  ]
 }

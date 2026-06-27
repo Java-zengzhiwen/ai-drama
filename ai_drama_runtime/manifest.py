@@ -25,6 +25,7 @@ REQUIRED_FIELDS = {
     "runtime_requirements": dict,
     "dependency_requirements": list,
     "provenance": dict,
+    "execution_profiles": list,
 }
 
 VALIDATOR_FIELDS = {
@@ -36,6 +37,10 @@ VALIDATOR_FIELDS = {
     "dependencies": list,
     "timeout_seconds": int,
     "expected_exit_behavior": str,
+    "validator_origin": str,
+    "required_artifacts": list,
+    "current_profile_status": str,
+    "current_profile_reason": str,
 }
 
 
@@ -50,6 +55,10 @@ class SkillValidator:
     dependencies: list
     timeout_seconds: int
     expected_exit_behavior: str
+    validator_origin: str = "migrated_skill"
+    required_artifacts: list = None
+    current_profile_status: str = "APPLICABLE"
+    current_profile_reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -67,6 +76,7 @@ class SkillPackage:
     validators: list
     content_hash: str
     metadata: dict
+    execution_profiles: list
 
     @property
     def skill_ref(self):
@@ -152,6 +162,10 @@ def load_skill_package(root):
                 dependencies=[str(part) for part in item["dependencies"]],
                 timeout_seconds=item["timeout_seconds"],
                 expected_exit_behavior=item["expected_exit_behavior"],
+                validator_origin=item.get("validator_origin", "migrated_skill"),
+                required_artifacts=list(item.get("required_artifacts", [])),
+                current_profile_status=item.get("current_profile_status", "APPLICABLE"),
+                current_profile_reason=item.get("current_profile_reason", ""),
             )
         )
 
@@ -171,6 +185,7 @@ def load_skill_package(root):
         validators=validators,
         content_hash=_hash_files(root, active_files),
         metadata=data,
+        execution_profiles=list(data.get("execution_profiles", [])),
     )
 
 

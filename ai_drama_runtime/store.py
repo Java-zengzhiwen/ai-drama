@@ -6,10 +6,11 @@ import os
 import sqlite3
 import time
 import uuid
+from datetime import datetime, timezone
 
 
 def now_iso():
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,12 @@ class RunRecord:
     request_object_id: str
     response_object_id: str
     input_hash: str
+    request_hash: str
+    usage_status: str
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    usage_raw_object_id: str
     error_code: str
     error_message: str
     started_at: str
@@ -88,6 +95,7 @@ class ValidationRecord:
 
 @dataclass(frozen=True)
 class ApprovalRecord:
+    sequence: int
     record_id: str
     revision_id: str
     artifact_id: str
@@ -162,6 +170,12 @@ class RuntimeStore:
               request_object_id TEXT NOT NULL,
               response_object_id TEXT NOT NULL,
               input_hash TEXT NOT NULL,
+              request_hash TEXT NOT NULL,
+              usage_status TEXT NOT NULL,
+              prompt_tokens INTEGER NOT NULL,
+              completion_tokens INTEGER NOT NULL,
+              total_tokens INTEGER NOT NULL,
+              usage_raw_object_id TEXT NOT NULL,
               error_code TEXT NOT NULL,
               error_message TEXT NOT NULL,
               started_at TEXT NOT NULL,
@@ -218,7 +232,8 @@ class RuntimeStore:
               FOREIGN KEY(revision_id) REFERENCES revisions(revision_id)
             );
             CREATE TABLE IF NOT EXISTS approval_records (
-              record_id TEXT PRIMARY KEY,
+              sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+              record_id TEXT NOT NULL UNIQUE,
               revision_id TEXT NOT NULL,
               artifact_id TEXT NOT NULL,
               action TEXT NOT NULL,
@@ -243,7 +258,46 @@ class RuntimeStore:
               WHERE approval_status = 'approved';
             """
         )
+        self._ensure_columns()
         self.conn.commit()
+
+    def _ensure_columns(self):
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(runs)").fetchall()}
+        additions = {
+            "request_hash": "TEXT NOT NULL DEFAULT ''",
+            "usage_status": "TEXT NOT NULL DEFAULT 'NOT_PROVIDED'",
+            "prompt_tokens": "INTEGER NOT NULL DEFAULT 0",
+            "completion_tokens": "INTEGER NOT NULL DEFAULT 0",
+            "total_tokens": "INTEGER NOT NULL DEFAULT 0",
+            "usage_raw_object_id": "TEXT NOT NULL DEFAULT ''",
+        }
+        for name, spec in additions.items():
+            if name not in columns:
+                self.conn.execute("ALTER TABLE runs ADD COLUMN %s %s" % (name, spec))
+        approval_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(approval_records)").fetchall()}
+        if approval_columns and "sequence" not in approval_columns:
+            self.conn.executescript(
+                """
+                ALTER TABLE approval_records RENAME TO approval_records_old;
+                CREATE TABLE approval_records (
+                  sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                  record_id TEXT NOT NULL UNIQUE,
+                  revision_id TEXT NOT NULL,
+                  artifact_id TEXT NOT NULL,
+                  action TEXT NOT NULL,
+                  reviewer TEXT NOT NULL,
+                  note TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  FOREIGN KEY(revision_id) REFERENCES revisions(revision_id)
+                );
+                INSERT INTO approval_records
+                (sequence, record_id, revision_id, artifact_id, action, reviewer, note, created_at)
+                SELECT rowid, record_id, revision_id, artifact_id, action, reviewer, note, created_at
+                FROM approval_records_old
+                ORDER BY rowid;
+                DROP TABLE approval_records_old;
+                """
+            )
 
     def write_text_object(self, text):
         data = text.encode("utf-8")
@@ -285,6 +339,12 @@ class RuntimeStore:
         values.setdefault("completed_at", "")
         values.setdefault("duration_ms", 0)
         values.setdefault("response_object_id", "")
+        values.setdefault("request_hash", values.get("input_hash", ""))
+        values.setdefault("usage_status", "NOT_PROVIDED")
+        values.setdefault("prompt_tokens", 0)
+        values.setdefault("completion_tokens", 0)
+        values.setdefault("total_tokens", 0)
+        values.setdefault("usage_raw_object_id", "")
         values.setdefault("error_code", "")
         values.setdefault("error_message", "")
         columns = list(values)
@@ -424,7 +484,7 @@ class RuntimeStore:
     def latest_approval(self, revision_id):
         return self._approval_from_row(
             self.conn.execute(
-                "SELECT * FROM approval_records WHERE revision_id = ? ORDER BY created_at DESC LIMIT 1",
+                "SELECT * FROM approval_records WHERE revision_id = ? ORDER BY sequence DESC LIMIT 1",
                 (revision_id,),
             ).fetchone()
         )

@@ -50,11 +50,13 @@ source_basis: manifest
 """ % model
 
 
-def run_runtime(runtime, model, request_text, skill_instructions, mock_mode="success", timeout_seconds=60):
+def run_runtime(runtime, runtime_request, mock_mode="success", timeout_seconds=60):
     started = time.time()
+    request_json = runtime_request.to_json()
+    model = runtime_request.to_dict()["runtime_config"]["model"]
     if runtime == "mock":
         if mock_mode == "runtime_failure":
-            raise RuntimeErrorBase("MOCK_RUNTIME_FAILURE", "mock runtime failure")
+            raise RuntimeErrorBase("RUNTIME_PROVIDER_ERROR", "mock runtime failure")
         if mock_mode == "empty_response":
             raw = ""
         elif mock_mode == "parse_failure":
@@ -65,15 +67,21 @@ def run_runtime(runtime, model, request_text, skill_instructions, mock_mode="suc
             raw=raw,
             provider="mock",
             model=model,
-            usage={"prompt_chars": len(request_text), "completion_chars": len(raw)},
+            usage={
+                "usage_status": "PROVIDED",
+                "prompt_tokens": len(request_json) // 4,
+                "completion_tokens": len(raw) // 4,
+                "total_tokens": (len(request_json) + len(raw)) // 4,
+                "raw": {"prompt_chars": len(request_json), "completion_chars": len(raw)},
+            },
             duration_ms=int((time.time() - started) * 1000),
         )
     if runtime == "openai-compatible":
-        return _run_openai_compatible(model, request_text, skill_instructions, timeout_seconds, started)
+        return _run_openai_compatible(model, runtime_request, timeout_seconds, started)
     raise RuntimeErrorBase("UNKNOWN_RUNTIME", "unknown runtime: %s" % runtime)
 
 
-def _run_openai_compatible(model, request_text, skill_instructions, timeout_seconds, started):
+def _run_openai_compatible(model, runtime_request, timeout_seconds, started):
     api_key = os.environ.get("AI_DRAMA_API_KEY") or os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeErrorBase("CONFIG_MISSING_API_KEY", "API key is required")
@@ -89,21 +97,30 @@ def _run_openai_compatible(model, request_text, skill_instructions, timeout_seco
     try:
         response = client.chat.completions.create(
             model=model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Follow the skill instructions and return only the creator-facing Markdown script.",
-                },
-                {"role": "user", "content": skill_instructions + "\n\n" + request_text},
-            ],
+            messages=runtime_request.model_messages(),
         )
     except Exception as exc:
-        raise RuntimeErrorBase("OPENAI_RUNTIME_ERROR", "openai-compatible runtime failed") from exc
+        name = exc.__class__.__name__.lower()
+        code = "RUNTIME_PROVIDER_ERROR"
+        if "timeout" in name:
+            code = "RUNTIME_TIMEOUT"
+        elif "rate" in name:
+            code = "RUNTIME_RATE_LIMITED"
+        elif "auth" in name or "permission" in name:
+            code = "RUNTIME_AUTHENTICATION_FAILED"
+        raise RuntimeErrorBase(code, "openai-compatible runtime failed") from exc
     usage = getattr(response, "usage", None)
+    raw_usage = usage.model_dump() if usage else {}
     return RuntimeResponse(
         raw=response.model_dump_json(),
         provider="openai-compatible",
         model=model,
-        usage=usage.model_dump() if usage else {},
+        usage={
+            "usage_status": "PROVIDED" if usage else "NOT_PROVIDED",
+            "prompt_tokens": int(raw_usage.get("prompt_tokens") or 0),
+            "completion_tokens": int(raw_usage.get("completion_tokens") or 0),
+            "total_tokens": int(raw_usage.get("total_tokens") or 0),
+            "raw": raw_usage,
+        },
         duration_ms=int((time.time() - started) * 1000),
     )
