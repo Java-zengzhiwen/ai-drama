@@ -27,7 +27,10 @@ Alternative:
 
 ```bash
 python3 -m pip install -r requirements-dev.txt
+python3 -m ai_drama_runtime.cli --help
 ```
+
+The alternative installs dependencies only; use `python3 -m ai_drama_runtime.cli` instead of the `ai-drama` console script.
 
 ## Configuration
 
