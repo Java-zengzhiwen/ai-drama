@@ -1,0 +1,30 @@
+id: shengsi-chapter-001
+title: 死·生 第一章
+language: zh-CN
+
+purpose:
+  - script_runtime_smoke_test
+  - human_quality_acceptance
+  - artifact_revision_comparison
+
+inputs:
+  source_chapter: source-chapter.md
+  series_canon: series-canon.md
+  characters: characters.md
+  production_brief: production-brief.md
+
+reference_outputs:
+  approved_script:
+    path: approved-script.md
+    status: user_approved_reference
+
+evaluation:
+  exact_text_match: false
+  structural_validation: true
+  validator_execution: true
+  human_quality_review: true
+
+notes:
+  - approved-script.md 是人工认可的质量参考，不要求模型逐字复现
+  - 自动测试验证结构、状态、版本和可追溯性
+  - 剧本质量最终由人工对比验收
