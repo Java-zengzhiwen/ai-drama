@@ -1,0 +1,9 @@
+{
+  "final_status": "pass",
+  "error_code": "",
+  "message": "coverage evidence valid",
+  "expected_beat_count": 5,
+  "critical_count": 3,
+  "metadata_used_as_coverage_evidence_count": 0,
+  "synopsis_or_scene_card_status": false
+}

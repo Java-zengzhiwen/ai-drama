@@ -1,0 +1,18 @@
+{
+  "final_status": "pass",
+  "artifact": "fixture final validation report",
+  "fixture": "neutral-project",
+  "checks": [
+    "schema",
+    "coverage_evidence",
+    "markdown_json_equivalence",
+    "handoff",
+    "integrity",
+    "assumptions",
+    "source_claim_audit",
+    "presentation"
+  ],
+  "repair_version": "fixture-version",
+  "artifact_version": "fixture-version",
+  "status": "pass"
+}

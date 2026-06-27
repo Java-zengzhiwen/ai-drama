@@ -1,0 +1,13 @@
+{
+  "approved": false,
+  "approved_for_downstream": false,
+  "gate_status": "pending_user_review",
+  "artifact_refs": {
+    "script": "script.md",
+    "script_json": "script.json",
+    "coverage": "coverage-report.json",
+    "assumptions": "production-assumption-log.json",
+    "conflicts": "source-conflict-registry.json",
+    "presentation": "presentation.md"
+  }
+}

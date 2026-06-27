@@ -1,0 +1,25 @@
+{
+  "schema_version": "source-claim-audit/v0.6.1-rc2.2",
+  "project_id": "neutral-project",
+  "chapter_id": "fixture",
+  "claims_examined": [
+    {
+      "claim_id": "NSC-001",
+      "subject": "NSC-001",
+      "claim": "NSC-001: Initial alert may be a network issue. / Later diagnostic confirms sensor fault."
+    }
+  ],
+  "potential_conflicts": [
+    {
+      "conflict_id": "NSC-001",
+      "claim_a": "Initial alert may be a network issue.",
+      "claim_b": "Later diagnostic confirms sensor fault.",
+      "selected_interpretation": "Use later diagnostic confirmation.",
+      "resolution_basis": "Later evidence is explicit.",
+      "requires_registry_entry": true
+    }
+  ],
+  "selected_interpretation": "Use later diagnostic confirmation.",
+  "resolution_basis": "Later evidence is explicit.",
+  "created_at": "2026-06-23T00:00:00+08:00"
+}

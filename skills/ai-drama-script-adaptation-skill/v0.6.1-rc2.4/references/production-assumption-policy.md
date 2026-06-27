@@ -1,0 +1,3 @@
+# Production Assumption Policy
+
+Allowed classifications: visual_dramatization, environment_assumption, performance_assumption, dialogue_dramatization, continuity_assumption, character_motivation_assumption, adaptation_extension.

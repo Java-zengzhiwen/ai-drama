@@ -1,0 +1,115 @@
+{
+  "schema_version": "fixture/hybrid-script",
+  "project_id": "neutral-project",
+  "chapter_id": "neutral-chapter",
+  "artifact_id": "neutral-script",
+  "artifact_version": "fixture-version",
+  "status": "fixture",
+  "source_fingerprint": "neutral-source",
+  "creative_draft_ref": "script.md",
+  "coverage_report_ref": "coverage-report.json",
+  "adaptation_decision_log_ref": "adaptation-extension-registry.json",
+  "production_assumption_log_ref": "production-assumption-log.json",
+  "source_conflict_registry_ref": "source-conflict-registry.json",
+  "created_at": "2026-06-21T13:56:22.509426Z",
+  "updated_at": "2026-06-21T13:56:22.509438Z",
+  "scenes": [
+    {
+      "scene_id": "NA",
+      "title": "Alert Desk",
+      "location": "operations lab",
+      "time": "morning",
+      "interior_exterior": "interior",
+      "characters": [
+        "Engineer A",
+        "Team Lead B"
+      ],
+      "atmosphere": "tense",
+      "scene_goal": "surface the alert",
+      "emotion_start": "focused",
+      "emotion_progression": "concern to action",
+      "emotion_end": "decisive",
+      "environment": "workstations and status displays",
+      "actions": "Engineer A receives a safety alert before launch. Team Lead B refuses to ignore the alert.",
+      "dialogue": [
+        "Engineer A: The safety alert is real.",
+        "Team Lead B: Ground the test drone until we know why."
+      ],
+      "performance_details": "measured urgency",
+      "key_props": [
+        "terminal"
+      ],
+      "sound_or_silence": "alert tone",
+      "end_state": "drone grounding ordered",
+      "end_hook": "diagnostics begin",
+      "covered_beat_ids": [
+        "NB-A",
+        "NB-B"
+      ],
+      "full_scene_markdown": "## Scene NA Alert Desk\n\nLocation: operations lab.\nTime: morning.\nInterior/Exterior: interior.\nCharacters: Engineer A, Team Lead B.\nAtmosphere: tense.\nScene Goal: surface the alert.\nEmotion Start: focused.\nEmotion Progression: concern to action.\nEmotion End: decisive.\nEnvironment: workstations and status displays.\n\n### Actions\nEngineer A receives a safety alert before launch. Team Lead B refuses to ignore the alert.\n\n### Dialogue\nEngineer A: The safety alert is real.\nTeam Lead B: Ground the test drone until we know why.\n\n### Performance Details\nmeasured urgency\n\n### Sound or Effective Silence\nalert tone\n\n### End State\ndrone grounding ordered\n\n### End Hook\ndiagnostics begin\n### RC2.2 Body Evidence Fixture Lines\n### 动作\nEngineer A receives a safety alert before launch\nTeam Lead B refuses to ignore the alert\n"
+    },
+    {
+      "scene_id": "NB",
+      "title": "Test Bay",
+      "location": "test bay",
+      "time": "same day",
+      "interior_exterior": "interior",
+      "characters": [
+        "Engineer A"
+      ],
+      "atmosphere": "clinical",
+      "scene_goal": "confirm fault",
+      "emotion_start": "worried",
+      "emotion_progression": "testing to proof",
+      "emotion_end": "certain",
+      "environment": "test drone and diagnostic bench",
+      "actions": "The test drone is grounded. A hidden sensor fault is confirmed by repeated diagnostics.",
+      "dialogue": [
+        "Engineer A: The sensor fault repeats on every run."
+      ],
+      "performance_details": "quiet concentration",
+      "key_props": [
+        "test drone"
+      ],
+      "sound_or_silence": "machine hum",
+      "end_state": "fault confirmed",
+      "end_hook": "review required",
+      "covered_beat_ids": [
+        "NB-C",
+        "NB-D"
+      ],
+      "full_scene_markdown": "## Scene NB Test Bay\n\nLocation: test bay.\nTime: same day.\nInterior/Exterior: interior.\nCharacters: Engineer A.\nAtmosphere: clinical.\nScene Goal: confirm fault.\nEmotion Start: worried.\nEmotion Progression: testing to proof.\nEmotion End: certain.\nEnvironment: test drone and diagnostic bench.\n\n### Actions\nThe test drone is grounded. A hidden sensor fault is confirmed by repeated diagnostics.\n\n### Dialogue\nEngineer A: The sensor fault repeats on every run.\n\n### Performance Details\nquiet concentration\n\n### Sound or Effective Silence\nmachine hum\n\n### End State\nfault confirmed\n\n### End Hook\nreview required\n### RC2.2 Body Evidence Fixture Lines\n### 动作\nThe test drone is grounded\nA hidden sensor fault is confirmed\n"
+    },
+    {
+      "scene_id": "NC",
+      "title": "Review Room",
+      "location": "review room",
+      "time": "afternoon",
+      "interior_exterior": "interior",
+      "characters": [
+        "Team Lead B"
+      ],
+      "atmosphere": "formal",
+      "scene_goal": "delay launch",
+      "emotion_start": "grave",
+      "emotion_progression": "risk to responsibility",
+      "emotion_end": "resolved",
+      "environment": "conference table",
+      "actions": "Launch is delayed for a public safety review. The team documents the evidence.",
+      "dialogue": [
+        "Team Lead B: Delay the launch and publish the safety review."
+      ],
+      "performance_details": "steady tone",
+      "key_props": [
+        "review file"
+      ],
+      "sound_or_silence": "quiet room",
+      "end_state": "review scheduled",
+      "end_hook": "public statement next",
+      "covered_beat_ids": [
+        "NB-E"
+      ],
+      "full_scene_markdown": "## Scene NC Review Room\n\nLocation: review room.\nTime: afternoon.\nInterior/Exterior: interior.\nCharacters: Team Lead B.\nAtmosphere: formal.\nScene Goal: delay launch.\nEmotion Start: grave.\nEmotion Progression: risk to responsibility.\nEmotion End: resolved.\nEnvironment: conference table.\n\n### Actions\nLaunch is delayed for a public safety review. The team documents the evidence.\n\n### Dialogue\nTeam Lead B: Delay the launch and publish the safety review.\n\n### Performance Details\nsteady tone\n\n### Sound or Effective Silence\nquiet room\n\n### End State\nreview scheduled\n\n### End Hook\npublic statement next\n### RC2.2 Body Evidence Fixture Lines\n### 动作\nLaunch is delayed for a public safety review\n"
+    }
+  ]
+}

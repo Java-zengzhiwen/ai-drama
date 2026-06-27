@@ -1,0 +1,217 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hybrid-script.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project_id",
+    "chapter_id",
+    "artifact_id",
+    "artifact_version",
+    "status",
+    "source_fingerprint",
+    "creative_draft_ref",
+    "coverage_report_ref",
+    "adaptation_decision_log_ref",
+    "production_assumption_log_ref",
+    "source_conflict_registry_ref",
+    "scenes",
+    "created_at",
+    "updated_at"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chapter_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "artifact_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_fingerprint": {
+      "type": "string",
+      "minLength": 1
+    },
+    "creative_draft_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "coverage_report_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "adaptation_decision_log_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "production_assumption_log_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_conflict_registry_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "updated_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scenes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "scene_id",
+          "title",
+          "location",
+          "time",
+          "interior_exterior",
+          "characters",
+          "atmosphere",
+          "scene_goal",
+          "emotion_start",
+          "emotion_progression",
+          "emotion_end",
+          "environment",
+          "actions",
+          "dialogue",
+          "performance_details",
+          "key_props",
+          "sound_or_silence",
+          "end_state",
+          "end_hook",
+          "covered_beat_ids",
+          "full_scene_markdown"
+        ],
+        "properties": {
+          "scene_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "location": {
+            "type": "string",
+            "minLength": 1
+          },
+          "time": {
+            "type": "string",
+            "minLength": 1
+          },
+          "interior_exterior": {
+            "type": "string",
+            "minLength": 1
+          },
+          "atmosphere": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scene_goal": {
+            "type": "string",
+            "minLength": 1
+          },
+          "emotion_start": {
+            "type": "string",
+            "minLength": 1
+          },
+          "emotion_progression": {
+            "type": "string",
+            "minLength": 1
+          },
+          "emotion_end": {
+            "type": "string",
+            "minLength": 1
+          },
+          "environment": {
+            "type": "string",
+            "minLength": 1
+          },
+          "actions": {
+            "type": "string",
+            "minLength": 1
+          },
+          "performance_details": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sound_or_silence": {
+            "type": "string",
+            "minLength": 1
+          },
+          "end_state": {
+            "type": "string",
+            "minLength": 1
+          },
+          "end_hook": {
+            "type": "string",
+            "minLength": 1
+          },
+          "full_scene_markdown": {
+            "type": "string",
+            "minLength": 1
+          },
+          "characters": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "dialogue": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "key_props": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "covered_beat_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

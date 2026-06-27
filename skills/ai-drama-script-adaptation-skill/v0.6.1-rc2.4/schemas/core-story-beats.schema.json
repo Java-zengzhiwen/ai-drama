@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "core-story-beats.schema.json",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "beats"],
+  "properties": {
+    "schema_version": {"type": "string", "minLength": 1},
+    "beats": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "beat_id",
+          "importance",
+          "required_event",
+          "required_information",
+          "required_causal_link",
+          "required_relationship_state",
+          "required_emotional_change",
+          "body_evidence_requirement"
+        ],
+        "properties": {
+          "beat_id": {"type": "string", "minLength": 1},
+          "importance": {"type": "string", "enum": ["critical", "major", "supporting"]},
+          "source_evidence": {"type": "string", "minLength": 1},
+          "required_event": {"type": "string", "minLength": 1},
+          "required_information": {"type": "string", "minLength": 1},
+          "required_causal_link": {"type": "string", "minLength": 1},
+          "required_relationship_state": {"type": "string", "minLength": 1},
+          "required_emotional_change": {"type": "string", "minLength": 1},
+          "body_evidence_requirement": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}

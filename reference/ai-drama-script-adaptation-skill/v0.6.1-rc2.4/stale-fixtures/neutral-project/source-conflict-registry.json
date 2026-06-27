@@ -1,0 +1,24 @@
+{
+  "schema_version": "fixture/conflicts",
+  "items": [
+    {
+      "conflict_id": "NSC-001",
+      "source_locations": [
+        "source paragraph 2",
+        "source paragraph 4"
+      ],
+      "statement_a": "Initial alert may be a network issue.",
+      "statement_b": "Later diagnostic confirms sensor fault.",
+      "conflict_type": "initial_uncertainty_resolved_later",
+      "selected_interpretation": "Use later diagnostic confirmation.",
+      "selection_reason": "Later evidence is explicit.",
+      "supporting_later_events": [
+        "fault confirmed by repeated diagnostics"
+      ],
+      "impact_on_script": "Scene Beta confirms sensor fault.",
+      "requires_user_decision": false,
+      "status": "resolved"
+    }
+  ],
+  "conflict_detection_status": "resolved_by_user"
+}

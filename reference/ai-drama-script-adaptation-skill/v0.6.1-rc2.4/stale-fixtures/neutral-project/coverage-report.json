@@ -1,0 +1,190 @@
+{
+  "project_id": "neutral-project",
+  "chapter_id": "neutral-chapter",
+  "script_artifact_id": "neutral-script",
+  "script_artifact_version": "fixture-version",
+  "source_beat_registry_ref": "core-story-beats.json",
+  "expected_beat_count": 5,
+  "evaluated_beat_count": 5,
+  "items": [
+    {
+      "beat_id": "NB-A",
+      "importance": "critical",
+      "status": "fully_covered",
+      "source_evidence_refs": [
+        {
+          "text": "Engineer receives a safety alert before launch."
+        }
+      ],
+      "script_evidence_refs": [
+        {
+          "scene_id": "NA",
+          "text": "Engineer A receives a safety alert before launch"
+        }
+      ],
+      "script_scene_ids": [
+        "NA"
+      ],
+      "coverage_reason": "body evidence present",
+      "evaluator": "fixture",
+      "evaluated_at": "2026-06-21T13:56:22.509445Z",
+      "coverage_dimensions": {
+        "event": "fully_covered",
+        "information": "fully_covered",
+        "causal": "not_applicable",
+        "emotional": "not_applicable",
+        "relationship": "not_applicable"
+      },
+      "body_evidence_zone_refs": [
+        {
+          "scene_id": "NA",
+          "text": "Engineer A receives a safety alert before launch"
+        }
+      ]
+    },
+    {
+      "beat_id": "NB-B",
+      "importance": "critical",
+      "status": "fully_covered",
+      "source_evidence_refs": [
+        {
+          "text": "Team lead refuses to ignore the alert."
+        }
+      ],
+      "script_evidence_refs": [
+        {
+          "scene_id": "NA",
+          "text": "Team Lead B refuses to ignore the alert"
+        }
+      ],
+      "script_scene_ids": [
+        "NA"
+      ],
+      "coverage_reason": "body evidence present",
+      "evaluator": "fixture",
+      "evaluated_at": "2026-06-21T13:56:22.509449Z",
+      "coverage_dimensions": {
+        "event": "fully_covered",
+        "information": "fully_covered",
+        "causal": "not_applicable",
+        "emotional": "not_applicable",
+        "relationship": "not_applicable"
+      },
+      "body_evidence_zone_refs": [
+        {
+          "scene_id": "NA",
+          "text": "Team Lead B refuses to ignore the alert"
+        }
+      ]
+    },
+    {
+      "beat_id": "NB-C",
+      "importance": "major",
+      "status": "fully_covered",
+      "source_evidence_refs": [
+        {
+          "text": "A test drone is grounded."
+        }
+      ],
+      "script_evidence_refs": [
+        {
+          "scene_id": "NB",
+          "text": "The test drone is grounded"
+        }
+      ],
+      "script_scene_ids": [
+        "NB"
+      ],
+      "coverage_reason": "body evidence present",
+      "evaluator": "fixture",
+      "evaluated_at": "2026-06-21T13:56:22.509451Z",
+      "coverage_dimensions": {
+        "event": "fully_covered",
+        "information": "fully_covered",
+        "causal": "not_applicable",
+        "emotional": "not_applicable",
+        "relationship": "not_applicable"
+      },
+      "body_evidence_zone_refs": [
+        {
+          "scene_id": "NB",
+          "text": "The test drone is grounded"
+        }
+      ]
+    },
+    {
+      "beat_id": "NB-D",
+      "importance": "critical",
+      "status": "fully_covered",
+      "source_evidence_refs": [
+        {
+          "text": "The hidden sensor fault is confirmed."
+        }
+      ],
+      "script_evidence_refs": [
+        {
+          "scene_id": "NB",
+          "text": "A hidden sensor fault is confirmed"
+        }
+      ],
+      "script_scene_ids": [
+        "NB"
+      ],
+      "coverage_reason": "body evidence present",
+      "evaluator": "fixture",
+      "evaluated_at": "2026-06-21T13:56:22.509453Z",
+      "coverage_dimensions": {
+        "event": "fully_covered",
+        "information": "fully_covered",
+        "causal": "not_applicable",
+        "emotional": "not_applicable",
+        "relationship": "not_applicable"
+      },
+      "body_evidence_zone_refs": [
+        {
+          "scene_id": "NB",
+          "text": "A hidden sensor fault is confirmed"
+        }
+      ]
+    },
+    {
+      "beat_id": "NB-E",
+      "importance": "major",
+      "status": "fully_covered",
+      "source_evidence_refs": [
+        {
+          "text": "Launch is delayed for a public safety review."
+        }
+      ],
+      "script_evidence_refs": [
+        {
+          "scene_id": "NC",
+          "text": "Launch is delayed for a public safety review"
+        }
+      ],
+      "script_scene_ids": [
+        "NC"
+      ],
+      "coverage_reason": "body evidence present",
+      "evaluator": "fixture",
+      "evaluated_at": "2026-06-21T13:56:22.509454Z",
+      "coverage_dimensions": {
+        "event": "fully_covered",
+        "information": "fully_covered",
+        "causal": "not_applicable",
+        "emotional": "not_applicable",
+        "relationship": "not_applicable"
+      },
+      "body_evidence_zone_refs": [
+        {
+          "scene_id": "NC",
+          "text": "Launch is delayed for a public safety review"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "strict_critical_beat_coverage": "100%"
+  },
+  "created_at": "2026-06-21T13:56:22.509456Z"
+}

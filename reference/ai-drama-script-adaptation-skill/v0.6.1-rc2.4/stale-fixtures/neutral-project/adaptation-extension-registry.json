@@ -1,0 +1,11 @@
+{
+  "schema_version": "fixture/extensions",
+  "items": [
+    {
+      "extension_id": "NEX-001",
+      "text": "The company secretly sabotaged the drone.",
+      "authorized": false,
+      "status": "excluded"
+    }
+  ]
+}

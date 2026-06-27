@@ -1,0 +1,15 @@
+{
+  "items": [
+    {
+      "assumption_id": "",
+      "scene_id": "",
+      "exact_content": "",
+      "source_support": "",
+      "classification": "",
+      "changes_story_fact": false,
+      "changes_character_motivation": false,
+      "requires_user_approval": false,
+      "status": ""
+    }
+  ]
+}

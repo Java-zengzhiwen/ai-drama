@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "core-story-beat-coverage.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "project_id",
+    "chapter_id",
+    "script_artifact_id",
+    "script_artifact_version",
+    "source_beat_registry_ref",
+    "expected_beat_count",
+    "evaluated_beat_count",
+    "items",
+    "summary",
+    "created_at"
+  ],
+  "properties": {
+    "project_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "chapter_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "script_artifact_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "script_artifact_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_beat_registry_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expected_beat_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "evaluated_beat_count": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "summary": {
+      "type": "object"
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "beat_id",
+          "importance",
+          "status",
+          "source_evidence_refs",
+          "script_evidence_refs",
+          "script_scene_ids",
+          "coverage_reason",
+          "evaluator",
+          "evaluated_at",
+          "coverage_dimensions",
+          "body_evidence_zone_refs"
+        ],
+        "properties": {
+          "beat_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "importance": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "major",
+              "supporting"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "fully_covered",
+              "partially_covered",
+              "missing",
+              "distorted"
+            ]
+          },
+          "source_evidence_refs": {
+            "type": "array",
+            "minItems": 1
+          },
+          "script_evidence_refs": {
+            "type": "array",
+            "minItems": 1
+          },
+          "script_scene_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "coverage_reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evaluator": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evaluated_at": {
+            "type": "string",
+            "minLength": 1
+          },
+          "coverage_dimensions": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "event",
+              "information",
+              "causal",
+              "emotional",
+              "relationship"
+            ],
+            "properties": {
+              "event": {
+                "type": "string",
+                "enum": [
+                  "fully_covered",
+                  "partially_covered",
+                  "missing",
+                  "distorted",
+                  "not_applicable"
+                ]
+              },
+              "information": {
+                "type": "string",
+                "enum": [
+                  "fully_covered",
+                  "partially_covered",
+                  "missing",
+                  "distorted",
+                  "not_applicable"
+                ]
+              },
+              "causal": {
+                "type": "string",
+                "enum": [
+                  "fully_covered",
+                  "partially_covered",
+                  "missing",
+                  "distorted",
+                  "not_applicable"
+                ]
+              },
+              "emotional": {
+                "type": "string",
+                "enum": [
+                  "fully_covered",
+                  "partially_covered",
+                  "missing",
+                  "distorted",
+                  "not_applicable"
+                ]
+              },
+              "relationship": {
+                "type": "string",
+                "enum": [
+                  "fully_covered",
+                  "partially_covered",
+                  "missing",
+                  "distorted",
+                  "not_applicable"
+                ]
+              }
+            }
+          },
+          "body_evidence_zone_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    }
+  }
+}

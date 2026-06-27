@@ -1,0 +1,65 @@
+{
+  "schema_version": "fixture/core-story-beats",
+  "beats": [
+    {
+      "beat_id": "NB-A",
+      "importance": "critical",
+      "original_event": "Engineer receives a safety alert before launch.",
+      "source_evidence": "source: paragraph 1",
+      "required_event": "Engineer receives a safety alert before launch.",
+      "required_information": "information conveyed by beat: Engineer receives a safety alert before launch.",
+      "required_causal_link": "not_applicable: fixture beat has no separate causal link beyond event sequence",
+      "required_relationship_state": "not_applicable: fixture beat has no relationship-state change",
+      "required_emotional_change": "not_applicable: fixture beat has no separate emotional turn",
+      "body_evidence_requirement": "Evidence must appear under allowed body headings."
+    },
+    {
+      "beat_id": "NB-B",
+      "importance": "critical",
+      "original_event": "Team lead refuses to ignore the alert.",
+      "source_evidence": "source: paragraph 2",
+      "required_event": "Team lead refuses to ignore the alert.",
+      "required_information": "information conveyed by beat: Team lead refuses to ignore the alert.",
+      "required_causal_link": "not_applicable: fixture beat has no separate causal link beyond event sequence",
+      "required_relationship_state": "not_applicable: fixture beat has no relationship-state change",
+      "required_emotional_change": "not_applicable: fixture beat has no separate emotional turn",
+      "body_evidence_requirement": "Evidence must appear under allowed body headings."
+    },
+    {
+      "beat_id": "NB-C",
+      "importance": "major",
+      "original_event": "A test drone is grounded.",
+      "source_evidence": "source: paragraph 3",
+      "required_event": "A test drone is grounded.",
+      "required_information": "information conveyed by beat: A test drone is grounded.",
+      "required_causal_link": "not_applicable: fixture beat has no separate causal link beyond event sequence",
+      "required_relationship_state": "not_applicable: fixture beat has no relationship-state change",
+      "required_emotional_change": "not_applicable: fixture beat has no separate emotional turn",
+      "body_evidence_requirement": "Evidence must appear under allowed body headings."
+    },
+    {
+      "beat_id": "NB-D",
+      "importance": "critical",
+      "original_event": "The hidden sensor fault is confirmed.",
+      "source_evidence": "source: paragraph 4",
+      "required_event": "The hidden sensor fault is confirmed.",
+      "required_information": "information conveyed by beat: The hidden sensor fault is confirmed.",
+      "required_causal_link": "not_applicable: fixture beat has no separate causal link beyond event sequence",
+      "required_relationship_state": "not_applicable: fixture beat has no relationship-state change",
+      "required_emotional_change": "not_applicable: fixture beat has no separate emotional turn",
+      "body_evidence_requirement": "Evidence must appear under allowed body headings."
+    },
+    {
+      "beat_id": "NB-E",
+      "importance": "major",
+      "original_event": "Launch is delayed for a public safety review.",
+      "source_evidence": "source: paragraph 5",
+      "required_event": "Launch is delayed for a public safety review.",
+      "required_information": "information conveyed by beat: Launch is delayed for a public safety review.",
+      "required_causal_link": "not_applicable: fixture beat has no separate causal link beyond event sequence",
+      "required_relationship_state": "not_applicable: fixture beat has no relationship-state change",
+      "required_emotional_change": "not_applicable: fixture beat has no separate emotional turn",
+      "body_evidence_requirement": "Evidence must appear under allowed body headings."
+    }
+  ]
+}

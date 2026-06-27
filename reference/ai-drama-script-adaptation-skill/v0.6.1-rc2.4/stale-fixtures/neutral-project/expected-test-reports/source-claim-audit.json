@@ -1,0 +1,8 @@
+{
+  "final_status": "pass",
+  "error_code": "",
+  "message": "source claim audit valid",
+  "claims_examined": 1,
+  "potential_conflict_count": 1,
+  "source_conflict_registry_checked": true
+}

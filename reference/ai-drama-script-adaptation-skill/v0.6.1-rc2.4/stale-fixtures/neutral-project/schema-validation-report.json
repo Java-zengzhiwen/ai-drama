@@ -1,0 +1,8 @@
+{
+  "fixture": "neutral-project",
+  "name": "schema-validation-report.json",
+  "repair_version": "fixture-version",
+  "artifact_version": "fixture-version",
+  "status": "pass",
+  "final_status": "pass"
+}

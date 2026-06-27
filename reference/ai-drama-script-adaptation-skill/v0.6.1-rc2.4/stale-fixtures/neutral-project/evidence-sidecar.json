@@ -1,0 +1,13 @@
+{
+  "hashes": {
+    "script.md": "b11c378471ae22afc37e4bfedb701a53f8e29fa3f3cb18d21322148b842e874a",
+    "script.json": "18d7eea9a223eb112e89e446d40ca8c93a37ac17adf994275893de3966f03812",
+    "coverage-report.json": "9175320b255e6ab2b13b88c026e4890f0a823eb39c7bfe0ce59d5979c22b26c4",
+    "production-assumption-log.json": "e2a46e7e9f687cc30cfa861e7a72c6fe1e2c8ff68193ee127c4aaad60a4de551",
+    "source-conflict-registry.json": "ee0b4b129c5e30e8b44414b27d96b6e1154d8f9c70912a1b44c61cc05cd76c2d",
+    "adaptation-extension-registry.json": "7b9274cab53de7a8a7de089057119ed60ac18ee66dc3505a7fd623beb9b82a87",
+    "schema-validation-report.json": "fabd9237aa5eebd4b6704b398dcd4eed66b28e5f360fcc4400a6ba447b3bc289",
+    "presentation.md": "a4537ad48526864e7716ff5866d8a9034f005a3ae35d29cc88183671a53068a4",
+    "source-claim-audit.json": "a3ac8e90e7711c53070ca6f49ace33f373c5f1cdc5ec718236717c870937c083"
+  }
+}

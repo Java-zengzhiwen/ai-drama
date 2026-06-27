@@ -1,0 +1,93 @@
+{
+  "project_id": "fixture-project",
+  "chapter_id": "fixture-chapter",
+  "artifact_version": "fixture-version",
+  "source_fingerprint": "fixture-source",
+  "created_at": "2026-06-21T13:56:22.512404Z",
+  "updated_at": "2026-06-21T13:56:22.512417Z",
+  "input_refs": {
+    "source_chapter": {
+      "path": "source-chapter.md",
+      "sha256": "ea91571d0c09ffd28dad228529584755ebce28d8369a2736e89445bb249602a2"
+    },
+    "worldbuilding": {
+      "path": "worldbuilding.md",
+      "sha256": "6f992809589322769b11a4471d33d4b73403f46eee1136e152ee4ece3f4bca67"
+    },
+    "characters": {
+      "path": "characters.md",
+      "sha256": "d85613483cbc0de6fb42ae58b28b8b374c9f3d9b74da92fff37fd3dd95e0431c"
+    },
+    "project_brief": {
+      "path": "project-brief.md",
+      "sha256": "46410d5880cda2efed80486957f516ddbbc075f183e7ff69027ca7cb2bbf4dc8"
+    },
+    "canon": {
+      "path": "canon.json",
+      "sha256": "576b95786219bafa2752192eb2649a459dba51320fb50f05d9fb2511f7f90cf6"
+    },
+    "project_setup": {
+      "path": "project-setup.json",
+      "sha256": "adc5c0d7994db299fc9c3d139e2df88b3df015609226b604b1fa08d019fb6b8c"
+    },
+    "core_story_beats": {
+      "path": "core-story-beats.json",
+      "sha256": "d4546a8b29e19916072a9152b111b13e9d0baa7403052b43e54f50d529e72a40"
+    }
+  },
+  "output_refs": {
+    "script_markdown": {
+      "path": "script.md",
+      "sha256": "b11c378471ae22afc37e4bfedb701a53f8e29fa3f3cb18d21322148b842e874a"
+    },
+    "script_json": {
+      "path": "script.json",
+      "sha256": "18d7eea9a223eb112e89e446d40ca8c93a37ac17adf994275893de3966f03812"
+    },
+    "coverage_report": {
+      "path": "coverage-report.json",
+      "sha256": "9175320b255e6ab2b13b88c026e4890f0a823eb39c7bfe0ce59d5979c22b26c4"
+    },
+    "production_assumption_log": {
+      "path": "production-assumption-log.json",
+      "sha256": "e2a46e7e9f687cc30cfa861e7a72c6fe1e2c8ff68193ee127c4aaad60a4de551"
+    },
+    "source_conflict_registry": {
+      "path": "source-conflict-registry.json",
+      "sha256": "ee0b4b129c5e30e8b44414b27d96b6e1154d8f9c70912a1b44c61cc05cd76c2d"
+    },
+    "adaptation_extension_registry": {
+      "path": "adaptation-extension-registry.json",
+      "sha256": "7b9274cab53de7a8a7de089057119ed60ac18ee66dc3505a7fd623beb9b82a87"
+    },
+    "schema_validation_report": {
+      "path": "schema-validation-report.json",
+      "sha256": "fabd9237aa5eebd4b6704b398dcd4eed66b28e5f360fcc4400a6ba447b3bc289"
+    },
+    "evidence_sidecar": {
+      "path": "evidence-sidecar.json",
+      "sha256": "18cc76ee563ac9dbcae3ad1b10bc7f1f6f429061b195f359e25988de8cce5e76"
+    },
+    "creator_presentation": {
+      "path": "presentation.md",
+      "sha256": "a4537ad48526864e7716ff5866d8a9034f005a3ae35d29cc88183671a53068a4"
+    },
+    "source_claim_audit": {
+      "path": "source-claim-audit.json",
+      "sha256": "a3ac8e90e7711c53070ca6f49ace33f373c5f1cdc5ec718236717c870937c083"
+    }
+  },
+  "validation_report_ref": {
+    "path": "final-validation-report.json",
+    "sha256": "d0d35f547c7b13264617da07e8727e3d84b47fc5e4dc405e52ede155c6771840"
+  },
+  "stage_result_ref": {
+    "path": "stage-result.json",
+    "sha256": "c21c4db88834fb3028a0849d13aef06552f58446fe802b8e05c927599c36d19a"
+  },
+  "stale_status": "fresh",
+  "blocking_issues": [],
+  "handoff_status": "pending_user_review",
+  "approved_for_downstream": false,
+  "current_gate": "SCRIPT_APPROVAL"
+}

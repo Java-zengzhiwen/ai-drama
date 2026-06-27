@@ -1,0 +1,8 @@
+{
+  "stage": "SCRIPT_APPROVAL",
+  "status": "USER_ACCEPTANCE_REQUIRED",
+  "approved_for_downstream": false,
+  "fixture": "neutral-project",
+  "repair_version": "fixture-version",
+  "artifact_version": "fixture-version"
+}

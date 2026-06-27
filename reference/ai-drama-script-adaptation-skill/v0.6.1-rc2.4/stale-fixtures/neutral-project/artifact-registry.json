@@ -1,0 +1,74 @@
+{
+  "artifacts": [
+    {
+      "path": "script.md",
+      "sha256": "b11c378471ae22afc37e4bfedb701a53f8e29fa3f3cb18d21322148b842e874a",
+      "size_bytes": 2252
+    },
+    {
+      "path": "script.json",
+      "sha256": "18d7eea9a223eb112e89e446d40ca8c93a37ac17adf994275893de3966f03812",
+      "size_bytes": 5974
+    },
+    {
+      "path": "coverage-report.json",
+      "sha256": "9175320b255e6ab2b13b88c026e4890f0a823eb39c7bfe0ce59d5979c22b26c4",
+      "size_bytes": 5071
+    },
+    {
+      "path": "production-assumption-log.json",
+      "sha256": "e2a46e7e9f687cc30cfa861e7a72c6fe1e2c8ff68193ee127c4aaad60a4de551",
+      "size_bytes": 466
+    },
+    {
+      "path": "source-conflict-registry.json",
+      "sha256": "ee0b4b129c5e30e8b44414b27d96b6e1154d8f9c70912a1b44c61cc05cd76c2d",
+      "size_bytes": 791
+    },
+    {
+      "path": "adaptation-extension-registry.json",
+      "sha256": "7b9274cab53de7a8a7de089057119ed60ac18ee66dc3505a7fd623beb9b82a87",
+      "size_bytes": 221
+    },
+    {
+      "path": "schema-validation-report.json",
+      "sha256": "fabd9237aa5eebd4b6704b398dcd4eed66b28e5f360fcc4400a6ba447b3bc289",
+      "size_bytes": 204
+    },
+    {
+      "path": "source-claim-audit.json",
+      "sha256": "a3ac8e90e7711c53070ca6f49ace33f373c5f1cdc5ec718236717c870937c083",
+      "size_bytes": 848
+    },
+    {
+      "path": "presentation.md",
+      "sha256": "a4537ad48526864e7716ff5866d8a9034f005a3ae35d29cc88183671a53068a4",
+      "size_bytes": 3239
+    },
+    {
+      "path": "evidence-sidecar.json",
+      "sha256": "18cc76ee563ac9dbcae3ad1b10bc7f1f6f429061b195f359e25988de8cce5e76",
+      "size_bytes": 905
+    },
+    {
+      "path": "script-handoff-manifest.json",
+      "sha256": "7a83cdb117b830f77e1122e30a3ec4f3a3d96fdd17d3c84a556d4574241ed50f",
+      "size_bytes": 3384
+    },
+    {
+      "path": "script-approval-request.json",
+      "sha256": "d87fc7ad30b7efa7fdb491ef9aa955b6c6f2cba2a1fc854ff8a75030fe60e43e",
+      "size_bytes": 368
+    },
+    {
+      "path": "final-validation-report.json",
+      "sha256": "d0d35f547c7b13264617da07e8727e3d84b47fc5e4dc405e52ede155c6771840",
+      "size_bytes": 397
+    },
+    {
+      "path": "stage-result.json",
+      "sha256": "c21c4db88834fb3028a0849d13aef06552f58446fe802b8e05c927599c36d19a",
+      "size_bytes": 221
+    }
+  ]
+}

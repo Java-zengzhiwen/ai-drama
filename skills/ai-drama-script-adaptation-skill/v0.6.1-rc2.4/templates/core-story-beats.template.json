@@ -1,0 +1,16 @@
+{
+  "schema_version": "template/core-story-beats",
+  "beats": [
+    {
+      "beat_id": "string",
+      "importance": "critical|major|supporting",
+      "source_evidence": "string",
+      "required_event": "string",
+      "required_information": "string",
+      "required_causal_link": "string",
+      "required_relationship_state": "string",
+      "required_emotional_change": "string",
+      "body_evidence_requirement": "string"
+    }
+  ]
+}

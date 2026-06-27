@@ -1,0 +1,16 @@
+{
+  "schema_version": "fixture/assumptions",
+  "items": [
+    {
+      "assumption_id": "NPA-001",
+      "scene_id": "NA",
+      "exact_content": "Alert tone in operations lab.",
+      "source_support": "Source implies alert; exact sound is not explicit.",
+      "classification": "environment_assumption",
+      "changes_story_fact": false,
+      "changes_character_motivation": false,
+      "requires_user_approval": false,
+      "status": "classified"
+    }
+  ]
+}

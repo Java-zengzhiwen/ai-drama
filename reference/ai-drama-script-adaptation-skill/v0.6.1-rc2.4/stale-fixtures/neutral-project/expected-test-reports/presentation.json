@@ -1,0 +1,8 @@
+{
+  "final_status": "pass",
+  "error_code": "",
+  "message": "creator presentation valid",
+  "approved_for_downstream": false,
+  "current_gate": "SCRIPT_APPROVAL",
+  "gate_status": "USER_ACCEPTANCE_REQUIRED"
+}

@@ -1,0 +1,23 @@
+{
+  "input_refs": {
+    "source_chapter": {"path": "", "sha256": ""},
+    "worldbuilding": {"path": "", "sha256": ""},
+    "characters": {"path": "", "sha256": ""},
+    "project_brief": {"path": "", "sha256": ""}
+  },
+  "output_refs": {
+    "script_markdown": {"path": "", "sha256": ""},
+    "script_json": {"path": "", "sha256": ""},
+    "coverage_report": {"path": "", "sha256": ""},
+    "production_assumption_log": {"path": "", "sha256": ""},
+    "source_conflict_registry": {"path": "", "sha256": ""},
+    "adaptation_extension_registry": {"path": "", "sha256": ""},
+    "schema_validation_report": {"path": "", "sha256": ""},
+    "evidence_sidecar": {"path": "", "sha256": ""},
+    "creator_presentation": {"path": "", "sha256": ""},
+    "source_claim_audit": {"path": "", "sha256": ""}
+  },
+  "blocking_issues": [],
+  "approved_for_downstream": false,
+  "current_gate": "SCRIPT_APPROVAL"
+}

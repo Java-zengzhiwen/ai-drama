@@ -1,0 +1,19 @@
+{
+  "items": [
+    {
+      "conflict_id": "",
+      "source_locations": [],
+      "statement_a": "",
+      "statement_b": "",
+      "conflict_type": "",
+      "selected_interpretation": "",
+      "selection_reason": "",
+      "impact_on_script": "",
+      "requires_user_decision": false,
+      "status": ""
+    }
+  ],
+  "source_claim_audit_ref": "",
+  "claims_examined": [],
+  "potential_conflicts": []
+}

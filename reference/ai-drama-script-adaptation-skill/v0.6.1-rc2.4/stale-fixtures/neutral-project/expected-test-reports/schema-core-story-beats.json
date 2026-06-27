@@ -1,0 +1,11 @@
+{
+  "final_status": "pass",
+  "error_code": "",
+  "message": "schema validation passed",
+  "schema_path": "schemas/core-story-beats.schema.json",
+  "instance_path": "/Users/zengzhiwen/AI-manju/ai-drama-script-agent-lab/04-work/ai-drama-script-adaptation-skill-v0.6.1-rc2.4/fixtures/neutral-project/core-story-beats.json",
+  "validation_error_count": 0,
+  "validation_errors": [],
+  "validator_implementation": "/Users/zengzhiwen/AI-manju/ai-drama-script-agent-lab/04-work/ai-drama-script-adaptation-skill-v0.6.1-rc2.4/.deps/jsonschema/__init__.py",
+  "jsonschema_version": "4.23.0"
+}
