@@ -1,31 +1,14 @@
 # Script Skill Runtime MVP
 
-This repository includes a local, single-user runtime for the migrated script adaptation skill.
+The runtime is local and CLI-first. It stores SQLite metadata under `runtime-data/runtime.db` and immutable content objects under `runtime-data/objects` by default.
 
-## Commands
-
-Validate the active skill package:
+Minimal mock flow:
 
 ```bash
-python3 -m ai_drama_runtime.cli skills validate \
-  --skill-root skills/ai-drama-script-adaptation-skill/v0.6.1-rc2.4
+ai-drama skills validate ai-drama-script-adaptation-skill@v0.6.1-rc2.4
+ai-drama run create --skill ai-drama-script-adaptation-skill@v0.6.1-rc2.4 --input acceptance/shengsi-chapter-001 --runtime mock --model mock-script-v1
+ai-drama approvals approve REVISION_ID --reviewer local-user
+ai-drama artifacts export-approved shengsi-chapter-001 --output runtime-data/approved.md
 ```
 
-Run the Shengsi acceptance corpus with the deterministic mock runtime:
-
-```bash
-python3 -m ai_drama_runtime.cli run \
-  --skill-root skills/ai-drama-script-adaptation-skill/v0.6.1-rc2.4 \
-  --acceptance-root acceptance/shengsi-chapter-001 \
-  --runtime mock \
-  --model mock-script-v1
-```
-
-Script-approve and export a revision:
-
-```bash
-python3 -m ai_drama_runtime.cli approve REVISION_ID --reviewer local-user
-python3 -m ai_drama_runtime.cli export shengsi-chapter-001 --output runtime-data/approved-script.md
-```
-
-The runtime persists SQLite metadata under `runtime-data/runtime.db` and immutable content objects under `runtime-data/objects` by default. It records run provenance, revision hashes, validator results, script approval/rejection records, and export records. The acceptance reference output `approved-script.md` is loaded only as reference material and is excluded from runtime requests. Script approval does not authorize downstream execution.
+`approved-script.md` from the acceptance corpus is reference-only. It is not included in runtime requests or model messages.
