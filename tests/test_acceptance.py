@@ -48,3 +48,29 @@ evaluation:
 
     with pytest.raises(AcceptanceError, match="absolute"):
         load_acceptance_bundle(root)
+
+
+def test_acceptance_bundle_rejects_symlink_escape(tmp_path):
+    root = tmp_path / "case"
+    root.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("source", encoding="utf-8")
+    (root / "source.md").symlink_to(outside)
+    (root / "approved.md").write_text("approved", encoding="utf-8")
+    (root / "acceptance-manifest.yaml").write_text(
+        """
+id: bad
+inputs:
+  source_chapter: source.md
+reference_outputs:
+  approved_script:
+    path: approved.md
+    status: user_approved_reference
+evaluation:
+  exact_text_match: false
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(AcceptanceError, match="escapes"):
+        load_acceptance_bundle(root)

@@ -3,6 +3,7 @@ import difflib
 import hashlib
 import json
 from pathlib import Path
+from .store import now_iso
 
 from .acceptance import load_acceptance_bundle
 from .parser import PARSER_VERSION, ParseError, parse_script_response
@@ -199,7 +200,7 @@ class RuntimeService:
             "model": revision.runtime_model,
             "content_hash": revision.content_hash,
             "approval_record": approval.__dict__ if approval else None,
-            "export_time": self.store.record_export.__name__,
+            "export_time": now_iso(),
         }
         provenance_object_id = self.store.write_text_object(json.dumps(provenance, ensure_ascii=False, sort_keys=True))
         provenance["provenance_object_id"] = provenance_object_id
