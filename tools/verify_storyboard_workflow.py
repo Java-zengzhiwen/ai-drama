@@ -787,7 +787,6 @@ def main(argv=None):
         tested_worktree_clean=tested_worktree_clean,
         direct_pytest_results=static_results["direct_pytest"],
         verifier_inner_pytest_results=static_results["verifier_inner_pytest"],
-        verifier_skip_reason="recursive self-test guard",
         generation_report_dir=generation_report_dir,
     )
 
