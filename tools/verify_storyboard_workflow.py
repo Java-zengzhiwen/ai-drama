@@ -16,6 +16,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_WORK_DIR = Path("/tmp/ai-drama-storyboard-complete-verification")
 DEFAULT_EXPORT_DIR = Path("/tmp/ai-drama-storyboard-complete-verification-export")
+DEFAULT_TMP_REPORT_DIR = Path("/tmp/ai-drama-storyboard-verification-report")
 DEFAULT_REPORT_DIR = REPO_ROOT / "docs" / "testing" / "storyboard-workflow-verification"
 SCRIPT_SKILL_ROOT = REPO_ROOT / "skills" / "ai-drama-script-adaptation-skill" / "v0.6.1-rc2.4"
 STORYBOARD_SKILL_ROOT = REPO_ROOT / "skills" / "ai-drama-storyboard-design-skill" / "v0.1.0"
@@ -66,6 +67,10 @@ def _current_branch():
 
 def _git_head():
     return _run(["git", "rev-parse", "HEAD"]).stdout.strip()
+
+
+def _git_worktree_clean():
+    return _run(["git", "status", "--short"]).stdout.strip() == ""
 
 
 def _python_version():
@@ -147,13 +152,20 @@ def _run_py_compile():
     return _run([sys.executable, "-m", "py_compile", *[str(path) for path in files]])
 
 
-def _run_pytest():
+def _run_pytest(*, selftest=False, exclude_entrypoint=False):
     env = dict(os.environ)
     env.pop("PYTEST_CURRENT_TEST", None)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTEST_ADDOPTS"] = "-p no:cacheprovider -ra"
-    env["STORYBOARD_VERIFICATION_SELFTEST"] = "1"
-    return _run([sys.executable, "-m", "pytest", "-q"], env=env)
+    env["STORYBOARD_VERIFICATION_REPORT_CHECK"] = "0"
+    cmd = [sys.executable, "-m", "pytest", "-q"]
+    if exclude_entrypoint:
+        cmd.extend(["-k", "not test_storyboard_verification_entrypoint_runs"])
+    if selftest:
+        env["STORYBOARD_VERIFICATION_SELFTEST"] = "1"
+    else:
+        env.pop("STORYBOARD_VERIFICATION_SELFTEST", None)
+    return _run(cmd, env=env)
 
 
 def _verify_skill_package():
@@ -352,16 +364,28 @@ def _status(ok: bool):
     return "PASS" if ok else "FAIL"
 
 
+def _pytest_summary(stdout: str):
+    passed_match = re.search(r"(\d+) passed", stdout)
+    skipped_match = re.search(r"(\d+) skipped", stdout)
+    return {
+        "passed": int(passed_match.group(1)) if passed_match else 0,
+        "skipped": int(skipped_match.group(1)) if skipped_match else 0,
+    }
+
+
 def _pytest_skip_details(stdout: str):
-    count_match = re.search(r"(\d+) skipped", stdout)
-    count = int(count_match.group(1)) if count_match else 0
-    reason = ""
+    summary = _pytest_summary(stdout)
+    reason = "not skipped"
     for line in stdout.splitlines():
         if "SKIPPED" in line and "test_storyboard_verification_entrypoint_runs" in line:
             reason_match = re.search(r"SKIPPED \((.*)\)$", line.strip())
-            reason = reason_match.group(1) if reason_match else line.strip()
+            reason = reason_match.group(1) if reason_match else "recursive self-test guard"
             break
-    return count, reason
+    if summary["skipped"] == 0:
+        reason = "not skipped"
+    elif reason == "skip recursive self-test inside verification entrypoint":
+        reason = "recursive self-test guard"
+    return summary["skipped"], reason
 
 
 def _package_validator_flow(tmp_root: Path):
@@ -482,12 +506,28 @@ def _three_scene_coverage_flow(tmp_root: Path):
         }
 
 
-def _final_record_table(static_results, package_results, flow_results, staleness_results, validator_results, package_validator_results, required_na_results, coverage_results, findings, pytest_results, report_dir):
-    skipped_count, skipped_reason = _pytest_skip_details(pytest_results.stdout)
-    return [
+def _final_record_table(
+    static_results,
+    package_results,
+    flow_results,
+    staleness_results,
+    validator_results,
+    package_validator_results,
+    required_na_results,
+    coverage_results,
+    findings,
+    direct_pytest_results,
+    verifier_inner_pytest_results,
+    tested_worktree_clean,
+):
+    verifier_skip_count, verifier_skip_reason = _pytest_skip_details(verifier_inner_pytest_results.stdout)
+    direct_summary = _pytest_summary(direct_pytest_results.stdout)
+    verifier_summary = _pytest_summary(verifier_inner_pytest_results.stdout)
+    rows = [
         {"test_item": "Migration Verify", "status": _status(static_results["migration"].returncode == 0), "evidence": static_results["migration"].stdout.strip()},
         {"test_item": "PyCompile", "status": _status(static_results["py_compile"].returncode == 0), "evidence": static_results["py_compile"].stderr.strip()},
-        {"test_item": "Full Pytest", "status": _status(static_results["pytest"].returncode == 0), "evidence": static_results["pytest"].stdout.strip()},
+        {"test_item": "Direct Pytest", "status": _status(direct_pytest_results.returncode == 0), "evidence": json.dumps({"summary": direct_summary, "stdout": direct_pytest_results.stdout.strip()}, ensure_ascii=False)},
+        {"test_item": "Verifier Inner Pytest", "status": _status(verifier_inner_pytest_results.returncode == 0), "evidence": json.dumps({"summary": verifier_summary, "skip_reason": verifier_skip_reason, "stdout": verifier_inner_pytest_results.stdout.strip()}, ensure_ascii=False)},
         {"test_item": "Skill Package", "status": _status(bool(package_results)), "evidence": json.dumps(package_results, ensure_ascii=False)},
         {"test_item": "CLI Input Gate", "status": _status(flow_results["script"]["run_id"] != "" and flow_results["storyboard"]["run_id"] != ""), "evidence": json.dumps({"script_run_id": flow_results["script"]["run_id"], "storyboard_run_id": flow_results["storyboard"]["run_id"]}, ensure_ascii=False)},
         {"test_item": "Source Approval Gate", "status": _status(bool(flow_results["storyboard"]["source_approval_record"])), "evidence": json.dumps(flow_results["storyboard"]["source_approval_record"], ensure_ascii=False)},
@@ -512,73 +552,107 @@ def _final_record_table(static_results, package_results, flow_results, staleness
         {"test_item": "GitHub CI", "status": _status((REPO_ROOT / ".github" / "workflows" / "storyboard-workflow-verification.yml").exists()), "evidence": ".github/workflows/storyboard-workflow-verification.yml"},
         {"test_item": "Real Model Smoke", "status": "SKIPPED", "evidence": "no real-model credentials were provided"},
         {"test_item": "Findings", "status": _status(not findings), "evidence": json.dumps(findings, ensure_ascii=False)},
-        {"test_item": "Final Verdict", "status": _status(static_results["migration"].returncode == 0 and static_results["py_compile"].returncode == 0 and static_results["pytest"].returncode == 0 and all(item["status"] == "PASS" for item in [
-            {"status": _status(flow_results["script"]["run_id"] != "")},
-            {"status": _status(flow_results["storyboard"]["status"] == "SUCCEEDED")},
-            {"status": _status(not flow_results["request_duplicates"])},
-            {"status": _status(package_validator_results["genericity"]["status"] == "PASS")},
-            {"status": _status(required_na_results["approval_blocked"] and required_na_results["validator_status"] == "NOT_APPLICABLE")},
-            {"status": _status(coverage_results["coverage"]["MISSING_SOURCE_SCENES"] == ["1-3"] and coverage_results["coverage"]["ORDER_MISMATCH"] is True)},
-        ])), "evidence": "computed from blocker test items"},
-        {"test_item": "Skipped Tests", "status": _status(skipped_count == 1), "evidence": f"{skipped_count} skipped in pytest: {skipped_reason}"},
-        {"test_item": "Working Tree", "status": _status(_run(["git", "status", "--short"]).stdout.strip() == ""), "evidence": "report written to repo-local docs/testing/storyboard-workflow-verification"},
+        {"test_item": "Skipped Tests", "status": _status(verifier_skip_count == 1), "evidence": f"{verifier_skip_count} skipped in verifier inner pytest: {verifier_skip_reason}"},
+        {"test_item": "Working Tree", "status": _status(tested_worktree_clean), "evidence": "preflight working tree status"},
     ]
-    return [
-        {"test_item": "Migration Verify", "status": "PASS" if static_results["migration"].returncode == 0 else "FAIL", "evidence": static_results["migration"].stdout.strip()},
-        {"test_item": "PyCompile", "status": "PASS" if static_results["py_compile"].returncode == 0 else "FAIL", "evidence": static_results["py_compile"].stderr.strip()},
-        {"test_item": "Full Pytest", "status": "PASS" if static_results["pytest"].returncode == 0 else "FAIL", "evidence": static_results["pytest"].stdout.strip()},
-        {"test_item": "Skill Package", "status": "PASS" if package_results else "FAIL", "evidence": json.dumps(package_results, ensure_ascii=False)},
-        {"test_item": "CLI Input Gate", "status": "PASS", "evidence": "covered by pytest and runtime flow"},
-        {"test_item": "Source Approval Gate", "status": "PASS", "evidence": flow_results["storyboard"]["source_approval_record"]},
-        {"test_item": "Context Gate", "status": "PASS", "evidence": flow_results["storyboard"]["source_approval_record"]},
-        {"test_item": "Gate Persistence", "status": "PASS", "evidence": json.dumps(flow_results["storyboard"], ensure_ascii=False)},
-        {"test_item": "Storyboard Run", "status": "PASS", "evidence": flow_results["storyboard"]["run_id"]},
-        {"test_item": "Required Validators Execute", "status": "PASS", "evidence": json.dumps(validator_results["statuses"], ensure_ascii=False)},
-        {"test_item": "Required N/A Block", "status": "PASS", "evidence": "genericity remains NOT_APPLICABLE only for package-level validation"},
-        {"test_item": "Real Source Coverage", "status": "PASS", "evidence": json.dumps(flow_results["coverage"], ensure_ascii=False)},
-        {"test_item": "Structure Fault Injection", "status": "PASS", "evidence": "validator tests cover malformed scene/shot layouts"},
-        {"test_item": "Duration Fault Injection", "status": "PASS", "evidence": "validator tests cover duration bounds"},
-        {"test_item": "Continuity Fault Injection", "status": "PASS", "evidence": "validator tests cover missing continuity fields"},
-        {"test_item": "Approval Actions", "status": "PASS", "evidence": flow_results["approval_record"]["action"]},
-        {"test_item": "Captured Provenance", "status": "PASS", "evidence": flow_results["provenance"].get("source_approval_record", {})},
-        {"test_item": "Export Sidecar", "status": "PASS", "evidence": json.dumps(flow_results["provenance"], ensure_ascii=False)},
-        {"test_item": "Staleness", "status": "PASS" if staleness_results["storyboard_a1_freshness_after_b"] == "STALE" else "FAIL", "evidence": json.dumps(staleness_results, ensure_ascii=False)},
-        {"test_item": "Compare", "status": "PASS", "evidence": "compare uses captured revision dependencies"},
-        {"test_item": "DB Upgrade", "status": "PASS", "evidence": "fresh sqlite schema initialized in temp db"},
-        {"test_item": "Restart Safety", "status": "PASS", "evidence": "temp db reopened successfully"},
-        {"test_item": "Runtime Request Deduplication", "status": "PASS" if not flow_results["request_duplicates"] else "FAIL", "evidence": json.dumps(flow_results["request_snapshot"], ensure_ascii=False)},
-        {"test_item": "Package-level Validator", "status": "PASS" if _validator_package_execution_check() else "FAIL", "evidence": "genericity validator is present in manifest and observed in package"},
-        {"test_item": "GitHub CI", "status": "CONFIGURED", "evidence": ".github/workflows/storyboard-workflow-verification.yml"},
-        {"test_item": "Real Model Smoke", "status": "SKIPPED", "evidence": "no real-model credentials were provided"},
-        {"test_item": "Findings", "status": "PASS" if not findings else "FAIL", "evidence": json.dumps(findings, ensure_ascii=False)},
-        {"test_item": "Final Verdict", "status": "PASS" if not findings else "FAIL", "evidence": "computed from blocker findings"},
-        {"test_item": "Skipped Tests", "status": "PASS", "evidence": "1 skipped in pytest: recursive self-test inside verification entrypoint"},
-        {"test_item": "Working Tree", "status": "PASS", "evidence": "report written to repo-local docs/testing/storyboard-workflow-verification"},
+    blocker_statuses = [
+        row["status"]
+        for row in rows
+        if row["test_item"]
+        in {
+            "Migration Verify",
+            "PyCompile",
+            "Direct Pytest",
+            "Verifier Inner Pytest",
+            "Skill Package",
+            "CLI Input Gate",
+            "Source Approval Gate",
+            "Context Gate",
+            "Gate Persistence",
+            "Storyboard Run",
+            "Required Validators Execute",
+            "Required N/A Block",
+            "Real Source Coverage",
+            "Approval Actions",
+            "Captured Provenance",
+            "Export Sidecar",
+            "Staleness",
+            "Compare",
+            "DB Upgrade",
+            "Restart Safety",
+            "Runtime Request Deduplication",
+            "Package-level Validator",
+            "Findings",
+            "Working Tree",
+        }
     ]
+    return rows, blocker_statuses, direct_summary, verifier_summary, verifier_skip_reason
 
 
-def _build_report(static_results, package_results, flow_results, staleness_results, validator_results, findings, report_dir, work_dir, export_dir, package_validator_results, required_na_results, coverage_results):
-    blocker_count = sum(1 for item in findings if item.get("level") == "BLOCKER")
-    static_ok = static_results["migration"].returncode == 0 and static_results["py_compile"].returncode == 0 and static_results["pytest"].returncode == 0
+def _build_report(
+    static_results,
+    package_results,
+    flow_results,
+    staleness_results,
+    validator_results,
+    findings,
+    report_dir,
+    work_dir,
+    export_dir,
+    package_validator_results,
+    required_na_results,
+    coverage_results,
+    *,
+    tested_branch,
+    tested_commit_sha,
+    tested_worktree_clean,
+    direct_pytest_results,
+    verifier_inner_pytest_results,
+    generation_report_dir,
+):
+    final_record_table, blocker_statuses, direct_summary, verifier_summary, verifier_skip_reason = _final_record_table(
+        static_results,
+        package_results,
+        flow_results,
+        staleness_results,
+        validator_results,
+        package_validator_results,
+        required_na_results,
+        coverage_results,
+        findings,
+        direct_pytest_results,
+        verifier_inner_pytest_results,
+        tested_worktree_clean,
+    )
+    blocker_count = sum(1 for status in blocker_statuses if status == "FAIL")
+    technical_verdict = "PASS" if blocker_count == 0 else "FAIL"
     status_flags = {
-        "STORYBOARD_TECHNICAL_VERDICT": "PASS" if blocker_count == 0 and static_ok else "FAIL",
+        "STORYBOARD_TECHNICAL_VERDICT": technical_verdict,
         "STORYBOARD_QUALITY_STATUS": "PENDING_USER_REVIEW",
-        "SHOT_PROMPT_DEVELOPMENT": "ALLOWED" if blocker_count == 0 and static_ok else "BLOCKED",
+        "SHOT_PROMPT_DEVELOPMENT": "ALLOWED" if technical_verdict == "PASS" else "BLOCKED",
     }
     return {
         "environment": {
-            "branch": _current_branch(),
-            "head": _git_head(),
+            "tested_branch": tested_branch,
+            "tested_commit_sha": tested_commit_sha,
+            "tested_worktree_clean": tested_worktree_clean,
+            "branch": tested_branch,
+            "working_tree": "clean" if tested_worktree_clean else "dirty",
             "python": _python_version(),
             "os": os.uname().sysname if hasattr(os, "uname") else sys.platform,
-            "working_tree": _run(["git", "status", "--short"]).stdout.strip() or "clean",
             "cli_entry": "python3 tools/verify_storyboard_workflow.py",
         },
-        "commands": [asdict(static_results["migration"]), asdict(static_results["py_compile"]), asdict(static_results["pytest"])],
+        "commands": [
+            asdict(static_results["migration"]),
+            asdict(static_results["py_compile"]),
+            asdict(direct_pytest_results),
+            asdict(verifier_inner_pytest_results),
+        ],
         "static_verification": {
             "migration_verify": _command_summary(static_results["migration"]),
             "py_compile": _command_summary(static_results["py_compile"]),
-            "pytest": _command_summary(static_results["pytest"]),
+            "direct_pytest": {**_command_summary(direct_pytest_results), **direct_summary, "skip_reason": "not skipped"},
+            "verifier_inner_pytest": {**_command_summary(verifier_inner_pytest_results), **verifier_summary, "skip_reason": verifier_skip_reason},
         },
         "skill_package": package_results,
         "workflow": {
@@ -621,10 +695,14 @@ def _build_report(static_results, package_results, flow_results, staleness_resul
             "resource_close": {"status": "PASS", "sqlite_lock_resolved": True},
         },
         "findings": findings,
-        "final_record_table": _final_record_table(static_results, package_results, flow_results, staleness_results, validator_results, package_validator_results, required_na_results, coverage_results, findings, static_results["pytest"], report_dir),
+        "final_record_table": final_record_table
+        + [
+            {"test_item": "Final Verdict", "status": technical_verdict, "evidence": "computed from blocker test items"},
+        ],
         "status_flags": status_flags,
         "report_paths": {
             "report_dir": str(report_dir),
+            "generation_dir": str(generation_report_dir),
             "markdown": str(report_dir / "storyboard-verification-report.md"),
             "json": str(report_dir / "storyboard-verification-report.json"),
             "working_dir": str(work_dir),
@@ -644,16 +722,29 @@ def main(argv=None):
 
     repo_root = Path(args.repo_root).resolve()
     report_dir = Path(args.report_dir)
+    generation_report_dir = DEFAULT_TMP_REPORT_DIR
     work_dir = Path(args.work_dir)
     export_dir = Path(args.export_dir)
-    _clean_dir(report_dir)
+    tested_branch = _current_branch()
+    tested_commit_sha = _git_head()
+    tested_worktree_clean = _git_worktree_clean()
+
+    if os.environ.get("STORYBOARD_VERIFICATION_SELFTEST"):
+        selftest_results = _run_pytest(selftest=True)
+        print(f"STORYBOARD_TECHNICAL_VERDICT={'PASS' if selftest_results.returncode == 0 else 'FAIL'}")
+        print("STORYBOARD_QUALITY_STATUS=PENDING_USER_REVIEW")
+        print(f"SHOT_PROMPT_DEVELOPMENT={'ALLOWED' if selftest_results.returncode == 0 else 'BLOCKED'}")
+        return 0 if selftest_results.returncode == 0 else 1
+
+    _clean_dir(generation_report_dir)
     _clean_dir(work_dir)
     _clean_dir(export_dir)
 
     static_results = {
         "migration": _run_migration_verify(),
         "py_compile": _run_py_compile(),
-        "pytest": _run_pytest(),
+        "direct_pytest": _run_pytest(),
+        "verifier_inner_pytest": _run_pytest(selftest=True),
     }
     package_results = _verify_skill_package()
     flow_results = _build_storyboard_flow(work_dir)
@@ -678,19 +769,42 @@ def main(argv=None):
         else:
             findings.append({"level": "LOW", "code": "REAL_MODEL_SMOKE", "message": "skipped due to missing credentials"})
 
-    report = _build_report(static_results, package_results, flow_results, staleness_results, validator_results, findings, report_dir, work_dir, export_dir, package_validator_results, required_na_results, coverage_results)
+    report = _build_report(
+        static_results,
+        package_results,
+        flow_results,
+        staleness_results,
+        validator_results,
+        findings,
+        report_dir,
+        work_dir,
+        export_dir,
+        package_validator_results,
+        required_na_results,
+        coverage_results,
+        tested_branch=tested_branch,
+        tested_commit_sha=tested_commit_sha,
+        tested_worktree_clean=tested_worktree_clean,
+        direct_pytest_results=static_results["direct_pytest"],
+        verifier_inner_pytest_results=static_results["verifier_inner_pytest"],
+        verifier_skip_reason="recursive self-test guard",
+        generation_report_dir=generation_report_dir,
+    )
 
-    report_path_json = report_dir / "storyboard-verification-report.json"
-    report_path_md = report_dir / "storyboard-verification-report.md"
-    report_path_json.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    generation_report_dir.mkdir(parents=True, exist_ok=True)
+    report_path_json = generation_report_dir / "storyboard-verification-report.json"
+    report_path_md = generation_report_dir / "storyboard-verification-report.md"
+    report_json = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    report_path_json.write_text(report_json, encoding="utf-8")
     report_path_md.write_text(
         "\n".join(
             [
                 "# Storyboard Verification Report",
                 "",
                 "## 1. Environment",
-                f"- branch: {report['environment']['branch']}",
-                f"- HEAD: {report['environment']['head']}",
+                f"- tested branch: {report['environment']['tested_branch']}",
+                f"- tested commit sha: {report['environment']['tested_commit_sha']}",
+                f"- tested worktree clean: {report['environment']['tested_worktree_clean']}",
                 f"- Python: {report['environment']['python']}",
                 f"- OS: {report['environment']['os']}",
                 f"- working tree: {report['environment']['working_tree']}",
@@ -729,6 +843,11 @@ def main(argv=None):
                 "## 12. Final Record Table",
                 json.dumps(report["final_record_table"], ensure_ascii=False, indent=2),
                 "",
+                "## 13. Verdict",
+                f"- STORYBOARD_TECHNICAL_VERDICT: {report['status_flags']['STORYBOARD_TECHNICAL_VERDICT']}",
+                f"- STORYBOARD_QUALITY_STATUS: {report['status_flags']['STORYBOARD_QUALITY_STATUS']}",
+                f"- SHOT_PROMPT_DEVELOPMENT: {report['status_flags']['SHOT_PROMPT_DEVELOPMENT']}",
+                "",
                 f"STORYBOARD_TECHNICAL_VERDICT={report['status_flags']['STORYBOARD_TECHNICAL_VERDICT']}",
                 f"STORYBOARD_QUALITY_STATUS={report['status_flags']['STORYBOARD_QUALITY_STATUS']}",
                 f"SHOT_PROMPT_DEVELOPMENT={report['status_flags']['SHOT_PROMPT_DEVELOPMENT']}",
@@ -737,6 +856,9 @@ def main(argv=None):
         + "\n",
         encoding="utf-8",
     )
+    report_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(report_path_json, report_dir / report_path_json.name)
+    shutil.copy2(report_path_md, report_dir / report_path_md.name)
     print(f"STORYBOARD_TECHNICAL_VERDICT={report['status_flags']['STORYBOARD_TECHNICAL_VERDICT']}")
     print(f"STORYBOARD_QUALITY_STATUS={report['status_flags']['STORYBOARD_QUALITY_STATUS']}")
     print(f"SHOT_PROMPT_DEVELOPMENT={report['status_flags']['SHOT_PROMPT_DEVELOPMENT']}")
