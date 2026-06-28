@@ -1,0 +1,197 @@
+{
+  "package_format_version": "1",
+  "skill_id": "ai-drama-storyboard-design-skill",
+  "version": "v0.1.0",
+  "display_name": "AI Drama Storyboard Design Skill",
+  "description": "Formal storyboard design skill package for approved drama script revisions.",
+  "package_status": "active",
+  "instructions_entry": "SKILL.md",
+  "context_files": [
+    "README.md",
+    "CHANGELOG.md",
+    "MIGRATION-NOTES.md",
+    "requirements.txt",
+    "references/storyboard-rules.md",
+    "references/source-staleness-policy.md",
+    "references/shot-boundary-policy.md",
+    "references/continuity-policy.md",
+    "templates/storyboard-outline.template.md",
+    "templates/storyboard-outline.template.json",
+    "schemas/storyboard-outline.schema.json",
+    "schemas/storyboard-coverage.schema.json",
+    "contracts/storyboard-design-contract-v1.md",
+    "contracts/storyboard-approval-contract-v1.md",
+    "runtime-validators/forbidden-terms.txt"
+  ],
+  "input_types": [
+    "approved_script_revision"
+  ],
+  "output_types": [
+    "storyboard_revision"
+  ],
+  "schemas": [
+    "schemas/storyboard-outline.schema.json",
+    "schemas/storyboard-coverage.schema.json"
+  ],
+  "contracts": [
+    "contracts/storyboard-design-contract-v1.md",
+    "contracts/storyboard-approval-contract-v1.md"
+  ],
+  "validator_support_files": [
+    "validators/common.py"
+  ],
+  "validators": [
+    {
+      "validator_id": "storyboard_structure",
+      "entrypoint": "validators/validate_storyboard_structure.py",
+      "required": true,
+      "applies_to": [
+        "storyboard_revision"
+      ],
+      "command": [
+        "{python}",
+        "{entrypoint}",
+        "--revision",
+        "{revision_path}",
+        "--report",
+        "{report_path}"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "migrated_skill",
+      "required_artifacts": [
+        "storyboard_markdown"
+      ],
+      "current_profile_status": "APPLICABLE",
+      "current_profile_reason": "validates storyboard scene and shot structure"
+    },
+    {
+      "validator_id": "storyboard_duration",
+      "entrypoint": "validators/validate_storyboard_duration.py",
+      "required": true,
+      "applies_to": [
+        "storyboard_revision"
+      ],
+      "command": [
+        "{python}",
+        "{entrypoint}",
+        "--revision",
+        "{revision_path}",
+        "--report",
+        "{report_path}"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "migrated_skill",
+      "required_artifacts": [
+        "storyboard_markdown"
+      ],
+      "current_profile_status": "APPLICABLE",
+      "current_profile_reason": "validates shot duration bounds"
+    },
+    {
+      "validator_id": "storyboard_source_coverage",
+      "entrypoint": "validators/validate_storyboard_source_coverage.py",
+      "required": true,
+      "applies_to": [
+        "storyboard_revision"
+      ],
+      "command": [
+        "{python}",
+        "{entrypoint}",
+        "--revision",
+        "{revision_path}",
+        "--report",
+        "{report_path}"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "migrated_skill",
+      "required_artifacts": [
+        "storyboard_markdown"
+      ],
+      "current_profile_status": "APPLICABLE",
+      "current_profile_reason": "validates source scene coverage markers"
+    },
+    {
+      "validator_id": "storyboard_continuity",
+      "entrypoint": "validators/validate_storyboard_continuity.py",
+      "required": true,
+      "applies_to": [
+        "storyboard_revision"
+      ],
+      "command": [
+        "{python}",
+        "{entrypoint}",
+        "--revision",
+        "{revision_path}",
+        "--report",
+        "{report_path}"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "migrated_skill",
+      "required_artifacts": [
+        "storyboard_markdown"
+      ],
+      "current_profile_status": "APPLICABLE",
+      "current_profile_reason": "validates continuity_in and continuity_out fields"
+    },
+    {
+      "validator_id": "genericity",
+      "entrypoint": "validators/validate_genericity.py",
+      "required": false,
+      "applies_to": [
+        "skill_package"
+      ],
+      "command": [
+        "{python}",
+        "{entrypoint}",
+        "--root",
+        "{skill_root}",
+        "--forbidden-terms",
+        "{skill_root}/runtime-validators/forbidden-terms.txt",
+        "--report",
+        "{report_path}"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "migrated_skill",
+      "required_artifacts": [
+        "skill_package"
+      ],
+      "current_profile_status": "APPLICABLE",
+      "current_profile_reason": "validates package genericity"
+    }
+  ],
+  "runtime_requirements": {
+    "python": ">=3.9"
+  },
+  "dependency_requirements": [],
+  "provenance": {
+    "source": "newly_created_from_approved_storyboard_requirements"
+  },
+  "execution_profiles": [
+    {
+      "profile_id": "storyboard-markdown-mvp-v1",
+      "output_artifact_type": "storyboard_markdown",
+      "output_format": "markdown",
+      "parser_version": "storyboard-markdown-v1",
+      "supported_artifacts": [
+        "storyboard_markdown"
+      ],
+      "unsupported_bundle_artifacts": [
+        "storyboard_json_bundle",
+        "shot_prompt_package",
+        "visual_asset_binding_package",
+        "libtv_execution_package",
+        "agnes_execution_package"
+      ]
+    }
+  ]
+}

@@ -66,16 +66,28 @@ def _skills_validate(args):
 def _run_create(args):
     registry = _registry(args)
     package = registry.get_ref(args.skill)
-    result = _with_service(
-        args,
-        lambda service: service.run_acceptance(
-            package,
-            args.input,
-            args.runtime,
-            args.model,
-            mock_mode=args.mock_mode,
-        ),
-    )
+    if args.source_revision:
+        result = _with_service(
+            args,
+            lambda service: service.run_storyboard(
+                package,
+                args.source_revision,
+                args.runtime,
+                args.model,
+                mock_mode=args.mock_mode,
+            ),
+        )
+    else:
+        result = _with_service(
+            args,
+            lambda service: service.run_acceptance(
+                package,
+                args.input,
+                args.runtime,
+                args.model,
+                mock_mode=args.mock_mode,
+            ),
+        )
     payload = {
         "run_id": result.run.run_id,
         "status": result.run.status,
@@ -120,7 +132,11 @@ def _artifacts_compare(args):
 
 
 def _artifacts_approved(args):
-    _json(_with_service(args, lambda service: service.current_approved(args.artifact_id).__dict__))
+    revision = _with_service(args, lambda service: service.current_approved(args.artifact_id))
+    payload = revision.__dict__.copy()
+    payload["freshness_status"] = _with_service(args, lambda service: service.revision_freshness(revision.revision_id))
+    payload["source_script_revision_id"] = _with_service(args, lambda service: service.revision_source_revision_id(revision.revision_id))
+    _json(payload)
 
 
 def _artifacts_export(args):
@@ -158,7 +174,8 @@ def build_parser():
     run_sub = run.add_subparsers(dest="run_command", required=True)
     p = run_sub.add_parser("create")
     p.add_argument("--skill", required=True)
-    p.add_argument("--input", required=True)
+    p.add_argument("--input", default="")
+    p.add_argument("--source-revision", default="")
     p.add_argument("--runtime", choices=["mock", "openai-compatible"], default="mock")
     p.add_argument("--model", default="")
     p.add_argument("--mock-mode", choices=["success", "runtime_failure", "empty_response", "parse_failure"], default="success")

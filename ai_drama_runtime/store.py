@@ -77,6 +77,16 @@ class RevisionRecord:
 
 
 @dataclass(frozen=True)
+class RevisionDependencyRecord:
+    child_revision_id: str
+    parent_revision_id: str
+    relation_type: str
+    parent_content_hash: str
+    parent_approval_record_id: str
+    created_at: str
+
+
+@dataclass(frozen=True)
 class ValidationRecord:
     validation_id: str
     revision_id: str
@@ -253,6 +263,17 @@ class RuntimeStore:
               created_at TEXT NOT NULL,
               FOREIGN KEY(revision_id) REFERENCES revisions(revision_id)
             );
+            CREATE TABLE IF NOT EXISTS revision_dependencies (
+              child_revision_id TEXT NOT NULL,
+              parent_revision_id TEXT NOT NULL,
+              relation_type TEXT NOT NULL,
+              parent_content_hash TEXT NOT NULL,
+              parent_approval_record_id TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY(child_revision_id, parent_revision_id, relation_type),
+              FOREIGN KEY(child_revision_id) REFERENCES revisions(revision_id),
+              FOREIGN KEY(parent_revision_id) REFERENCES revisions(revision_id)
+            );
             CREATE UNIQUE INDEX IF NOT EXISTS one_current_approved_revision
               ON revisions(artifact_id)
               WHERE approval_status = 'approved';
@@ -296,6 +317,29 @@ class RuntimeStore:
                 FROM approval_records_old
                 ORDER BY rowid;
                 DROP TABLE approval_records_old;
+                """
+            )
+        dependency_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(revision_dependencies)").fetchall()}
+        if dependency_columns and "parent_approval_record_id" not in dependency_columns:
+            self.conn.executescript(
+                """
+                ALTER TABLE revision_dependencies RENAME TO revision_dependencies_old;
+                CREATE TABLE revision_dependencies (
+                  child_revision_id TEXT NOT NULL,
+                  parent_revision_id TEXT NOT NULL,
+                  relation_type TEXT NOT NULL,
+                  parent_content_hash TEXT NOT NULL,
+                  parent_approval_record_id TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  PRIMARY KEY(child_revision_id, parent_revision_id, relation_type),
+                  FOREIGN KEY(child_revision_id) REFERENCES revisions(revision_id),
+                  FOREIGN KEY(parent_revision_id) REFERENCES revisions(revision_id)
+                );
+                INSERT INTO revision_dependencies
+                (child_revision_id, parent_revision_id, relation_type, parent_content_hash, parent_approval_record_id, created_at)
+                SELECT child_revision_id, parent_revision_id, relation_type, parent_content_hash, parent_approval_record_id, created_at
+                FROM revision_dependencies_old;
+                DROP TABLE revision_dependencies_old;
                 """
             )
 
@@ -503,6 +547,17 @@ class RuntimeStore:
             self.conn.execute("SELECT * FROM export_records WHERE export_id = ?", (values["export_id"],)).fetchone()
         )
 
+    def insert_revision_dependency(self, **values):
+        values.setdefault("created_at", now_iso())
+        columns = list(values)
+        self.conn.execute(
+            "INSERT INTO revision_dependencies (%s) VALUES (%s)"
+            % (",".join(columns), ",".join("?" for _ in columns)),
+            [values[column] for column in columns],
+        )
+        self.conn.commit()
+        return self.revision_dependencies(values["child_revision_id"])[-1]
+
     def export_records(self, artifact_id):
         rows = self.conn.execute(
             "SELECT * FROM export_records WHERE artifact_id = ? ORDER BY created_at, export_id",
@@ -527,6 +582,20 @@ class RuntimeStore:
             (artifact_id,),
         ).fetchall()
         return [self._revision_from_row(row) for row in rows]
+
+    def revision_dependencies(self, child_revision_id):
+        rows = self.conn.execute(
+            "SELECT * FROM revision_dependencies WHERE child_revision_id = ? ORDER BY created_at, parent_revision_id",
+            (child_revision_id,),
+        ).fetchall()
+        return [RevisionDependencyRecord(**dict(row)) for row in rows]
+
+    def revision_dependents(self, parent_revision_id):
+        rows = self.conn.execute(
+            "SELECT * FROM revision_dependencies WHERE parent_revision_id = ? ORDER BY created_at, child_revision_id",
+            (parent_revision_id,),
+        ).fetchall()
+        return [RevisionDependencyRecord(**dict(row)) for row in rows]
 
     def validation_results(self, revision_id):
         rows = self.conn.execute(

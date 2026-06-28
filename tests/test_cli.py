@@ -7,6 +7,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ACCEPTANCE_ROOT = REPO_ROOT / "acceptance" / "shengsi-chapter-001"
 SKILL_REF = "ai-drama-script-adaptation-skill@v0.6.1-rc2.4"
+STORYBOARD_SKILL_REF = "ai-drama-storyboard-design-skill@v0.1.0"
 
 
 def _cli(tmp_path, *args, check=True, env=None):
@@ -101,3 +102,40 @@ def test_cli_exit_codes_and_redacts_credentials(tmp_path):
     )
     assert "secret-value" not in failed_openai.stderr
     assert failed_openai.returncode in {2, 4}
+
+
+def test_cli_storyboard_run_flow(tmp_path):
+    script_run = json.loads(
+        _cli(
+            tmp_path,
+            "run",
+            "create",
+            "--skill",
+            SKILL_REF,
+            "--input",
+            ACCEPTANCE_ROOT,
+            "--runtime",
+            "mock",
+            "--model",
+            "mock-script",
+        ).stdout
+    )
+    _cli(tmp_path, "approvals", "approve", script_run["revision_id"], "--reviewer", "cli")
+
+    storyboard_run = json.loads(
+        _cli(
+            tmp_path,
+            "run",
+            "create",
+            "--skill",
+            STORYBOARD_SKILL_REF,
+            "--source-revision",
+            script_run["revision_id"],
+            "--runtime",
+            "mock",
+            "--model",
+            "mock-storyboard",
+        ).stdout
+    )
+    assert storyboard_run["status"] == "SUCCEEDED"
+    assert storyboard_run["revision_id"]
