@@ -202,7 +202,7 @@ class RuntimeService:
             parser_version=PARSER_VERSION,
         )
         validations = run_declared_validators(self.store, skill, revision, bundle.root, repo_root=self.repo_root)
-        blocking = [item for item in validations if item.required and item.status not in {"PASS", "NOT_APPLICABLE"}]
+        blocking = [item for item in validations if item.required and item.status not in {"PASS"}]
         if blocking:
             validator_ids = ", ".join(item.validator_id for item in blocking)
             run = self.store.update_run(
@@ -383,7 +383,7 @@ class RuntimeService:
         required = [item for item in results if item.required]
         if not required:
             raise ApprovalBlocked("missing required validator result")
-        blocking = [item for item in required if item.status not in {"PASS", "NOT_APPLICABLE"}]
+        blocking = [item for item in required if item.status not in {"PASS"}]
         if blocking:
             raise ApprovalBlocked("required validators did not pass: %s" % ", ".join(item.validator_id for item in blocking))
         self.store.approve_in_transaction(revision, reviewer, note)

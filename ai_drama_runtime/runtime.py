@@ -50,6 +50,47 @@ source_basis: manifest
 """ % model
 
 
+def _mock_script_three_scene(model):
+    return """# Mock Drama Script Revision
+
+runtime_model: %s
+source_basis: manifest
+
+## Scene: 1-1
+
+【画面】
+女主在清晨醒来，意识到命运重启。
+
+【动作】
+她检查身边物件，确认眼前不是幻觉。
+
+【台词】
+女主：这一世，我要先看清局。
+
+## Scene: 1-2
+
+【画面】
+账册摊开，旧日线索重新浮现。
+
+【动作】
+她整理证据，把危险关系和家族账目分开标记。
+
+【台词】
+女主：账不会骗人，人心才会。
+
+## Scene: 1-3
+
+【画面】
+祠堂灯火忽明忽暗，新的线索在暗处浮现。
+
+【动作】
+她推开暗门，发现被藏起的旧信。
+
+【台词】
+女主：第三步，才是真相。
+""" % model
+
+
 def _mock_storyboard(model):
     return """# Mock Storyboard Revision
 
@@ -154,6 +195,8 @@ def run_runtime(runtime_request, mock_mode="success"):
             raw = ""
         elif mock_mode == "parse_failure":
             raw = json.dumps({"not_script": "bad"}, ensure_ascii=False)
+        elif mock_mode == "three_scene_script":
+            raw = json.dumps({"script_markdown": _mock_script_three_scene(model)}, ensure_ascii=False)
         elif profile == "storyboard-markdown-mvp-v1":
             raw = json.dumps({"storyboard_markdown": _mock_storyboard(model)}, ensure_ascii=False)
         else:
