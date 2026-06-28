@@ -263,13 +263,14 @@ def _staleness_flow(tmp_root: Path):
         service.approve_revision(storyboard_a1.revision.revision_id, "verifier")
         script_b = service.run_acceptance(script_pkg, ACCEPTANCE_ROOT, "mock", "mock-script-b")
         service.approve_revision(script_b.revision.revision_id, "verifier")
+        source_approval_record = service.revision_source_approval_record(storyboard_a1.revision.revision_id)
         return {
             "script_a_revision_id": script_a.revision.revision_id,
             "script_b_revision_id": script_b.revision.revision_id,
             "storyboard_a1_revision_id": storyboard_a1.revision.revision_id,
             "storyboard_a1_freshness_after_b": service.revision_freshness(storyboard_a1.revision.revision_id),
             "storyboard_a1_source_revision_id": service.revision_source_revision_id(storyboard_a1.revision.revision_id),
-            "storyboard_a1_source_approval_record": service.revision_source_approval_record(storyboard_a1.revision.revision_id),
+            "storyboard_a1_source_approval_record": source_approval_record,
         }
 
 
