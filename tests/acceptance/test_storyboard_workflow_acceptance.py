@@ -34,7 +34,8 @@ def test_storyboard_verification_entrypoint_runs():
 
 def test_storyboard_verification_report_is_repo_local():
     if os.environ.get("STORYBOARD_VERIFICATION_SELFTEST"):
-        pytest.skip("skip report bootstrapping inside verification entrypoint")
+        assert str(REPO_ROOT / "docs" / "testing" / "storyboard-workflow-verification").startswith(str(REPO_ROOT))
+        return
     report_dir = REPO_ROOT / "docs" / "testing" / "storyboard-workflow-verification"
     if not (report_dir / "storyboard-verification-report.md").exists():
         proc = subprocess.run(

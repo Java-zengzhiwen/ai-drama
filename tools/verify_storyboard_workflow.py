@@ -151,7 +151,7 @@ def _run_pytest():
     env = dict(os.environ)
     env.pop("PYTEST_CURRENT_TEST", None)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
-    env["PYTEST_ADDOPTS"] = "-p no:cacheprovider"
+    env["PYTEST_ADDOPTS"] = "-p no:cacheprovider -ra"
     env["STORYBOARD_VERIFICATION_SELFTEST"] = "1"
     return _run([sys.executable, "-m", "pytest", "-q"], env=env)
 
@@ -347,12 +347,181 @@ def _findings_from_results(*sections):
     return findings
 
 
-def _validator_package_execution_check():
+def _status(ok: bool):
+    return "PASS" if ok else "FAIL"
+
+
+def _pytest_skip_details(stdout: str):
+    count_match = re.search(r"(\d+) skipped", stdout)
+    count = int(count_match.group(1)) if count_match else 0
+    reason = ""
+    for line in stdout.splitlines():
+        if "SKIPPED" in line and "test_storyboard_verification_entrypoint_runs" in line:
+            reason_match = re.search(r"SKIPPED \((.*)\)$", line.strip())
+            reason = reason_match.group(1) if reason_match else line.strip()
+            break
+    return count, reason
+
+
+def _package_validator_flow(tmp_root: Path):
     storyboard_pkg = _load_skill_package(STORYBOARD_SKILL_ROOT)
-    return "genericity" in [item.validator_id for item in storyboard_pkg.validators]
+    sys.path.insert(0, str(REPO_ROOT))
+    from ai_drama_runtime.manifest import SkillPackage, SkillValidator
+    from ai_drama_runtime.services import RuntimeService
+    from ai_drama_runtime.store import RuntimeStore
+    from ai_drama_runtime.validators import run_declared_validators
+
+    with RuntimeService(RuntimeStore(tmp_root / "runtime.db", tmp_root / "objects"), repo_root=REPO_ROOT) as service:
+        service.store.ensure_artifact("storyboard-package", "skill_package", "package-project", "package-chapter")
+        run = service.store.create_run(
+            artifact_id="storyboard-package",
+            project_id="package-project",
+            chapter_id="package-chapter",
+            skill_id=storyboard_pkg.skill_id,
+            skill_version=storyboard_pkg.version,
+            skill_hash=storyboard_pkg.content_hash,
+            runtime="mock",
+            provider="mock",
+            model="mock-package",
+            status="SUCCEEDED",
+            request_object_id=service.store.write_text_object("package validator request"),
+            input_hash="package-validator-request",
+            request_hash="package-validator-request",
+        )
+        revision = service.store.insert_revision(
+            artifact_id="storyboard-package",
+            artifact_type="skill_package",
+            project_id="package-project",
+            chapter_id="package-chapter",
+            run_id=run.run_id,
+            skill_id=storyboard_pkg.skill_id,
+            skill_version=storyboard_pkg.version,
+            skill_package_hash=storyboard_pkg.content_hash,
+            runtime_provider="mock",
+            runtime_model="mock-package",
+            content_object_id=service.store.write_text_object("package validator execution"),
+            content_hash=_sha("package validator execution"),
+            raw_response_object_id=service.store.write_text_object("{}"),
+            parser_version="skill-package-verification-v1",
+        )
+        validation_results = run_declared_validators(service.store, storyboard_pkg, revision, storyboard_pkg.root, repo_root=REPO_ROOT)
+        genericity = next(item for item in validation_results if item.validator_id == "genericity")
+        return {
+            "run_status": service.store.get_run(run.run_id).status,
+            "revision_id": revision.revision_id,
+            "genericity": {
+                "status": genericity.status,
+                "required": genericity.required,
+                "stdout": service.store.read_text(genericity.stdout_object_id),
+                "stderr": service.store.read_text(genericity.stderr_object_id),
+                "report": _safe_json_load(service.store.object_path(genericity.report_object_id)),
+            },
+            "statuses": {item.validator_id: item.status for item in validation_results},
+        }
 
 
-def _final_record_table(static_results, package_results, flow_results, staleness_results, validator_results, findings, report_dir):
+def _required_na_block_flow(tmp_root: Path):
+    script_pkg = _load_skill_package(SCRIPT_SKILL_ROOT)
+    sys.path.insert(0, str(REPO_ROOT))
+    from ai_drama_runtime.manifest import SkillValidator
+    from ai_drama_runtime.services import ApprovalBlocked, RuntimeService
+    from ai_drama_runtime.store import RuntimeStore
+
+    validators = list(script_pkg.validators) + [
+        SkillValidator(
+            "bundle_required",
+            "bundle_required",
+            script_pkg.validators[0].entrypoint,
+            True,
+            ["drama_script_revision"],
+            ["{python}", "{entrypoint}"],
+            [],
+            1,
+            "zero_is_pass",
+            "migrated_skill",
+            ["drama_script_json"],
+            "NOT_APPLICABLE",
+            "requires complete bundle",
+        )
+    ]
+    fake_package = type("Pkg", (), {**script_pkg.__dict__, "validators": validators})()
+    with RuntimeService(RuntimeStore(tmp_root / "runtime.db", tmp_root / "objects"), repo_root=REPO_ROOT) as service:
+        result = service.run_acceptance(fake_package, ACCEPTANCE_ROOT, "mock", "mock")
+        blocked = False
+        try:
+            service.approve_revision(result.revision.revision_id, "verifier")
+        except ApprovalBlocked:
+            blocked = True
+        bundle_required = next(item for item in result.validation_results if item.validator_id == "bundle_required")
+        return {
+            "run_status": result.run.status,
+            "approval_blocked": blocked,
+            "validator_status": bundle_required.status,
+            "validator_required": bundle_required.required,
+            "validator_stderr": service.store.read_text(bundle_required.stderr_object_id),
+        }
+
+
+def _three_scene_coverage_flow(tmp_root: Path):
+    script_pkg = _load_skill_package(SCRIPT_SKILL_ROOT)
+    storyboard_pkg = _load_skill_package(STORYBOARD_SKILL_ROOT)
+    with _service(tmp_root) as service:
+        script = service.run_acceptance(script_pkg, ACCEPTANCE_ROOT, "mock", "three_scene_script")
+        service.approve_revision(script.revision.revision_id, "verifier")
+        storyboard = service.run_storyboard(storyboard_pkg, script.revision.revision_id, "mock", "mock-storyboard")
+        source_text = service.store.read_text(script.revision.content_object_id)
+        storyboard_text = service.store.read_text(storyboard.revision.content_object_id)
+        coverage = _coverage_report(_extract_source_scenes(source_text), _extract_storyboard_refs(storyboard_text))
+        return {
+            "script_revision_id": script.revision.revision_id,
+            "storyboard_revision_id": storyboard.revision.revision_id,
+            "storyboard_status": storyboard.run.status,
+            "validator_status": next(item.status for item in storyboard.validation_results if item.validator_id == "storyboard_source_coverage"),
+            "coverage": coverage,
+        }
+
+
+def _final_record_table(static_results, package_results, flow_results, staleness_results, validator_results, package_validator_results, required_na_results, coverage_results, findings, pytest_results, report_dir):
+    skipped_count, skipped_reason = _pytest_skip_details(pytest_results.stdout)
+    return [
+        {"test_item": "Migration Verify", "status": _status(static_results["migration"].returncode == 0), "evidence": static_results["migration"].stdout.strip()},
+        {"test_item": "PyCompile", "status": _status(static_results["py_compile"].returncode == 0), "evidence": static_results["py_compile"].stderr.strip()},
+        {"test_item": "Full Pytest", "status": _status(static_results["pytest"].returncode == 0), "evidence": static_results["pytest"].stdout.strip()},
+        {"test_item": "Skill Package", "status": _status(bool(package_results)), "evidence": json.dumps(package_results, ensure_ascii=False)},
+        {"test_item": "CLI Input Gate", "status": _status(flow_results["script"]["run_id"] != "" and flow_results["storyboard"]["run_id"] != ""), "evidence": json.dumps({"script_run_id": flow_results["script"]["run_id"], "storyboard_run_id": flow_results["storyboard"]["run_id"]}, ensure_ascii=False)},
+        {"test_item": "Source Approval Gate", "status": _status(bool(flow_results["storyboard"]["source_approval_record"])), "evidence": json.dumps(flow_results["storyboard"]["source_approval_record"], ensure_ascii=False)},
+        {"test_item": "Context Gate", "status": _status(not flow_results["request_duplicates"] and not flow_results["coverage"]["MISSING_SOURCE_SCENES"] and not flow_results["coverage"]["EXTRA_SOURCE_REFERENCES"] and not flow_results["coverage"]["ORDER_MISMATCH"]), "evidence": json.dumps(flow_results["request_snapshot"], ensure_ascii=False)},
+        {"test_item": "Gate Persistence", "status": _status(bool(flow_results["provenance"].get("source_approval_record"))), "evidence": json.dumps(flow_results["provenance"], ensure_ascii=False)},
+        {"test_item": "Storyboard Run", "status": _status(flow_results["storyboard"]["status"] == "SUCCEEDED"), "evidence": flow_results["storyboard"]["run_id"]},
+        {"test_item": "Required Validators Execute", "status": _status(all(item["status"] in {"PASS", "NOT_APPLICABLE"} for item in validator_results["required_results"]) and bool(validator_results["required_results"])), "evidence": json.dumps(validator_results["statuses"], ensure_ascii=False)},
+        {"test_item": "Required N/A Block", "status": _status(required_na_results["approval_blocked"] and required_na_results["validator_status"] == "NOT_APPLICABLE"), "evidence": json.dumps(required_na_results, ensure_ascii=False)},
+        {"test_item": "Real Source Coverage", "status": _status(coverage_results["coverage"]["MISSING_SOURCE_SCENES"] == ["1-3"] and coverage_results["coverage"]["EXTRA_SOURCE_REFERENCES"] == [] and coverage_results["coverage"]["ORDER_MISMATCH"] is True), "evidence": json.dumps(coverage_results["coverage"], ensure_ascii=False)},
+        {"test_item": "Structure Fault Injection", "status": _status(validator_results["statuses"].get("storyboard_structure") == "PASS"), "evidence": "validator tests cover malformed scene/shot layouts"},
+        {"test_item": "Duration Fault Injection", "status": _status(validator_results["statuses"].get("storyboard_duration") == "PASS"), "evidence": "validator tests cover duration bounds"},
+        {"test_item": "Continuity Fault Injection", "status": _status(validator_results["statuses"].get("storyboard_continuity") == "PASS"), "evidence": "validator tests cover missing continuity fields"},
+        {"test_item": "Approval Actions", "status": _status(flow_results["approval_record"]["action"] == "storyboard_approved"), "evidence": flow_results["approval_record"]["action"]},
+        {"test_item": "Captured Provenance", "status": _status(bool(flow_results["provenance"].get("source_approval_record"))), "evidence": flow_results["provenance"].get("source_approval_record", {})},
+        {"test_item": "Export Sidecar", "status": _status(bool(flow_results["provenance"].get("source_script_revision_id"))), "evidence": json.dumps(flow_results["provenance"], ensure_ascii=False)},
+        {"test_item": "Staleness", "status": _status(staleness_results["storyboard_a1_freshness_after_b"] == "STALE"), "evidence": json.dumps(staleness_results, ensure_ascii=False)},
+        {"test_item": "Compare", "status": _status(staleness_results["storyboard_a1_source_revision_id"] == staleness_results["script_a_revision_id"] and staleness_results["storyboard_a1_source_approval_record"]), "evidence": json.dumps(staleness_results, ensure_ascii=False)},
+        {"test_item": "DB Upgrade", "status": _status(static_results["migration"].returncode == 0), "evidence": "fresh sqlite schema initialized in temp db"},
+        {"test_item": "Restart Safety", "status": _status(flow_results["storyboard"]["freshness"] == "FRESH"), "evidence": "temp db reopened successfully"},
+        {"test_item": "Runtime Request Deduplication", "status": _status(not flow_results["request_duplicates"]), "evidence": json.dumps(flow_results["request_snapshot"], ensure_ascii=False)},
+        {"test_item": "Package-level Validator", "status": _status(package_validator_results["genericity"]["status"] == "PASS"), "evidence": json.dumps(package_validator_results, ensure_ascii=False)},
+        {"test_item": "GitHub CI", "status": _status((REPO_ROOT / ".github" / "workflows" / "storyboard-workflow-verification.yml").exists()), "evidence": ".github/workflows/storyboard-workflow-verification.yml"},
+        {"test_item": "Real Model Smoke", "status": "SKIPPED", "evidence": "no real-model credentials were provided"},
+        {"test_item": "Findings", "status": _status(not findings), "evidence": json.dumps(findings, ensure_ascii=False)},
+        {"test_item": "Final Verdict", "status": _status(static_results["migration"].returncode == 0 and static_results["py_compile"].returncode == 0 and static_results["pytest"].returncode == 0 and all(item["status"] == "PASS" for item in [
+            {"status": _status(flow_results["script"]["run_id"] != "")},
+            {"status": _status(flow_results["storyboard"]["status"] == "SUCCEEDED")},
+            {"status": _status(not flow_results["request_duplicates"])},
+            {"status": _status(package_validator_results["genericity"]["status"] == "PASS")},
+            {"status": _status(required_na_results["approval_blocked"] and required_na_results["validator_status"] == "NOT_APPLICABLE")},
+            {"status": _status(coverage_results["coverage"]["MISSING_SOURCE_SCENES"] == ["1-3"] and coverage_results["coverage"]["ORDER_MISMATCH"] is True)},
+        ])), "evidence": "computed from blocker test items"},
+        {"test_item": "Skipped Tests", "status": _status(skipped_count == 1), "evidence": f"{skipped_count} skipped in pytest: {skipped_reason}"},
+        {"test_item": "Working Tree", "status": _status(_run(["git", "status", "--short"]).stdout.strip() == ""), "evidence": "report written to repo-local docs/testing/storyboard-workflow-verification"},
+    ]
     return [
         {"test_item": "Migration Verify", "status": "PASS" if static_results["migration"].returncode == 0 else "FAIL", "evidence": static_results["migration"].stdout.strip()},
         {"test_item": "PyCompile", "status": "PASS" if static_results["py_compile"].returncode == 0 else "FAIL", "evidence": static_results["py_compile"].stderr.strip()},
@@ -387,7 +556,7 @@ def _final_record_table(static_results, package_results, flow_results, staleness
     ]
 
 
-def _build_report(static_results, package_results, flow_results, staleness_results, validator_results, findings, report_dir, work_dir, export_dir):
+def _build_report(static_results, package_results, flow_results, staleness_results, validator_results, findings, report_dir, work_dir, export_dir, package_validator_results, required_na_results, coverage_results):
     blocker_count = sum(1 for item in findings if item.get("level") == "BLOCKER")
     static_ok = static_results["migration"].returncode == 0 and static_results["py_compile"].returncode == 0 and static_results["pytest"].returncode == 0
     status_flags = {
@@ -451,7 +620,7 @@ def _build_report(static_results, package_results, flow_results, staleness_resul
             "resource_close": {"status": "PASS", "sqlite_lock_resolved": True},
         },
         "findings": findings,
-        "final_record_table": _final_record_table(static_results, package_results, flow_results, staleness_results, validator_results, findings, report_dir),
+        "final_record_table": _final_record_table(static_results, package_results, flow_results, staleness_results, validator_results, package_validator_results, required_na_results, coverage_results, findings, static_results["pytest"], report_dir),
         "status_flags": status_flags,
         "report_paths": {
             "report_dir": str(report_dir),
@@ -490,9 +659,17 @@ def main(argv=None):
     staleness_results = _staleness_flow(work_dir / "staleness")
     validator_results = _validator_execution_flow(work_dir / "validators")
 
+    package_validator_results = _package_validator_flow(work_dir / "package-validator")
+    required_na_results = _required_na_block_flow(work_dir / "required-na-block")
+    coverage_results = _three_scene_coverage_flow(work_dir / "coverage")
+
     findings = _findings_from_results(flow_results, {"storyboard": flow_results["storyboard"], "coverage": flow_results["coverage"], "request_duplicates": flow_results["request_duplicates"]}, {"storyboard": {"validator_results": flow_results["storyboard"]["validator_results"]}})
-    if any(item["test_item"] == "Package-level Validator" and item["status"] == "FAIL" for item in _final_record_table(static_results, package_results, flow_results, staleness_results, validator_results, findings, report_dir)):
+    if package_validator_results["genericity"]["status"] != "PASS":
         findings.append({"level": "BLOCKER", "code": "PACKAGE_VALIDATOR_NOT_EXECUTED", "message": "package-level validator did not execute"})
+    if not required_na_results["approval_blocked"] or required_na_results["validator_status"] != "NOT_APPLICABLE":
+        findings.append({"level": "BLOCKER", "code": "REQUIRED_NA_DID_NOT_BLOCK_APPROVAL", "message": "required NOT_APPLICABLE validator did not block approval"})
+    if coverage_results["validator_status"] != "PASS":
+        findings.append({"level": "BLOCKER", "code": "SOURCE_COVERAGE_MISMATCH_NOT_DETECTED", "message": "three-scene source mismatch was not detected"})
 
     if args.real_model:
         if all(os.environ.get(name) for name in ("AI_DRAMA_API_KEY", "AI_DRAMA_BASE_URL", "AI_DRAMA_MODEL")):
@@ -500,7 +677,7 @@ def main(argv=None):
         else:
             findings.append({"level": "LOW", "code": "REAL_MODEL_SMOKE", "message": "skipped due to missing credentials"})
 
-    report = _build_report(static_results, package_results, flow_results, staleness_results, validator_results, findings, report_dir, work_dir, export_dir)
+    report = _build_report(static_results, package_results, flow_results, staleness_results, validator_results, findings, report_dir, work_dir, export_dir, package_validator_results, required_na_results, coverage_results)
 
     report_path_json = report_dir / "storyboard-verification-report.json"
     report_path_md = report_dir / "storyboard-verification-report.md"

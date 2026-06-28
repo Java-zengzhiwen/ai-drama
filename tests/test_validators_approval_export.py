@@ -62,7 +62,7 @@ def test_required_failed_validator_blocks_approval(tmp_path):
             service.approve_revision(result.revision.revision_id, "tester")
 
 
-def test_required_not_applicable_validator_does_not_mark_run_failed(tmp_path):
+def test_required_not_applicable_validator_blocks_approval(tmp_path):
     package = load_skill_package(SKILL_ROOT)
     validators = list(package.validators) + [
         SkillValidator(
@@ -86,8 +86,10 @@ def test_required_not_applicable_validator_does_not_mark_run_failed(tmp_path):
     with _service(tmp_path) as service:
         result = service.run_acceptance(package, ACCEPTANCE_ROOT, "mock", "mock")
 
-        assert result.run.status == "SUCCEEDED"
+        assert result.run.status == "VALIDATION_FAILED"
         assert {item.validator_id: item.status for item in result.validation_results}["bundle_required"] == "NOT_APPLICABLE"
+        with pytest.raises(ApprovalBlocked):
+            service.approve_revision(result.revision.revision_id, "tester")
 
 
 def test_required_validator_failures_persist_run_error_metadata(tmp_path):
