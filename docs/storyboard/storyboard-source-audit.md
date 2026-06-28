@@ -144,3 +144,4 @@ Provenance:
 - Keep Storyboard separate from Shot Prompt, LibTV, visual asset generation, and video workflows.
 - Preserve provenance for any future migration candidates, but do not pretend the current audit found one.
 - Use the script-approved revision as the upstream gate for Storyboard workflow.
+- GitHub review can only verify this written audit; it cannot re-verify the local SOURCE_ROOT contents from the repository alone.

@@ -1,24 +1,27 @@
-# Script Skill Runtime MVP
+# Runtime MVP
 
 The runtime is local and CLI-first. It stores SQLite metadata under `runtime-data/runtime.db` and immutable content objects under `runtime-data/objects` by default.
 
-Execution profile: `markdown-script-mvp-v1`.
+Execution profiles:
 
-Supported artifact: `creator_facing_markdown_script`.
+- `markdown-script-mvp-v1`
+- `storyboard-markdown-mvp-v1`
 
-Unsupported rc2.4 bundle artifacts: JSON script, beat registry, coverage report, assumption log, conflict registry, source claim audit, handoff, creator presentation, and test reports.
+Supported artifact types:
 
-Minimal mock flow:
+- `drama_script`
+- `storyboard`
+
+Minimal mock flows:
 
 ```bash
 ai-drama skills validate ai-drama-script-adaptation-skill@v0.6.1-rc2.4
 ai-drama run create --skill ai-drama-script-adaptation-skill@v0.6.1-rc2.4 --input acceptance/shengsi-chapter-001 --runtime mock --model mock-script-v1
+ai-drama run create --skill ai-drama-storyboard-design-skill@v0.1.0 --source-revision REVISION_ID --runtime mock --model mock-storyboard-v1
 ai-drama approvals approve REVISION_ID --reviewer local-user
-ai-drama artifacts export-approved shengsi-chapter-001 --output runtime-data/approved.md
+ai-drama artifacts export-approved ARTIFACT_ID --output runtime-data/approved.md
 ```
-
-`approved-script.md` from the acceptance corpus is reference-only. It is not included in runtime requests or model messages.
 
 The normalized runtime request snapshot is the exact adapter input. It includes Skill instructions, manifest-declared active context/schema/contract files, input contents and hashes, output contract, and provider/model/timeout. It excludes API keys and reference outputs.
 
-Compare includes request hash and input hash/reference differences. Export writes a provenance sidecar with latest deterministic approval record and request/input/content hashes.
+Compare includes request hash and input hash/reference differences. Export writes a provenance sidecar with deterministic approval records and request/input/content hashes.

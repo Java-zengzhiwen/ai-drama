@@ -1,5 +1,24 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "additionalProperties": true
+  "required": ["source_scene_references", "missing_scene_references", "extra_scene_references"],
+  "additionalProperties": false,
+  "properties": {
+    "source_scene_references": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "missing_scene_references": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    },
+    "extra_scene_references": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "uniqueItems": true
+    }
+  }
 }

@@ -59,7 +59,7 @@
       "dependencies": [],
       "timeout_seconds": 10,
       "expected_exit_behavior": "zero_is_pass",
-      "validator_origin": "migrated_skill",
+      "validator_origin": "newly_created",
       "required_artifacts": [
         "storyboard_markdown"
       ],
@@ -84,7 +84,7 @@
       "dependencies": [],
       "timeout_seconds": 10,
       "expected_exit_behavior": "zero_is_pass",
-      "validator_origin": "migrated_skill",
+      "validator_origin": "newly_created",
       "required_artifacts": [
         "storyboard_markdown"
       ],
@@ -109,7 +109,7 @@
       "dependencies": [],
       "timeout_seconds": 10,
       "expected_exit_behavior": "zero_is_pass",
-      "validator_origin": "migrated_skill",
+      "validator_origin": "newly_created",
       "required_artifacts": [
         "storyboard_markdown"
       ],
@@ -134,7 +134,7 @@
       "dependencies": [],
       "timeout_seconds": 10,
       "expected_exit_behavior": "zero_is_pass",
-      "validator_origin": "migrated_skill",
+      "validator_origin": "newly_created",
       "required_artifacts": [
         "storyboard_markdown"
       ],
@@ -161,7 +161,7 @@
       "dependencies": [],
       "timeout_seconds": 10,
       "expected_exit_behavior": "zero_is_pass",
-      "validator_origin": "migrated_skill",
+      "validator_origin": "newly_created",
       "required_artifacts": [
         "skill_package"
       ],

@@ -1,10 +1,13 @@
-# Storyboard Outline
+# Storyboard
 
 ## 场次：{scene_id}
 
 ### 镜头 {shot_order}
 
+- scene_id: {scene_id}
 - shot_id: {shot_id}
+- shot_order: {shot_order}
+- source_scene_reference: {source_scene_reference}
 - duration_seconds: {duration_seconds}
 - shot_size: {shot_size}
 - camera_angle: {camera_angle}

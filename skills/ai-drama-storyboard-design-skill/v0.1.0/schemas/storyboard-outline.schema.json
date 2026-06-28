@@ -1,5 +1,56 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
-  "additionalProperties": true
+  "required": ["scene_id", "shots"],
+  "additionalProperties": false,
+  "properties": {
+    "scene_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "shots": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "scene_id",
+          "shot_id",
+          "shot_order",
+          "source_scene_reference",
+          "duration_seconds",
+          "shot_size",
+          "camera_angle",
+          "camera_movement",
+          "visual_composition",
+          "character_positions",
+          "character_actions",
+          "emotion_performance",
+          "dialogue",
+          "sound_notes",
+          "continuity_in",
+          "continuity_out"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "scene_id": {"type": "string", "minLength": 1},
+          "shot_id": {"type": "string", "minLength": 1},
+          "shot_order": {"type": "integer", "minimum": 1},
+          "source_scene_reference": {"type": "string", "minLength": 1},
+          "duration_seconds": {"type": "integer", "minimum": 5, "maximum": 15},
+          "shot_size": {"type": "string", "minLength": 1},
+          "camera_angle": {"type": "string", "minLength": 1},
+          "camera_movement": {"type": "string", "minLength": 1},
+          "visual_composition": {"type": "string", "minLength": 1},
+          "character_positions": {"type": "string", "minLength": 1},
+          "character_actions": {"type": "string", "minLength": 1},
+          "emotion_performance": {"type": "string", "minLength": 1},
+          "dialogue": {"type": "string", "minLength": 1},
+          "sound_notes": {"type": "string", "minLength": 1},
+          "continuity_in": {"type": "string", "minLength": 1},
+          "continuity_out": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
 }

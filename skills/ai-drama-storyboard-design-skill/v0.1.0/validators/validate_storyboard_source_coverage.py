@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from common import *
+import re
 
 
 def main():
@@ -8,9 +9,13 @@ def main():
     ap.add_argument("--report", required=True)
     args = ap.parse_args()
     text = Path(args.revision).read_text(encoding="utf-8")
-    if "scene_id:" not in text or "source_script_revision_id" not in text:
-        emit("fail", "ERR_SOURCE_COVERAGE", "storyboard is missing source coverage markers", args.report)
-    emit("pass", "", "source coverage valid", args.report)
+    scenes = re.findall(r"^## 场次：([^\n]+)$", text, flags=re.M)
+    refs = re.findall(r"^- source_scene_reference:\s*(.+)$", text, flags=re.M)
+    missing = sorted(set(scenes) - set(refs))
+    extra = sorted(set(refs) - set(scenes))
+    if missing or extra or not scenes or not refs:
+        emit("fail", "ERR_SOURCE_COVERAGE", "storyboard source coverage invalid", args.report, source_scene_references=refs, missing_scene_references=missing, extra_scene_references=extra)
+    emit("pass", "", "source coverage valid", args.report, source_scene_references=refs, missing_scene_references=[], extra_scene_references=[])
 
 
 if __name__ == "__main__":
