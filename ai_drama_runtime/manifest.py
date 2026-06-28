@@ -72,6 +72,8 @@ class SkillPackage:
     package_status: str
     instructions_entry: Path
     context_files: list
+    input_types: list
+    output_types: list
     schemas: list
     contracts: list
     validator_support_files: list
@@ -183,6 +185,8 @@ def load_skill_package(root):
         package_status=data["package_status"],
         instructions_entry=instructions,
         context_files=context_files,
+        input_types=list(data["input_types"]),
+        output_types=list(data["output_types"]),
         schemas=schemas,
         contracts=contracts,
         validator_support_files=validator_support_files,

@@ -139,3 +139,84 @@ def test_cli_storyboard_run_flow(tmp_path):
     )
     assert storyboard_run["status"] == "SUCCEEDED"
     assert storyboard_run["revision_id"]
+
+
+def test_cli_enforces_mutually_exclusive_inputs(tmp_path):
+    conflict = _cli(
+        tmp_path,
+        "run",
+        "create",
+        "--skill",
+        SKILL_REF,
+        "--input",
+        ACCEPTANCE_ROOT,
+        "--source-revision",
+        "abc",
+        "--runtime",
+        "mock",
+        check=False,
+    )
+    assert conflict.returncode == 2
+    assert "not allowed with argument" in conflict.stderr
+
+    missing = _cli(
+        tmp_path,
+        "run",
+        "create",
+        "--skill",
+        SKILL_REF,
+        "--runtime",
+        "mock",
+        check=False,
+    )
+    assert missing.returncode == 2
+
+
+def test_cli_reports_storyboard_gate_failures(tmp_path):
+    gate = _cli(
+        tmp_path,
+        "run",
+        "create",
+        "--skill",
+        STORYBOARD_SKILL_REF,
+        "--source-revision",
+        "missing-revision",
+        "--runtime",
+        "mock",
+        check=False,
+    )
+    assert gate.returncode == 2
+    payload = json.loads(gate.stdout)
+    assert payload["error_code"] == "SOURCE_REVISION_NOT_FOUND"
+
+
+def test_cli_rejects_skill_input_type_mismatch(tmp_path):
+    bad_storyboard = _cli(
+        tmp_path,
+        "run",
+        "create",
+        "--skill",
+        STORYBOARD_SKILL_REF,
+        "--input",
+        ACCEPTANCE_ROOT,
+        "--runtime",
+        "mock",
+        check=False,
+    )
+    assert bad_storyboard.returncode == 2
+    assert "SKILL_INPUT_TYPE_MISMATCH" in bad_storyboard.stdout
+
+    bad_script = _cli(
+        tmp_path,
+        "run",
+        "create",
+        "--skill",
+        SKILL_REF,
+        "--source-revision",
+        "x",
+        "--runtime",
+        "mock",
+        check=False,
+    )
+    assert bad_script.returncode == 2
+    assert "SKILL_INPUT_TYPE_MISMATCH" in bad_script.stdout

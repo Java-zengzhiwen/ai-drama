@@ -39,6 +39,33 @@ def _as_text(value):
     return str(value)
 
 
+def _current_artifact_type(revision):
+    return revision.artifact_type if hasattr(revision, "artifact_type") else ""
+
+
+def _validator_applies_to_revision(validator, revision):
+    if validator.current_profile_status == "NOT_APPLICABLE":
+        return False
+    revision_type = _current_artifact_type(revision)
+    if revision_type == "drama_script":
+        accepted = {"drama_script_revision"}
+    elif revision_type == "storyboard":
+        accepted = {"storyboard_revision"}
+    elif revision_type == "skill_package":
+        accepted = {"skill_package"}
+    else:
+        accepted = set()
+    return bool(set(validator.applies_to) & accepted)
+
+
+def _artifact_source_label(artifact_type):
+    if artifact_type == "storyboard":
+        return "storyboard_revision"
+    if artifact_type == "skill_package":
+        return "skill_package"
+    return "drama_script_revision"
+
+
 def run_declared_validators(store, skill, revision, acceptance_root, repo_root=None):
     results = []
     revision_path = store.object_path(revision.content_object_id)
@@ -55,14 +82,17 @@ def run_declared_validators(store, skill, revision, acceptance_root, repo_root=N
                 )
             )
             continue
-        if "drama_script_revision" not in validator.applies_to and "skill_package" not in validator.applies_to:
+        if not _validator_applies_to_revision(validator, revision):
             results.append(
                 _insert(
                     store,
                     revision,
                     validator,
                     "NOT_APPLICABLE",
-                    stderr="validator applies to %s, not current revision\n" % ",".join(validator.applies_to),
+                    stderr="validator applies to %s, not current revision type %s\n" % (
+                        ",".join(validator.applies_to),
+                        _artifact_source_label(revision.artifact_type),
+                    ),
                 )
             )
             continue

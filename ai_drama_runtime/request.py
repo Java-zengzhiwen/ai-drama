@@ -99,14 +99,20 @@ def build_runtime_request(skill, acceptance_root, provider, model, timeout_secon
 def _storyboard_inputs_from_source_revision(store, source_revision):
     run = store.get_run(source_revision.run_id)
     snapshots = {item.logical_type: item for item in store.input_snapshots(source_revision.run_id)}
+    required = ("series_canon", "characters", "production_brief")
+    missing = [name for name in required if name not in snapshots]
+    if missing:
+        raise ValueError("SOURCE_CONTEXT_MISSING: %s" % ",".join(missing))
+    approval = store.latest_approval(source_revision.revision_id)
     def _snapshot_text(name):
         item = snapshots.get(name)
-        return store.read_text(item.object_id) if item else ""
+        return store.read_text(item.object_id)
     return {
         "source_script_revision_id": source_revision.revision_id,
         "source_script_artifact_id": source_revision.artifact_id,
         "source_script_content_hash": source_revision.content_hash,
-        "source_script_approval_record": (store.latest_approval(source_revision.revision_id).__dict__ if store.latest_approval(source_revision.revision_id) else {}),
+        "source_script_approval_record_id": approval.record_id if approval else "",
+        "source_script_approval_record": approval.__dict__ if approval else {},
         "source_script_markdown": store.read_text(source_revision.content_object_id),
         "series_canon": _snapshot_text("series_canon"),
         "characters": _snapshot_text("characters"),

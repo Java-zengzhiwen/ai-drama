@@ -87,6 +87,20 @@ class RevisionDependencyRecord:
 
 
 @dataclass(frozen=True)
+class WorkflowGateRecord:
+    gate_id: str
+    run_id: str
+    target_skill_id: str
+    target_skill_version: str
+    target_artifact_id: str
+    source_revision_id: str
+    request_reference: str
+    error_code: str
+    error_message: str
+    created_at: str
+
+
+@dataclass(frozen=True)
 class ValidationRecord:
     validation_id: str
     revision_id: str
@@ -274,6 +288,18 @@ class RuntimeStore:
               FOREIGN KEY(child_revision_id) REFERENCES revisions(revision_id),
               FOREIGN KEY(parent_revision_id) REFERENCES revisions(revision_id)
             );
+            CREATE TABLE IF NOT EXISTS workflow_gate_records (
+              gate_id TEXT PRIMARY KEY,
+              run_id TEXT NOT NULL,
+              target_skill_id TEXT NOT NULL,
+              target_skill_version TEXT NOT NULL,
+              target_artifact_id TEXT NOT NULL,
+              source_revision_id TEXT NOT NULL,
+              request_reference TEXT NOT NULL,
+              error_code TEXT NOT NULL,
+              error_message TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
             CREATE UNIQUE INDEX IF NOT EXISTS one_current_approved_revision
               ON revisions(artifact_id)
               WHERE approval_status = 'approved';
@@ -340,6 +366,30 @@ class RuntimeStore:
                 SELECT child_revision_id, parent_revision_id, relation_type, parent_content_hash, parent_approval_record_id, created_at
                 FROM revision_dependencies_old;
                 DROP TABLE revision_dependencies_old;
+                """
+            )
+        gate_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(workflow_gate_records)").fetchall()}
+        if gate_columns and "request_reference" not in gate_columns:
+            self.conn.executescript(
+                """
+                ALTER TABLE workflow_gate_records RENAME TO workflow_gate_records_old;
+                CREATE TABLE workflow_gate_records (
+                  gate_id TEXT PRIMARY KEY,
+                  run_id TEXT NOT NULL,
+                  target_skill_id TEXT NOT NULL,
+                  target_skill_version TEXT NOT NULL,
+                  target_artifact_id TEXT NOT NULL,
+                  source_revision_id TEXT NOT NULL,
+                  request_reference TEXT NOT NULL,
+                  error_code TEXT NOT NULL,
+                  error_message TEXT NOT NULL,
+                  created_at TEXT NOT NULL
+                );
+                INSERT INTO workflow_gate_records
+                (gate_id, run_id, target_skill_id, target_skill_version, target_artifact_id, source_revision_id, request_reference, error_code, error_message, created_at)
+                SELECT gate_id, run_id, target_skill_id, target_skill_version, target_artifact_id, source_revision_id, '', error_code, error_message, created_at
+                FROM workflow_gate_records_old;
+                DROP TABLE workflow_gate_records_old;
                 """
             )
 
@@ -484,6 +534,7 @@ class RuntimeStore:
 
     def approve_in_transaction(self, revision, reviewer, note):
         record_id = uuid.uuid4().hex
+        action = "storyboard_approved" if revision.artifact_type == "storyboard" else "script_approved"
         with self.conn:
             self.conn.execute(
                 "UPDATE revisions SET approval_status = 'superseded' WHERE artifact_id = ? AND approval_status = 'approved'",
@@ -499,12 +550,13 @@ class RuntimeStore:
                 (record_id, revision_id, artifact_id, action, reviewer, note, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (record_id, revision.revision_id, revision.artifact_id, "script_approved", reviewer, note or "", now_iso()),
+                (record_id, revision.revision_id, revision.artifact_id, action, reviewer, note or "", now_iso()),
             )
         return self.approval_record(record_id)
 
     def record_rejection(self, revision, reviewer, note):
         record_id = uuid.uuid4().hex
+        action = "storyboard_rejected" if revision.artifact_type == "storyboard" else "script_rejected"
         with self.conn:
             self.conn.execute(
                 "UPDATE revisions SET approval_status = 'rejected' WHERE revision_id = ?",
@@ -516,7 +568,7 @@ class RuntimeStore:
                 (record_id, revision_id, artifact_id, action, reviewer, note, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (record_id, revision.revision_id, revision.artifact_id, "script_rejected", reviewer, note or "", now_iso()),
+                (record_id, revision.revision_id, revision.artifact_id, action, reviewer, note or "", now_iso()),
             )
         return self.approval_record(record_id)
 
@@ -558,6 +610,18 @@ class RuntimeStore:
         self.conn.commit()
         return self.revision_dependencies(values["child_revision_id"])[-1]
 
+    def insert_workflow_gate_record(self, **values):
+        values.setdefault("gate_id", uuid.uuid4().hex)
+        values.setdefault("created_at", now_iso())
+        columns = list(values)
+        self.conn.execute(
+            "INSERT INTO workflow_gate_records (%s) VALUES (%s)"
+            % (",".join(columns), ",".join("?" for _ in columns)),
+            [values[column] for column in columns],
+        )
+        self.conn.commit()
+        return self.workflow_gate_record(values["gate_id"])
+
     def export_records(self, artifact_id):
         rows = self.conn.execute(
             "SELECT * FROM export_records WHERE artifact_id = ? ORDER BY created_at, export_id",
@@ -596,6 +660,14 @@ class RuntimeStore:
             (parent_revision_id,),
         ).fetchall()
         return [RevisionDependencyRecord(**dict(row)) for row in rows]
+
+    def workflow_gate_record(self, gate_id):
+        row = self.conn.execute("SELECT * FROM workflow_gate_records WHERE gate_id = ?", (gate_id,)).fetchone()
+        return None if row is None else WorkflowGateRecord(**dict(row))
+
+    def workflow_gate_records(self):
+        rows = self.conn.execute("SELECT * FROM workflow_gate_records ORDER BY created_at, gate_id").fetchall()
+        return [WorkflowGateRecord(**dict(row)) for row in rows]
 
     def validation_results(self, revision_id):
         rows = self.conn.execute(

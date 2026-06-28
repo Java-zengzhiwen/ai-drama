@@ -7,7 +7,7 @@ from .acceptance import AcceptanceError
 from .manifest import SkillManifestError
 from .registry import DuplicateSkillError, SkillNotFoundError, SkillRegistry
 from .runtime import RuntimeErrorBase
-from .services import ApprovalBlocked, ExportConflict, NotFound, RuntimeService
+from .services import ApprovalBlocked, ExportConflict, NotFound, RuntimeService, WorkflowGateError
 from .store import RuntimeStore
 
 
@@ -66,28 +66,25 @@ def _skills_validate(args):
 def _run_create(args):
     registry = _registry(args)
     package = registry.get_ref(args.skill)
-    if args.source_revision:
-        result = _with_service(
-            args,
-            lambda service: service.run_storyboard(
-                package,
-                args.source_revision,
-                args.runtime,
-                args.model,
-                mock_mode=args.mock_mode,
-            ),
+    mode = "source_revision" if args.source_revision is not None else "input" if args.input is not None else ""
+    result = _with_service(
+        args,
+        lambda service: service.run_storyboard(
+            package,
+            args.source_revision,
+            args.runtime,
+            args.model,
+            mock_mode=args.mock_mode,
         )
-    else:
-        result = _with_service(
-            args,
-            lambda service: service.run_acceptance(
-                package,
-                args.input,
-                args.runtime,
-                args.model,
-                mock_mode=args.mock_mode,
-            ),
-        )
+        if mode == "source_revision"
+        else service.run_acceptance(
+            package,
+            args.input,
+            args.runtime,
+            args.model,
+            mock_mode=args.mock_mode,
+        ),
+    )
     payload = {
         "run_id": result.run.run_id,
         "status": result.run.status,
@@ -174,8 +171,9 @@ def build_parser():
     run_sub = run.add_subparsers(dest="run_command", required=True)
     p = run_sub.add_parser("create")
     p.add_argument("--skill", required=True)
-    p.add_argument("--input", default="")
-    p.add_argument("--source-revision", default="")
+    mode = p.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--input")
+    mode.add_argument("--source-revision")
     p.add_argument("--runtime", choices=["mock", "openai-compatible"], default="mock")
     p.add_argument("--model", default="")
     p.add_argument("--mock-mode", choices=["success", "runtime_failure", "empty_response", "parse_failure"], default="success")
@@ -228,6 +226,9 @@ def main(argv=None):
     try:
         code = args.func(args)
         return code or 0
+    except WorkflowGateError as exc:
+        _json({"error_code": exc.code, "error_message": exc.safe_message})
+        return EXIT_INVALID
     except (ValueError, SkillManifestError, AcceptanceError) as exc:
         print(str(exc), file=sys.stderr)
         return EXIT_INVALID

@@ -26,6 +26,30 @@ class NotFound(RuntimeError):
     pass
 
 
+class WorkflowGateError(RuntimeError):
+    def __init__(self, code, message, target_artifact_id="", source_revision_id="", request_reference=""):
+        super().__init__(message)
+        self.code = code
+        self.safe_message = message
+        self.target_artifact_id = target_artifact_id
+        self.source_revision_id = source_revision_id
+        self.request_reference = request_reference
+
+
+def _gate_failure(store, *, run_id="", skill=None, target_artifact_id="", source_revision_id="", error_code="", error_message="", request_reference=""):
+    if skill is not None:
+        store.insert_workflow_gate_record(
+            run_id=run_id,
+            target_skill_id=skill.skill_id,
+            target_skill_version=skill.version,
+            target_artifact_id=target_artifact_id,
+            source_revision_id=source_revision_id,
+            request_reference=request_reference,
+            error_code=error_code,
+            error_message=error_message,
+        )
+
+
 @dataclass(frozen=True)
 class RunResult:
     run: object
@@ -43,6 +67,25 @@ def _sha256_text(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _required_input_types(skill):
+    return list(skill.input_types)
+
+
+def _validate_skill_input_mode(skill, provided_mode):
+    if not provided_mode:
+        raise WorkflowGateError("INPUT_MODE_REQUIRED", "input mode is required")
+    required = _required_input_types(skill)
+    if provided_mode == "input":
+        if "source_chapter" not in required:
+            raise WorkflowGateError("SKILL_INPUT_TYPE_MISMATCH", "skill expects --source-revision")
+        return "source_chapter"
+    if provided_mode == "source_revision":
+        if "approved_script_revision" not in required:
+            raise WorkflowGateError("SKILL_INPUT_TYPE_MISMATCH", "skill expects --input")
+        return "approved_script_revision"
+    raise WorkflowGateError("INPUT_MODE_CONFLICT", "input mode is invalid")
+
+
 class RuntimeService:
     def __init__(self, store, repo_root=None):
         self.store = store
@@ -58,6 +101,7 @@ class RuntimeService:
         self.close()
 
     def run_acceptance(self, skill, acceptance_root, runtime, model, mock_mode="success"):
+        _validate_skill_input_mode(skill, "input")
         started = time.time()
         bundle = load_acceptance_bundle(acceptance_root)
         artifact_id = bundle.manifest["id"]
@@ -170,26 +214,39 @@ class RuntimeService:
         return RunResult(run=run, revision=revision, validation_results=validations, adapter_request_json=request_json)
 
     def run_storyboard(self, skill, source_revision_id, runtime, model, mock_mode="success"):
+        _validate_skill_input_mode(skill, "source_revision")
         started = time.time()
         source_revision = self.store.get_revision(source_revision_id)
         if source_revision is None:
-            raise NotFound("source revision not found: %s" % source_revision_id)
+            _gate_failure(self.store, skill=skill, target_artifact_id="", source_revision_id=source_revision_id, error_code="SOURCE_REVISION_NOT_FOUND", error_message="source revision not found", request_reference=source_revision_id)
+            raise WorkflowGateError("SOURCE_REVISION_NOT_FOUND", "source revision not found", request_reference=source_revision_id)
         if source_revision.artifact_type != "drama_script":
-            raise ApprovalBlocked("source revision is not a drama script")
+            _gate_failure(self.store, skill=skill, target_artifact_id=source_revision.artifact_id, source_revision_id=source_revision_id, error_code="SOURCE_ARTIFACT_TYPE_INVALID", error_message="source revision is not a drama script", request_reference=source_revision_id)
+            raise WorkflowGateError("SOURCE_ARTIFACT_TYPE_INVALID", "source revision is not a drama script", source_revision.artifact_id, source_revision_id, source_revision_id)
         source_run = self.store.get_run(source_revision.run_id)
-        if not self.store.input_snapshots(source_revision.run_id):
-            raise ApprovalBlocked("source context missing")
+        snapshots = {item.logical_type: item for item in self.store.input_snapshots(source_revision.run_id)}
+        required_inputs = ("series_canon", "characters", "production_brief")
+        missing_context = [item for item in required_inputs if item not in snapshots]
+        if missing_context:
+            _gate_failure(self.store, skill=skill, target_artifact_id=source_revision.artifact_id, source_revision_id=source_revision_id, error_code="SOURCE_CONTEXT_MISSING", error_message="missing inherited context: %s" % ",".join(missing_context), request_reference=source_revision_id)
+            raise WorkflowGateError("SOURCE_CONTEXT_MISSING", "missing inherited context: %s" % ",".join(missing_context), source_revision.artifact_id, source_revision_id, source_revision_id)
         if source_revision.approval_status != "approved" or not source_run:
-            raise ApprovalBlocked("source revision is not approved")
+            _gate_failure(self.store, skill=skill, target_artifact_id=source_revision.artifact_id, source_revision_id=source_revision_id, error_code="SOURCE_REVISION_NOT_APPROVED", error_message="source revision is not approved", request_reference=source_revision_id)
+            raise WorkflowGateError("SOURCE_REVISION_NOT_APPROVED", "source revision is not approved", source_revision.artifact_id, source_revision_id, source_revision_id)
         current = self.store.current_approved(source_revision.artifact_id)
         if not current or current.revision_id != source_revision.revision_id:
-            raise ApprovalBlocked("source revision is not current approved")
+            _gate_failure(self.store, skill=skill, target_artifact_id=source_revision.artifact_id, source_revision_id=source_revision_id, error_code="SOURCE_REVISION_NOT_CURRENT_APPROVED", error_message="source revision is not current approved", request_reference=source_revision_id)
+            raise WorkflowGateError("SOURCE_REVISION_NOT_CURRENT_APPROVED", "source revision is not current approved", source_revision.artifact_id, source_revision_id, source_revision_id)
         artifact_id = source_revision.artifact_id + ":storyboard"
         project_id = source_revision.project_id
         chapter_id = source_revision.chapter_id
         self.store.ensure_artifact(artifact_id, "storyboard", project_id, chapter_id)
         resolved_model = model or (os.environ.get("AI_DRAMA_MODEL") if runtime == "openai-compatible" else model)
-        runtime_request = build_storyboard_runtime_request(skill, self.store, source_revision, runtime, resolved_model or "")
+        try:
+            runtime_request = build_storyboard_runtime_request(skill, self.store, source_revision, runtime, resolved_model or "")
+        except ValueError as exc:
+            _gate_failure(self.store, skill=skill, target_artifact_id=artifact_id, source_revision_id=source_revision_id, error_code="SOURCE_CONTEXT_MISSING", error_message=str(exc), request_reference=source_revision_id)
+            raise WorkflowGateError("SOURCE_CONTEXT_MISSING", str(exc), artifact_id, source_revision_id, source_revision_id)
         request_json = runtime_request.to_json()
         request_object_id = self.store.write_text_object(request_json)
         run = self.store.create_run(
@@ -221,6 +278,15 @@ class RuntimeService:
             source_path=Path(source_run.request_object_id),
             text=json.dumps(_approved_approval_record(self.store, source_revision.revision_id), ensure_ascii=False, sort_keys=True),
         )
+        for logical_type in ("series_canon", "characters", "production_brief"):
+            snapshot = snapshots[logical_type]
+            self.store.insert_input_snapshot(
+                run.run_id,
+                logical_type=logical_type,
+                source_relative_path=snapshot.source_relative_path,
+                source_path=snapshot.source_path,
+                text=self.store.read_text(snapshot.object_id),
+            )
         try:
             response = run_runtime(runtime_request, mock_mode=mock_mode)
         except RuntimeErrorBase as exc:
@@ -335,10 +401,13 @@ class RuntimeService:
         return revision
 
     def revision_source_approval_record(self, revision_id):
-        source_revision_id = self.revision_source_revision_id(revision_id)
-        if not source_revision_id:
+        dep = self.store.revision_dependencies(revision_id)
+        if not dep:
             return {}
-        approval = self.store.latest_approval(source_revision_id)
+        record_id = dep[0].parent_approval_record_id
+        if not record_id:
+            return {}
+        approval = self.store.approval_record(record_id)
         return approval.__dict__ if approval else {}
 
     def revision_source_revision_id(self, revision_id):
@@ -371,6 +440,18 @@ class RuntimeService:
             "approval_status": [left.approval_status, right.approval_status],
             "freshness_status": [self.revision_freshness(left_revision_id), self.revision_freshness(right_revision_id)],
             "source_revision_id": [self.revision_source_revision_id(left_revision_id), self.revision_source_revision_id(right_revision_id)],
+            "source_script_artifact_id": [
+                self.store.get_revision(self.revision_source_revision_id(left_revision_id)).artifact_id if self.revision_source_revision_id(left_revision_id) else "",
+                self.store.get_revision(self.revision_source_revision_id(right_revision_id)).artifact_id if self.revision_source_revision_id(right_revision_id) else "",
+            ],
+            "source_script_content_hash": [
+                self.store.get_revision(self.revision_source_revision_id(left_revision_id)).content_hash if self.revision_source_revision_id(left_revision_id) else "",
+                self.store.get_revision(self.revision_source_revision_id(right_revision_id)).content_hash if self.revision_source_revision_id(right_revision_id) else "",
+            ],
+            "source_script_approval_record_id": [
+                self.store.revision_dependencies(left_revision_id)[0].parent_approval_record_id if self.store.revision_dependencies(left_revision_id) else "",
+                self.store.revision_dependencies(right_revision_id)[0].parent_approval_record_id if self.store.revision_dependencies(right_revision_id) else "",
+            ],
             "source_approval_record": [self.revision_source_approval_record(left_revision_id), self.revision_source_approval_record(right_revision_id)],
             "request_hash": [
                 self.store.get_run(left.run_id).request_hash,
@@ -432,6 +513,10 @@ class RuntimeService:
             "freshness_status": self.revision_freshness(revision.revision_id),
             "source_revision_id": self.revision_source_revision_id(revision.revision_id),
             "source_approval_record": self.revision_source_approval_record(revision.revision_id),
+            "source_script_artifact_id": self._revision_or_raise(self.revision_source_revision_id(revision.revision_id)).artifact_id if self.revision_source_revision_id(revision.revision_id) else "",
+            "source_script_revision_id": self.revision_source_revision_id(revision.revision_id),
+            "source_script_content_hash": self.store.get_revision(self.revision_source_revision_id(revision.revision_id)).content_hash if self.revision_source_revision_id(revision.revision_id) else "",
+            "source_script_approval_record_id": (self.store.revision_dependencies(revision.revision_id)[0].parent_approval_record_id if self.store.revision_dependencies(revision.revision_id) else ""),
             "input_references": inputs,
             "request_hash": run.request_hash,
             "approval_record": approval.__dict__ if approval else None,
