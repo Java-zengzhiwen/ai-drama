@@ -6,11 +6,10 @@ Status: FROZEN FOR IMPLEMENTATION PLANNING
 Decision: GO WITH PREREQUISITE
 Implementation Planning: ALLOWED
 Spec Consistency: PASS
-Spec Consistency: PASS
 
 Date: 2026-06-28
 Current branch: `test/storyboard-complete-verification`
-Baseline HEAD: `ed7e1d534145d91ba8a6cbdf33930198eb2ce543`
+Baseline HEAD: `122222ff31e2c64766f884dc8acac09dac4163dd`
 Review inputs:
 - `docs/reviews/shot-prompt-workflow-codex-analysis.md`
 - `docs/reviews/shot-prompt-workflow-deepseek-analysis.md`
@@ -130,6 +129,7 @@ Revision derivation type identifies how a revision was produced. It is not an ar
 
 Allowed columns:
 
+- `revision_output_id`
 - `revision_id`
 - `logical_type`
 - `object_id`
@@ -142,6 +142,14 @@ Allowed columns:
 Unique constraint:
 
 - `UNIQUE(revision_id, logical_type)`
+
+Primary key:
+
+- `revision_output_id TEXT PRIMARY KEY`
+
+Foreign key:
+
+- `revision_id` references `revisions(revision_id)`
 
 Allowed `logical_type` values:
 
@@ -224,15 +232,15 @@ Required and non-null:
 - `visual_composition`
 - `character_positions`
 - `character_actions`
+- `emotion_performance`
+- `dialogue`
+- `sound_notes`
 - `continuity_in`
 - `continuity_out`
 
 Required but nullable:
 
 - `camera_movement`
-- `emotion_performance`
-- `dialogue`
-- `sound_notes`
 
 The JSON types for these fields are frozen as follows:
 
@@ -240,9 +248,9 @@ The JSON types for these fields are frozen as follows:
 - `visual_composition`: object
 - `character_positions`: array<object>
 - `character_actions`: array<object>
-- `emotion_performance`: array<object>
-- `dialogue`: array<object>
-- `sound_notes`: array<string>
+- `emotion_performance`: array<object> (must exist; use `[]` when empty)
+- `dialogue`: array<object> (must exist; use `[]` when empty)
+- `sound_notes`: array<string> (must exist; use `[]` when empty)
 - `continuity_in`: object
 - `continuity_out`: object
 
@@ -277,14 +285,9 @@ Recommended shape:
       "action": "looks at camera"
     }
   ],
-  "emotion_performance": null,
-  "dialogue": [
-    {
-      "speaker_character_id": "CHARACTER_A",
-      "text": "Line one"
-    }
-  ],
-  "sound_notes": null,
+  "emotion_performance": [],
+  "dialogue": [],
+  "sound_notes": [],
   "continuity_in": {
     "must_preserve": ["wardrobe", "prop_state"],
     "must_change": []
@@ -304,6 +307,8 @@ Recommended shape:
 - `duration_seconds` is an integer.
 - Storyboard-layer shots stay within 5-15 seconds.
 - Empty strings are not allowed as a substitute for missing data.
+- `emotion_performance`, `dialogue`, and `sound_notes` are required non-null arrays; use `[]` when empty and never `null`.
+- `camera_movement` remains `object | null`.
 - Free-form Markdown cannot replace structured fields.
 - Renderer output must never be written back into canonical Storyboard JSON.
 - `script_approval_record_id` does not belong in canonical Storyboard JSON or its hash scope.
@@ -385,94 +390,197 @@ The JSON types for these fields are frozen as follows:
 
 ```json
 {
-  "unit_id": "UNIT_SHOT_001_01",
-  "unit_order": 1,
-  "source_scene_id": "SCENE_001",
-  "source_storyboard_shot_id": "SHOT_001",
-  "split": {
-    "is_split": true,
-    "split_group_id": "SHOT_001",
-    "split_index": 1,
-    "split_count": 2
+  "schema_version": "shot-prompt-package-v1",
+  "source": {
+    "storyboard_artifact_id": "ARTIFACT_ID",
+    "storyboard_revision_id": "REVISION_ID",
+    "storyboard_content_hash": "SHA256"
   },
-  "timing": {
-    "source_duration_seconds": 8,
-    "unit_duration_seconds": 5,
-    "group_duration_seconds": 10,
-    "variance_seconds": 2,
-    "variance_reason": "ACTION_COMPLETION"
-  },
-  "prompt_components": {
-    "scene": {
-      "location": "Shen residence side hall",
-      "time": "night",
-      "environment_state": "quiet after a cup falls"
-    },
-    "characters": [
+  "content": {
+    "units": [
       {
-        "character_id": "CHAR_SHEN_QINGHE",
-        "position": "center foreground",
-        "costume_continuity": "moon-white robe",
-        "identity_requirement": "preserve approved face and body proportions"
-      }
-    ],
-    "composition": {
-      "shot_size": "medium",
-      "subject_focus": "Shen Qinghe",
-      "background_relation": "tea table remains behind her"
-    },
-    "camera": {
-      "angle": "eye_level",
-      "movement": {
-        "type": "push_in",
-        "intensity": "medium",
-        "note": "slow emotional emphasis"
-      }
-    },
-    "actions": [
+        "unit_id": "UNIT_SHOT_001_01",
+        "unit_order": 1,
+        "source_scene_id": "SCENE_001",
+        "source_storyboard_shot_id": "SHOT_001",
+        "split": {
+          "is_split": true,
+          "split_group_id": "SHOT_001",
+          "split_index": 1,
+          "split_count": 2
+        },
+        "timing": {
+          "source_duration_seconds": 8,
+          "unit_duration_seconds": 5,
+          "group_duration_seconds": 10,
+          "variance_seconds": 2,
+          "variance_reason": "ACTION_COMPLETION"
+        },
+        "prompt_components": {
+          "scene": {
+            "location": "Shen residence side hall",
+            "time": "night",
+            "environment_state": "quiet after a cup falls"
+          },
+          "characters": [
+            {
+              "character_id": "CHAR_SHEN_QINGHE",
+              "position": "center foreground",
+              "costume_continuity": "moon-white robe",
+              "identity_requirement": "preserve approved face and body proportions"
+            }
+          ],
+          "composition": {
+            "shot_size": "medium",
+            "subject_focus": "Shen Qinghe",
+            "background_relation": "tea table remains behind her"
+          },
+          "camera": {
+            "angle": "eye_level",
+            "movement": {
+              "type": "push_in",
+              "intensity": "medium",
+              "note": "slow emotional emphasis"
+            }
+          },
+          "actions": [
+            {
+              "character_id": "CHAR_SHEN_QINGHE",
+              "action_order": 1,
+              "action": "raises her eyes with difficulty"
+            }
+          ],
+          "performance": [
+            {
+              "character_id": "CHAR_SHEN_QINGHE",
+              "emotion": "restrained pain",
+              "intensity": "high",
+              "performance_note": "held breath before speaking"
+            }
+          ],
+          "dialogue_lipsync": [],
+          "continuity": {
+            "must_preserve": ["wardrobe", "position", "lighting direction"],
+            "must_change": [],
+            "source_unit_or_shot_id": "SHOT_001"
+          },
+          "style": {
+            "visual_style": "live-action photorealistic",
+            "lighting": "low-saturation cinematic night interior"
+          },
+          "constraints": [
+            {
+              "constraint_type": "forbidden_change",
+              "value": "do not change character identity"
+            }
+          ]
+        },
+        "negative_constraints": [
+          {
+            "constraint_id": "NEG_001",
+            "text": "do not alter character identity"
+          }
+        ],
+        "reference_requirements": {
+          "scene_identity_required": true,
+          "character_identity_required": true,
+          "costume_continuity_required": true,
+          "prop_identity_required": true,
+          "previous_unit_continuity_required": true
+        }
+      },
       {
-        "character_id": "CHAR_SHEN_QINGHE",
-        "action_order": 1,
-        "action": "raises her eyes with difficulty"
-      }
-    ],
-    "performance": [
-      {
-        "character_id": "CHAR_SHEN_QINGHE",
-        "emotion": "restrained pain",
-        "intensity": "high",
-        "performance_note": "held breath before speaking"
-      }
-    ],
-    "dialogue_lipsync": [],
-    "continuity": {
-      "must_preserve": ["wardrobe", "position", "lighting direction"],
-      "must_change": [],
-      "source_unit_or_shot_id": "SHOT_001"
-    },
-    "style": {
-      "visual_style": "live-action photorealistic",
-      "lighting": "low-saturation cinematic night interior"
-    },
-    "constraints": [
-      {
-        "constraint_type": "forbidden_change",
-        "value": "do not change character identity"
+        "unit_id": "UNIT_SHOT_001_02",
+        "unit_order": 2,
+        "source_scene_id": "SCENE_001",
+        "source_storyboard_shot_id": "SHOT_001",
+        "split": {
+          "is_split": true,
+          "split_group_id": "SHOT_001",
+          "split_index": 2,
+          "split_count": 2
+        },
+        "timing": {
+          "source_duration_seconds": 8,
+          "unit_duration_seconds": 5,
+          "group_duration_seconds": 10,
+          "variance_seconds": 2,
+          "variance_reason": "ACTION_COMPLETION"
+        },
+        "prompt_components": {
+          "scene": {
+            "location": "Shen residence side hall",
+            "time": "night",
+            "environment_state": "cup fragments settle on the floor"
+          },
+          "characters": [
+            {
+              "character_id": "CHAR_SHEN_QINGHE",
+              "position": "center foreground",
+              "costume_continuity": "moon-white robe",
+              "identity_requirement": "preserve approved face and body proportions"
+            }
+          ],
+          "composition": {
+            "shot_size": "medium",
+            "subject_focus": "Shen Qinghe",
+            "background_relation": "tea table remains behind her"
+          },
+          "camera": {
+            "angle": "eye_level",
+            "movement": {
+              "type": "push_in",
+              "intensity": "medium",
+              "note": "slow emotional emphasis"
+            }
+          },
+          "actions": [
+            {
+              "character_id": "CHAR_SHEN_QINGHE",
+              "action_order": 1,
+              "action": "steadies her breathing"
+            }
+          ],
+          "performance": [
+            {
+              "character_id": "CHAR_SHEN_QINGHE",
+              "emotion": "restrained pain",
+              "intensity": "high",
+              "performance_note": "voice held back"
+            }
+          ],
+          "dialogue_lipsync": [],
+          "continuity": {
+            "must_preserve": ["wardrobe", "position", "lighting direction"],
+            "must_change": [],
+            "source_unit_or_shot_id": "SHOT_001"
+          },
+          "style": {
+            "visual_style": "live-action photorealistic",
+            "lighting": "low-saturation cinematic night interior"
+          },
+          "constraints": [
+            {
+              "constraint_type": "forbidden_change",
+              "value": "do not change character identity"
+            }
+          ]
+        },
+        "negative_constraints": [
+          {
+            "constraint_id": "NEG_002",
+            "text": "do not alter character identity"
+          }
+        ],
+        "reference_requirements": {
+          "scene_identity_required": true,
+          "character_identity_required": true,
+          "costume_continuity_required": true,
+          "prop_identity_required": true,
+          "previous_unit_continuity_required": true
+        }
       }
     ]
-  },
-  "negative_constraints": [
-    {
-      "constraint_id": "NEG_001",
-      "text": "do not alter character identity"
-    }
-  ],
-  "reference_requirements": {
-    "scene_identity_required": true,
-    "character_identity_required": true,
-    "costume_continuity_required": true,
-    "prop_identity_required": true,
-    "previous_unit_continuity_required": true
   },
   "asset_bindings": {
     "binding_completeness": "pending",
@@ -482,6 +590,17 @@ The JSON types for these fields are frozen as follows:
         "reference_id": "REF_001",
         "unit_id": "UNIT_SHOT_001_01",
         "requirement_role": "scene_identity_required",
+        "required": true,
+        "asset_identifier": null,
+        "asset_revision_id": null,
+        "asset_content_hash": null,
+        "local_evidence_hash": null,
+        "registry_evidence_id": null
+      },
+      {
+        "reference_id": "REF_002",
+        "unit_id": "UNIT_SHOT_001_02",
+        "requirement_role": "character_identity_required",
         "required": true,
         "asset_identifier": null,
         "asset_revision_id": null,
@@ -520,7 +639,9 @@ Pending states may leave the asset identity and evidence fields null, but requir
 - Units derived from the same source Shot must remain contiguous in global order.
 - `group_duration_seconds` must equal the sum of the Unit durations in the group.
 - Allowed duration variance is `-2 <= variance_seconds <= 2`.
+- Units in the same split group must share identical `group_duration_seconds`, `variance_seconds`, and `variance_reason`.
 - Any non-zero variance needs an explicit reason.
+- Unit objects must not contain `asset_bindings`; binding declarations live only at the package top level.
 - `generation_strategy`, `frame_requirements`, and future target selection fields are not canonical fields.
 
 ## 10. Canonical Serialization and Hashing
@@ -863,15 +984,34 @@ Provenance must mark:
 - `execution_readiness = blocked`
 - `not_an_execution_package = true`
 
+Formal review export persistent record:
+
+- `export_kind = formal_review`
+- `diagnostic_only = false`
+- `not_an_execution_package = true`
+
 ### Diagnostic export
 
 Diagnostic export is for stale revisions only and requires an explicit command. It must be clearly labeled as diagnostic and cannot be consumed by downstream execution planning.
+
+Diagnostic export persistent record:
+
+- `export_kind = diagnostic`
+- `freshness_status = STALE`
+- `diagnostic_only = true`
+- `not_an_execution_package = true`
 
 ### Execution export
 
 Execution export is blocked in this foundation phase:
 
 - `EXPORT_NOT_EXECUTION_READY`
+
+Execution export persistent record:
+
+- `export_kind = execution`
+- `execution_ready = false`
+- `error_code = EXPORT_NOT_EXECUTION_READY`
 
 ## 20. Validator Matrix
 
@@ -893,7 +1033,7 @@ Execution export is blocked in this foundation phase:
 
 | validator | required | input | store access | pass condition | fail condition | N/A allowed | symbolic error code |
 |---|---:|---|---|---|---|---:|---|
-| `shot_prompt_canonical_schema` | yes | Shot Prompt canonical JSON | yes | schema and top-level shape are valid | missing required field or schema mismatch | no | `CANONICAL_SCHEMA_INVALID` |
+| `shot_prompt_canonical_schema` | yes | Shot Prompt canonical JSON | yes | schema and top-level shape are valid | missing required field, schema mismatch, or Unit-level `asset_bindings` present | no | `CANONICAL_SCHEMA_INVALID` |
 | `shot_prompt_source_freshness` | yes | source chain | yes | source Storyboard remains recursively fresh | source stale or dependency missing/cycle | no | `SOURCE_STALE` / `DEPENDENCY_MISSING` / `DEPENDENCY_CYCLE_DETECTED` |
 | `shot_prompt_source_coverage` | yes | source Storyboard + units | yes | every source Storyboard shot is covered by at least one unit | orphan shot or orphan unit | no | `SHOT_COVERAGE_INCOMPLETE` / `SHOT_MAPPING_INVALID` |
 | `shot_prompt_mapping_integrity` | yes | units + source shots | yes | 1:1 default, 1:N split, no N:1 merge | merge, duplicate mapping, or cross-scene reference | no | `SHOT_MAPPING_INVALID` / `SHOT_MERGE_FORBIDDEN` |
@@ -921,7 +1061,7 @@ Note: the existing package-level genericity validator remains orthogonal to the 
 
 ### Revision validation / review lifecycle
 
-`draft -> validation_passed -> pending_review -> approved -> superseded -> stale`
+`draft -> validation_passed -> pending_review -> approved -> superseded`
 
 Branches:
 
@@ -930,6 +1070,12 @@ Branches:
 `validation_passed -> validation_failed`
 
 `pending_review -> rejected`
+
+Freshness axis:
+
+- `FRESH`
+- `STALE`
+- `INVALID`
 
 Rules:
 
@@ -968,7 +1114,11 @@ Evidence changes or asset content changes do not rewrite an old revision. They c
 
 ### Recursive freshness
 
-`FRESH -> STALE / INVALID`
+`FRESH`
+
+`STALE`
+
+`INVALID`
 
 ### Execution readiness
 
@@ -976,7 +1126,11 @@ Evidence changes or asset content changes do not rewrite an old revision. They c
 
 ### Export modes
 
-`formal_review_export -> diagnostic_export -> execution_export_blocked`
+`formal_review_export`
+
+`diagnostic_export`
+
+`execution_export_blocked`
 
 Illegal:
 
@@ -1105,8 +1259,8 @@ These are domain codes only; they are distinct from numeric CLI exit codes.
 | `bind-assets` illegal path change | binding validator fails |
 | Bundle export failure mid-write | staging directory cleaned, no partial final bundle remains |
 | Upstream reapproval of source storyboard | dependent Shot Prompt revision becomes stale |
-| Formal review export | allowed only under the formal review conditions |
-| Diagnostic export of stale revision | allowed only through explicit diagnostic path |
+| Formal review export | allowed only under the formal review conditions and marked as non-execution |
+| Diagnostic export of stale revision | allowed only through explicit diagnostic path and marked diagnostic-only |
 | Execution export | blocked with `EXPORT_NOT_EXECUTION_READY` |
 
 ## 26. Delivery Phases
