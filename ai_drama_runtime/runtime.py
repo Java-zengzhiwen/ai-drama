@@ -26,7 +26,7 @@ def _mock_script(model):
 runtime_model: %s
 source_basis: manifest
 
-## Scene 1
+## Scene: 1-1
 
 【画面】
 女主在清晨醒来，意识到命运重启。
@@ -37,7 +37,7 @@ source_basis: manifest
 【台词】
 女主：这一世，我要先看清局。
 
-## Scene 2
+## Scene: 1-2
 
 【画面】
 账册摊开，旧日线索重新浮现。

@@ -26,6 +26,18 @@ def _file_item(root, path, logical_type):
     }
 
 
+def _unique_file_items(root, paths):
+    seen = set()
+    items = []
+    for path in paths:
+        rel = path.relative_to(root).as_posix()
+        if rel in seen:
+            continue
+        seen.add(rel)
+        items.append(_file_item(root, path, "context"))
+    return items
+
+
 @dataclass(frozen=True)
 class RuntimeRequest:
     payload: dict
@@ -51,10 +63,7 @@ def build_runtime_request(skill, acceptance_root, provider, model, timeout_secon
     bundle = load_acceptance_bundle(acceptance_root)
     instruction_text = skill.instructions_entry.read_text(encoding="utf-8")
     profile = (skill.metadata.get("execution_profiles") or [{}])[0]
-    context_files = [
-        _file_item(skill.root, path, "context")
-        for path in skill.context_files + skill.schemas + skill.contracts
-    ]
+    context_files = _unique_file_items(skill.root, skill.context_files + skill.schemas + skill.contracts)
     inputs = [
         {
             "logical_type": key,
@@ -124,10 +133,7 @@ def _storyboard_inputs_from_source_revision(store, source_revision):
 def build_storyboard_runtime_request(skill, store, source_revision, provider, model, timeout_seconds=60):
     instruction_text = skill.instructions_entry.read_text(encoding="utf-8")
     profile = (skill.metadata.get("execution_profiles") or [{}])[0]
-    context_files = [
-        _file_item(skill.root, path, "context")
-        for path in skill.context_files + skill.schemas + skill.contracts
-    ]
+    context_files = _unique_file_items(skill.root, skill.context_files + skill.schemas + skill.contracts)
     inputs = _storyboard_inputs_from_source_revision(store, source_revision)
     payload = {
         "request_format_version": REQUEST_FORMAT_VERSION,
