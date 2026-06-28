@@ -377,9 +377,12 @@ def _pytest_skip_details(stdout: str):
     summary = _pytest_summary(stdout)
     reason = "not skipped"
     for line in stdout.splitlines():
-        if "SKIPPED" in line and "test_storyboard_verification_entrypoint_runs" in line:
-            reason_match = re.search(r"SKIPPED \((.*)\)$", line.strip())
-            reason = reason_match.group(1) if reason_match else "recursive self-test guard"
+        if "SKIPPED" in line:
+            if "skip recursive self-test inside verification entrypoint" in line:
+                reason = "recursive self-test guard"
+            else:
+                reason_match = re.search(r"SKIPPED \((.*)\)$", line.strip())
+                reason = reason_match.group(1) if reason_match else "recursive self-test guard"
             break
     if summary["skipped"] == 0:
         reason = "not skipped"
@@ -491,7 +494,7 @@ def _three_scene_coverage_flow(tmp_root: Path):
     script_pkg = _load_skill_package(SCRIPT_SKILL_ROOT)
     storyboard_pkg = _load_skill_package(STORYBOARD_SKILL_ROOT)
     with _service(tmp_root) as service:
-        script = service.run_acceptance(script_pkg, ACCEPTANCE_ROOT, "mock", "three_scene_script")
+        script = service.run_acceptance(script_pkg, ACCEPTANCE_ROOT, "mock", "mock", mock_mode="three_scene_script")
         service.approve_revision(script.revision.revision_id, "verifier")
         storyboard = service.run_storyboard(storyboard_pkg, script.revision.revision_id, "mock", "mock-storyboard")
         source_text = service.store.read_text(script.revision.content_object_id)
