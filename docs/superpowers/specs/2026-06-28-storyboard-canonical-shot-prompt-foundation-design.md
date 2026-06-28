@@ -5,6 +5,8 @@
 Status: FROZEN FOR IMPLEMENTATION PLANNING
 Decision: GO WITH PREREQUISITE
 Implementation Planning: ALLOWED
+Spec Consistency: PASS
+Spec Consistency: PASS
 
 Date: 2026-06-28
 Current branch: `test/storyboard-complete-verification`
@@ -82,15 +84,33 @@ That baseline means the foundation work must be additive and compatibility-prese
 7. Legacy revisions remain readable and comparable, but not silently rewritten.
 8. Future platform choices stay outside canonical content so the core stays neutral.
 
-## 7. Artifact and Revision Model
+## 7. Artifact, Content Profile, and Revision Derivation Model
 
-### Artifact classes
+### Artifact type
 
-- `storyboard_legacy_markdown_revision`
-- `storyboard_canonical_revision`
-- `shot_prompt_package_revision`
-- `shot_prompt_render_derived_revision`
-- `shot_prompt_asset_binding_derived_revision`
+- `drama_script`
+- `storyboard`
+- `shot_prompt`
+
+Artifact type identifies the logical artifact family. The existing current-approved uniqueness constraint applies to the logical artifact, not to any particular content profile.
+
+### Content profile
+
+- `markdown-script-mvp-v1`
+- `storyboard-markdown-mvp-v1`
+- `storyboard-canonical-v1`
+- `shot-prompt-package-v1`
+
+Content profile identifies the serialized contract and renderer contract for a revision. Legacy Markdown Storyboard and canonical Storyboard are both `storyboard` artifacts with different content profiles.
+
+### Revision derivation type
+
+- `model_generation`
+- `legacy_migration`
+- `renderer_upgrade`
+- `asset_binding_update`
+
+Revision derivation type identifies how a revision was produced. It is not an artifact type.
 
 ### Revision rules
 
@@ -100,6 +120,9 @@ That baseline means the foundation work must be additive and compatibility-prese
 - Legacy Storyboard revisions keep their historical `content_object_id` semantics.
 - New canonical revisions use the canonical JSON object as the primary `content_object_id`.
 - Markdown is not the canonical object for new canonical revisions; it is a derived output stored in `revision_outputs`.
+- Legacy Markdown Storyboard and canonical Storyboard remain revisions under the same logical `storyboard` artifact.
+- `legacy_migration` creates a new canonical revision under that same logical artifact unless a future migration explicitly chooses a separate artifact boundary.
+- After a canonical revision is approved, it becomes the current approved revision for the logical artifact; the legacy Markdown revision remains historical but is no longer current approved.
 
 ### `revision_outputs`
 
@@ -149,8 +172,7 @@ Storyboard Canonical JSON is the authority for downstream prompt generation.
   "source": {
     "script_artifact_id": "ARTIFACT_ID",
     "script_revision_id": "REVISION_ID",
-    "script_content_hash": "SHA256",
-    "script_approval_record_id": "APPROVAL_RECORD_ID"
+    "script_content_hash": "SHA256"
   },
   "scenes": [],
   "shots": []
@@ -212,6 +234,18 @@ Required but nullable:
 - `dialogue`
 - `sound_notes`
 
+The JSON types for these fields are frozen as follows:
+
+- `camera_movement`: object | null
+- `visual_composition`: object
+- `character_positions`: array<object>
+- `character_actions`: array<object>
+- `emotion_performance`: array<object>
+- `dialogue`: array<object>
+- `sound_notes`: array<string>
+- `continuity_in`: object
+- `continuity_out`: object
+
 Recommended shape:
 
 ```json
@@ -224,7 +258,11 @@ Recommended shape:
   "shot_size": "medium",
   "camera_angle": "eye_level",
   "camera_movement": null,
-  "visual_composition": "subject centered",
+  "visual_composition": {
+    "framing": "centered medium composition",
+    "subject_focus": "CHARACTER_A",
+    "background_relation": "neutral background"
+  },
   "character_positions": [
     {
       "character_id": "CHARACTER_A",
@@ -242,7 +280,7 @@ Recommended shape:
   "emotion_performance": null,
   "dialogue": [
     {
-      "speaker": "CHARACTER_A",
+      "speaker_character_id": "CHARACTER_A",
       "text": "Line one"
     }
   ],
@@ -268,6 +306,7 @@ Recommended shape:
 - Empty strings are not allowed as a substitute for missing data.
 - Free-form Markdown cannot replace structured fields.
 - Renderer output must never be written back into canonical Storyboard JSON.
+- `script_approval_record_id` does not belong in canonical Storyboard JSON or its hash scope.
 
 ## 9. Shot Prompt Canonical Schema
 
@@ -321,6 +360,19 @@ Required:
 - `style`
 - `constraints`
 
+The JSON types for these fields are frozen as follows:
+
+- `scene`: object
+- `characters`: array<object>
+- `composition`: object
+- `camera`: object
+- `actions`: array<object>
+- `performance`: array<object>
+- `dialogue_lipsync`: array<object>
+- `continuity`: object
+- `style`: object
+- `constraints`: array<object>
+
 `reference_requirements` fields:
 
 - `scene_identity_required`
@@ -333,7 +385,7 @@ Required:
 
 ```json
 {
-  "unit_id": "SHOT_001-A",
+  "unit_id": "UNIT_SHOT_001_01",
   "unit_order": 1,
   "source_scene_id": "SCENE_001",
   "source_storyboard_shot_id": "SHOT_001",
@@ -345,30 +397,99 @@ Required:
   },
   "timing": {
     "source_duration_seconds": 8,
-    "unit_duration_seconds": 4,
-    "group_duration_seconds": 8,
-    "variance_seconds": 0,
-    "variance_reason": null
+    "unit_duration_seconds": 5,
+    "group_duration_seconds": 10,
+    "variance_seconds": 2,
+    "variance_reason": "ACTION_COMPLETION"
   },
   "prompt_components": {
-    "scene": "",
-    "characters": "",
-    "composition": "",
-    "camera": "",
-    "actions": "",
-    "performance": "",
-    "dialogue_lipsync": "",
-    "continuity": "",
-    "style": "",
-    "constraints": ""
+    "scene": {
+      "location": "Shen residence side hall",
+      "time": "night",
+      "environment_state": "quiet after a cup falls"
+    },
+    "characters": [
+      {
+        "character_id": "CHAR_SHEN_QINGHE",
+        "position": "center foreground",
+        "costume_continuity": "moon-white robe",
+        "identity_requirement": "preserve approved face and body proportions"
+      }
+    ],
+    "composition": {
+      "shot_size": "medium",
+      "subject_focus": "Shen Qinghe",
+      "background_relation": "tea table remains behind her"
+    },
+    "camera": {
+      "angle": "eye_level",
+      "movement": {
+        "type": "push_in",
+        "intensity": "medium",
+        "note": "slow emotional emphasis"
+      }
+    },
+    "actions": [
+      {
+        "character_id": "CHAR_SHEN_QINGHE",
+        "action_order": 1,
+        "action": "raises her eyes with difficulty"
+      }
+    ],
+    "performance": [
+      {
+        "character_id": "CHAR_SHEN_QINGHE",
+        "emotion": "restrained pain",
+        "intensity": "high",
+        "performance_note": "held breath before speaking"
+      }
+    ],
+    "dialogue_lipsync": [],
+    "continuity": {
+      "must_preserve": ["wardrobe", "position", "lighting direction"],
+      "must_change": [],
+      "source_unit_or_shot_id": "SHOT_001"
+    },
+    "style": {
+      "visual_style": "live-action photorealistic",
+      "lighting": "low-saturation cinematic night interior"
+    },
+    "constraints": [
+      {
+        "constraint_type": "forbidden_change",
+        "value": "do not change character identity"
+      }
+    ]
   },
-  "negative_constraints": [],
+  "negative_constraints": [
+    {
+      "constraint_id": "NEG_001",
+      "text": "do not alter character identity"
+    }
+  ],
   "reference_requirements": {
     "scene_identity_required": true,
     "character_identity_required": true,
     "costume_continuity_required": true,
     "prop_identity_required": true,
     "previous_unit_continuity_required": true
+  },
+  "asset_bindings": {
+    "binding_completeness": "pending",
+    "binding_verification": "unverified",
+    "references": [
+      {
+        "reference_id": "REF_001",
+        "unit_id": "UNIT_SHOT_001_01",
+        "requirement_role": "scene_identity_required",
+        "required": true,
+        "asset_identifier": null,
+        "asset_revision_id": null,
+        "asset_content_hash": null,
+        "local_evidence_hash": null,
+        "registry_evidence_id": null
+      }
+    ]
   }
 }
 ```
@@ -761,8 +882,8 @@ Execution export is blocked in this foundation phase:
 | `storyboard_canonical_schema` | yes | canonical Storyboard JSON | yes | schema, provenance, and immutability fields are valid | missing required field or schema mismatch | no | `CANONICAL_SCHEMA_INVALID` |
 | `storyboard_shot_identity` | yes | canonical Storyboard JSON | yes | all `scene_id` / `shot_id` values match frozen regexes | invalid ID or duplicate ID | no | `SHOT_ID_INVALID` |
 | `storyboard_shot_order` | yes | canonical Storyboard JSON | yes | scene and shot order are strictly increasing and stable | out-of-order or duplicate order | no | `SHOT_ORDER_INVALID` |
-| `storyboard_duration` | yes | canonical Storyboard JSON | yes | each storyboard shot is an integer 5-15 seconds | missing or out-of-range duration | no | `DURATION_VARIANCE_INVALID` |
-| `storyboard_source_coverage` | yes | canonical Storyboard JSON + source script | yes | every source scene/shot is covered exactly as required | missing coverage or extra coverage | no | `SHOT_COVERAGE_INCOMPLETE` |
+| `storyboard_duration` | yes | canonical Storyboard JSON | yes | each storyboard shot is an integer 5-15 seconds | non-integer, missing, or out-of-range duration | no | `STORYBOARD_DURATION_INVALID` |
+| `storyboard_source_coverage` | yes | canonical Storyboard JSON + source script | yes | every approved Script Scene is referenced by at least one Storyboard Scene, and every Storyboard Scene has a valid source_scene_reference | missing Script Scene reference or invalid source_scene_reference | no | `SHOT_COVERAGE_INCOMPLETE` |
 | `storyboard_continuity` | yes | canonical Storyboard JSON | yes | continuity_in/out is complete and internally consistent | continuity mismatch | no | `SHOT_MAPPING_INVALID` |
 | `storyboard_renderer_parity` | yes | canonical Storyboard JSON + renderer | no | rendered Markdown bytes match deterministic renderer | byte mismatch | no | `RENDERER_PARITY_FAILED` |
 | `storyboard_source_freshness` | yes | storyboard revision + dependency chain | yes | source chain is recursively fresh | source stale or dependency missing/cycle | no | `SOURCE_STALE` / `DEPENDENCY_MISSING` / `DEPENDENCY_CYCLE_DETECTED` |
@@ -798,32 +919,42 @@ Note: the existing package-level genericity validator remains orthogonal to the 
 
 ## 21. State Machines
 
-### Storyboard revision lifecycle
+### Revision validation / review lifecycle
 
-`legacy_markdown -> canonical_candidate -> canonical_approved -> stale`
+`draft -> validation_passed -> pending_review -> approved -> superseded -> stale`
 
-Illegal:
+Branches:
 
-- in-place rewrite of legacy content
-- approval of stale canonical revision
+`draft -> validation_failed`
 
-### Shot Prompt content approval
+`validation_passed -> validation_failed`
 
-`draft -> approved -> stale`
+`pending_review -> rejected`
 
-Illegal:
+Rules:
 
-- approval without content hash binding
-- approval after source Storyboard changes without revalidation
+- `validation_failed` revisions cannot be approved.
+- `rejected` revisions cannot be promoted.
+- When a new revision is approved, the previous current-approved revision for the same artifact becomes `superseded`.
+- `superseded` and `stale` are orthogonal.
+- One field must not collapse approval lineage and dependency freshness.
 
 ### Asset-only derived revision
 
-`derived -> ready_for_promotion -> promoted`
+`derived_draft -> validation_passed -> ready_for_promotion -> promoted`
 
-Illegal:
+Branches:
 
-- promotion without inherited approval evidence
-- promotion of stale or rejected revision
+`derived_draft -> validation_failed`
+
+`ready_for_promotion -> promotion_blocked`
+
+Rules:
+
+- stale derived revisions cannot be promoted.
+- rejected derived revisions cannot be promoted.
+- no-op derivations cannot be promoted.
+- approval inheritance cannot be reused if prompt content hash changed.
 
 ### Binding completeness
 
@@ -833,17 +964,24 @@ Illegal:
 
 `unverified -> locally_verified -> registry_verified`
 
+Evidence changes or asset content changes do not rewrite an old revision. They create a new derived revision whose binding verification is recomputed.
+
 ### Recursive freshness
 
 `FRESH -> STALE / INVALID`
 
 ### Execution readiness
 
-`blocked -> ready` is deferred to future phases only
+`blocked` only in this foundation phase.
 
 ### Export modes
 
-`formal_review_export | diagnostic_export | execution_export_blocked`
+`formal_review_export -> diagnostic_export -> execution_export_blocked`
+
+Illegal:
+
+- diagnostic exports cannot become dependency parents
+- execution exports remain blocked until future execution planning exists
 
 ## 22. CLI Contract Proposal
 
@@ -892,6 +1030,7 @@ Frozen domain symbolic codes:
 - `SOURCE_STALE`
 - `DEPENDENCY_MISSING`
 - `DEPENDENCY_CYCLE_DETECTED`
+- `STORYBOARD_DURATION_INVALID`
 - `CANONICAL_SCHEMA_INVALID`
 - `CANONICAL_HASH_MISMATCH`
 - `RENDERER_PARITY_FAILED`
