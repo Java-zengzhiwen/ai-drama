@@ -140,6 +140,27 @@ def _artifacts_export(args):
     _json(_with_service(args, lambda service: service.export_approved(args.artifact_id, args.output, force=args.force).__dict__))
 
 
+def _storyboard_render(args):
+    _json(_with_service(args, lambda service: service.render_storyboard_revision(args.revision, args.output)))
+
+
+def _storyboard_migrate_legacy(args):
+    if args.preview:
+        _json(_with_service(args, lambda service: service.preview_legacy_storyboard_migration(args.source_revision, args.output)))
+        return 0
+    _json(
+        _with_service(
+            args,
+            lambda service: service.confirm_legacy_storyboard_migration(
+                args.source_revision,
+                args.confirm_candidate_hash,
+                args.output,
+            ),
+        )
+    )
+    return 0
+
+
 def _approvals_approve(args):
     revision = _with_service(args, lambda service: service.approve_revision(args.revision_id, args.reviewer, args.note))
     _json({"revision_id": revision.revision_id, "artifact_id": revision.artifact_id, "approval_status": revision.approval_status})
@@ -204,6 +225,20 @@ def build_parser():
     p.add_argument("--output", required=True)
     p.add_argument("--force", action="store_true")
     p.set_defaults(func=_artifacts_export)
+
+    storyboard = sub.add_parser("storyboard")
+    storyboard_sub = storyboard.add_subparsers(dest="storyboard_command", required=True)
+    p = storyboard_sub.add_parser("render")
+    p.add_argument("--revision", required=True)
+    p.add_argument("--output", required=True)
+    p.set_defaults(func=_storyboard_render)
+    p = storyboard_sub.add_parser("migrate-legacy")
+    p.add_argument("--source-revision", required=True)
+    migration_mode = p.add_mutually_exclusive_group(required=True)
+    migration_mode.add_argument("--preview", action="store_true")
+    migration_mode.add_argument("--confirm-candidate-hash")
+    p.add_argument("--output", required=True)
+    p.set_defaults(func=_storyboard_migrate_legacy)
 
     approvals = sub.add_parser("approvals")
     appr_sub = approvals.add_subparsers(dest="approvals_command", required=True)

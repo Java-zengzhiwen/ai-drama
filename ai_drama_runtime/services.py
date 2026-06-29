@@ -20,7 +20,8 @@ from .parser import (
 from .request import build_runtime_request, build_storyboard_runtime_request
 from .runtime import RuntimeErrorBase, run_runtime
 from .validators import run_declared_validators
-from .storyboard_canonical import CONTENT_PROFILE as STORYBOARD_CANONICAL_PROFILE, canonical_storyboard_hash, parse_canonical_json
+from .storyboard_canonical import CONTENT_PROFILE as STORYBOARD_CANONICAL_PROFILE, canonical_storyboard_hash, parse_canonical_json, serialize_canonical_json
+from .storyboard_migration import StoryboardMigrationError, legacy_markdown_to_canonical, write_migration_preview
 from .storyboard_renderer import render_storyboard_markdown
 
 
@@ -554,6 +555,114 @@ class RuntimeService:
             destination=str(output),
             provenance_object_id=provenance_object_id,
         )
+
+    def _legacy_migration_candidate(self, source_revision_id):
+        legacy = self._revision_or_raise(source_revision_id)
+        if legacy.artifact_type != "storyboard" or getattr(legacy, "content_profile", "") != "storyboard-markdown-mvp-v1":
+            raise WorkflowGateError("LEGACY_MIGRATION_REQUIRES_REVIEW", "source revision is not a legacy storyboard revision", legacy.artifact_id, source_revision_id, source_revision_id)
+        deps = self.store.revision_dependencies(legacy.revision_id)
+        if not deps:
+            raise WorkflowGateError("LEGACY_MIGRATION_REQUIRES_REVIEW", "legacy storyboard has no source dependency", legacy.artifact_id, source_revision_id, source_revision_id)
+        source = self._revision_or_raise(deps[0].parent_revision_id)
+        try:
+            candidate = legacy_markdown_to_canonical(
+                self.store.read_text(legacy.content_object_id),
+                source_revision=source,
+                source_artifact_id=source.artifact_id,
+                source_content_hash=source.content_hash,
+            )
+        except StoryboardMigrationError as exc:
+            raise WorkflowGateError(exc.code, str(exc), legacy.artifact_id, source_revision_id, source_revision_id) from exc
+        return legacy, source, deps[0], candidate
+
+    def preview_legacy_storyboard_migration(self, source_revision_id, output):
+        _, _, _, candidate = self._legacy_migration_candidate(source_revision_id)
+        return write_migration_preview(candidate, Path(output))
+
+    def confirm_legacy_storyboard_migration(self, source_revision_id, confirm_candidate_hash, output):
+        legacy, source, dep, candidate = self._legacy_migration_candidate(source_revision_id)
+        actual_hash = canonical_storyboard_hash(candidate)
+        if actual_hash != confirm_candidate_hash:
+            raise WorkflowGateError(
+                "LEGACY_MIGRATION_REQUIRES_REVIEW",
+                "candidate hash confirmation does not match",
+                legacy.artifact_id,
+                source_revision_id,
+                source_revision_id,
+            )
+        preview = write_migration_preview(candidate, Path(output))
+        request_object_id = self.store.write_text_object(json.dumps({"source_revision_id": source_revision_id, "candidate_hash": actual_hash}, ensure_ascii=False, sort_keys=True))
+        canonical_text = serialize_canonical_json(candidate).decode("utf-8")
+        response_object_id = self.store.write_text_object(canonical_text)
+        run = self.store.create_run(
+            artifact_id=legacy.artifact_id,
+            project_id=legacy.project_id,
+            chapter_id=legacy.chapter_id,
+            skill_id=legacy.skill_id,
+            skill_version="v0.2.0",
+            skill_hash="",
+            runtime="migration",
+            provider="migration",
+            model="legacy-migration",
+            status="SUCCEEDED",
+            request_object_id=request_object_id,
+            response_object_id=response_object_id,
+            input_hash=actual_hash,
+            request_hash=actual_hash,
+        )
+        content_object_id = self.store.write_text_object(canonical_text)
+        revision = self.store.insert_revision(
+            artifact_id=legacy.artifact_id,
+            artifact_type="storyboard",
+            project_id=legacy.project_id,
+            chapter_id=legacy.chapter_id,
+            run_id=run.run_id,
+            skill_id=legacy.skill_id,
+            skill_version="v0.2.0",
+            skill_package_hash="",
+            runtime_provider="migration",
+            runtime_model="legacy-migration",
+            content_object_id=content_object_id,
+            content_hash=actual_hash,
+            raw_response_object_id=response_object_id,
+            parser_version=STORYBOARD_CANONICAL_PARSER_VERSION,
+            content_profile=STORYBOARD_CANONICAL_PROFILE,
+            derivation_type="legacy_migration",
+        )
+        self.store.insert_revision_dependency(
+            child_revision_id=revision.revision_id,
+            parent_revision_id=source.revision_id,
+            relation_type=dep.relation_type,
+            parent_content_hash=source.content_hash,
+            parent_approval_record_id=dep.parent_approval_record_id,
+        )
+        return {
+            "status": "PENDING_CANONICAL_REVISION",
+            "revision_id": revision.revision_id,
+            "candidate_hash": actual_hash,
+            "content_profile": STORYBOARD_CANONICAL_PROFILE,
+            "approval_status": revision.approval_status,
+            "canonical_candidate_path": preview["canonical_candidate_path"],
+            "rendered_markdown_path": preview["rendered_markdown_path"],
+        }
+
+    def render_storyboard_revision(self, revision_id, output):
+        revision = self._revision_or_raise(revision_id)
+        if revision.artifact_type != "storyboard":
+            raise NotFound("revision is not a storyboard: %s" % revision_id)
+        output = Path(output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(self._revision_display_text(revision), encoding="utf-8")
+        payload = {
+            "status": "RENDERED",
+            "revision_id": revision.revision_id,
+            "content_profile": getattr(revision, "content_profile", ""),
+            "canonical_hash": revision.content_hash if getattr(revision, "content_profile", "") == STORYBOARD_CANONICAL_PROFILE else "",
+            "renderer_id": "storyboard-canonical-markdown-renderer" if getattr(revision, "content_profile", "") == STORYBOARD_CANONICAL_PROFILE else "",
+            "renderer_version": "1.0.0" if getattr(revision, "content_profile", "") == STORYBOARD_CANONICAL_PROFILE else "",
+            "output_path": str(output),
+        }
+        return payload
 
     def _revision_or_raise(self, revision_id):
         revision = self.store.get_revision(revision_id)

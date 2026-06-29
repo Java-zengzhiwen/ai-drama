@@ -8,6 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ACCEPTANCE_ROOT = REPO_ROOT / "acceptance" / "shengsi-chapter-001"
 SKILL_REF = "ai-drama-script-adaptation-skill@v0.6.1-rc2.4"
 STORYBOARD_SKILL_REF = "ai-drama-storyboard-design-skill@v0.1.0"
+STORYBOARD_CANONICAL_SKILL_REF = "ai-drama-storyboard-design-skill@v0.2.0"
 
 
 def _cli(tmp_path, *args, check=True, env=None):
@@ -139,6 +140,91 @@ def test_cli_storyboard_run_flow(tmp_path):
     )
     assert storyboard_run["status"] == "SUCCEEDED"
     assert storyboard_run["revision_id"]
+
+
+def test_cli_canonical_storyboard_render_and_legacy_migration(tmp_path):
+    script_run = json.loads(
+        _cli(
+            tmp_path,
+            "run",
+            "create",
+            "--skill",
+            SKILL_REF,
+            "--input",
+            ACCEPTANCE_ROOT,
+            "--runtime",
+            "mock",
+            "--model",
+            "mock-script",
+        ).stdout
+    )
+    _cli(tmp_path, "approvals", "approve", script_run["revision_id"], "--reviewer", "cli")
+
+    canonical_run = json.loads(
+        _cli(
+            tmp_path,
+            "run",
+            "create",
+            "--skill",
+            STORYBOARD_CANONICAL_SKILL_REF,
+            "--source-revision",
+            script_run["revision_id"],
+            "--runtime",
+            "mock",
+            "--model",
+            "mock-storyboard-canonical",
+        ).stdout
+    )
+    render_path = tmp_path / "canonical.md"
+    rendered = json.loads(_cli(tmp_path, "storyboard", "render", "--revision", canonical_run["revision_id"], "--output", render_path).stdout)
+    assert rendered["status"] == "RENDERED"
+    assert rendered["content_profile"] == "storyboard-canonical-v1"
+    assert render_path.read_text(encoding="utf-8").startswith("# Storyboard Canonical Render\n")
+
+    legacy_run = json.loads(
+        _cli(
+            tmp_path,
+            "run",
+            "create",
+            "--skill",
+            STORYBOARD_SKILL_REF,
+            "--source-revision",
+            script_run["revision_id"],
+            "--runtime",
+            "mock",
+            "--model",
+            "mock-storyboard",
+        ).stdout
+    )
+    _cli(tmp_path, "approvals", "approve", legacy_run["revision_id"], "--reviewer", "cli")
+    preview = json.loads(
+        _cli(
+            tmp_path,
+            "storyboard",
+            "migrate-legacy",
+            "--source-revision",
+            legacy_run["revision_id"],
+            "--preview",
+            "--output",
+            tmp_path / "preview",
+        ).stdout
+    )
+    assert preview["status"] == "PREVIEW"
+    confirmed = json.loads(
+        _cli(
+            tmp_path,
+            "storyboard",
+            "migrate-legacy",
+            "--source-revision",
+            legacy_run["revision_id"],
+            "--confirm-candidate-hash",
+            preview["candidate_hash"],
+            "--output",
+            tmp_path / "confirm",
+        ).stdout
+    )
+    assert confirmed["status"] == "PENDING_CANONICAL_REVISION"
+    assert confirmed["approval_status"] == "pending"
 
 
 def test_cli_enforces_mutually_exclusive_inputs(tmp_path):
