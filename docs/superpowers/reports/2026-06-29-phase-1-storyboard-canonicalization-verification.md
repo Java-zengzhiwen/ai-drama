@@ -161,3 +161,69 @@ PHASE1_STORYBOARD_CANONICALIZATION: PASS
 - No Phase 2+ scope: `PASS`
 - Working tree clean after report commit: pending commit
 - Commit pushed: pending push
+
+## Corrective Patch Verification - 2026-06-29
+
+Corrective execution start: `ceab92780810995c96dabce91b678dce942b6856`
+
+Implementation commit: `89aa6edcd4fec9ba7b24d2096207a8ef0ba327c3`
+
+Corrective findings addressed:
+
+- BLOCKER 1 OpenAI-compatible canonical parsing: `PASS`
+  - `parse_storyboard_canonical_response()` supports direct canonical JSON, top-level `storyboard_canonical`, and serialized OpenAI Chat Completion wrappers where `choices[0].message.content` contains either approved canonical shape.
+  - Duplicate-key detection is applied to the generated canonical JSON content.
+  - Markdown/prose content inside OpenAI-compatible wrappers remains rejected for canonical parsing.
+  - Runtime test proves `run_storyboard` stores a canonical pending Revision from the OpenAI-compatible response shape.
+- MAJOR 1 frozen validator architecture split: `PASS`
+  - Skill-declared subprocess validators: `storyboard_canonical_schema`, `storyboard_shot_identity`, `storyboard_shot_order`, `storyboard_duration`, `storyboard_continuity`.
+  - Runtime-native store-aware validators: `storyboard_source_coverage`, `storyboard_source_freshness`, `storyboard_renderer_parity`.
+  - Tests prove the five pure validators have subprocess commands and fail with symbolic error reports on invalid canonical input.
+- MAJOR 2 canonical execution-profile metadata enforcement: `PASS`
+  - Manifest validation requires canonical `profile_id`, `output_format`, `parser_version`, `required_schema_version`, `renderer_id`, and `renderer_version`.
+  - For `storyboard-canonical-v1`, `output_format=json`, `required_schema_version=storyboard-canonical-v1`, and non-empty renderer metadata are enforced.
+
+Corrective test evidence:
+
+```text
+python3 -m pytest -q tests/test_parser.py tests/test_storyboard_canonical_workflow.py tests/test_manifest.py
+38 passed in 2.13s
+
+python3 -m pytest -q tests/test_parser.py tests/test_storyboard_canonical_workflow.py tests/test_manifest.py tests/test_phase1_verifier.py
+43 passed in 35.74s
+
+python3 -m pytest -q
+135 passed in 84.78s (0:01:24)
+```
+
+Corrective portable verifier:
+
+```text
+portable_pytest=130 passed, 1 skipped in 33.80s
+PHASE1_STORYBOARD_CANONICALIZATION: PASS
+```
+
+Corrective final verifier from corrective execution start:
+
+```text
+branch=test/storyboard-complete-verification
+execution_start_ancestor=merge-base exit=0
+working_tree_clean=clean
+git_diff_check=clean
+changed_file_allowlist=all changed files allowed
+frozen_docs_unchanged=unchanged
+v0_1_0_unchanged=unchanged
+required_canonical_validators=storyboard_canonical_schema,storyboard_continuity,storyboard_duration,storyboard_renderer_parity,storyboard_shot_identity,storyboard_shot_order,storyboard_source_coverage,storyboard_source_freshness
+final_pytest=130 passed, 1 skipped in 33.40s
+PHASE1_STORYBOARD_CANONICALIZATION: PASS
+```
+
+Corrective scope review:
+
+- Foundation Design unchanged: `PASS`
+- Phase 1 Contract unchanged: `PASS`
+- Approved Phase 1 Plan unchanged: `PASS`
+- `skills/ai-drama-storyboard-design-skill/v0.1.0/**` unchanged: `PASS`
+- No Phase 2+ implementation: `PASS`
+- No Shot Prompt, asset binding, execution planning, LibTV, Agnes, or `execution_readiness=ready`: `PASS`
+- No report commit SHA embedded in this report: `PASS`
