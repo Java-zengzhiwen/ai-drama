@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -18,6 +19,41 @@ AUTHORIZED_PREP_FILES = {
     "AGENTS.md",
     "docs/superpowers/plans/2026-06-29-phase-1-storyboard-canonicalization-implementation-plan.md",
     "docs/superpowers/specs/2026-06-29-phase-1-agent-execution-acceptance-contract.md",
+}
+FROZEN_FILES = {
+    "docs/superpowers/specs/2026-06-28-storyboard-canonical-shot-prompt-foundation-design.md",
+    "docs/superpowers/specs/2026-06-29-phase-1-agent-execution-acceptance-contract.md",
+    "docs/superpowers/plans/2026-06-29-phase-1-storyboard-canonicalization-implementation-plan.md",
+}
+ALLOWED_CHANGED_FILES = {
+    "ai_drama_runtime/store.py",
+    "ai_drama_runtime/services.py",
+    "ai_drama_runtime/request.py",
+    "ai_drama_runtime/parser.py",
+    "ai_drama_runtime/runtime.py",
+    "ai_drama_runtime/validators.py",
+    "ai_drama_runtime/cli.py",
+    "ai_drama_runtime/manifest.py",
+    "ai_drama_runtime/storyboard_canonical.py",
+    "ai_drama_runtime/storyboard_renderer.py",
+    "ai_drama_runtime/storyboard_migration.py",
+    "tools/verify_phase1_storyboard_canonicalization.py",
+    "tools/verify_storyboard_workflow.py",
+    "docs/superpowers/reports/2026-06-29-phase-1-storyboard-canonicalization-verification.md",
+}
+ALLOWED_CHANGED_PREFIXES = (
+    "skills/ai-drama-storyboard-design-skill/v0.2.0/",
+    "tests/",
+)
+REQUIRED_CANONICAL_VALIDATORS = {
+    "storyboard_canonical_schema",
+    "storyboard_shot_identity",
+    "storyboard_shot_order",
+    "storyboard_duration",
+    "storyboard_source_coverage",
+    "storyboard_continuity",
+    "storyboard_renderer_parity",
+    "storyboard_source_freshness",
 }
 
 
@@ -87,11 +123,30 @@ def final_checks() -> list[CheckResult]:
     status = _run(["git", "status", "--short"]).stdout.strip()
     ancestor = _run(["git", "merge-base", "--is-ancestor", EXECUTION_START_COMMIT, "HEAD"])
     diff_check = _run(["git", "diff", "--check"])
+    changed = _run(["git", "diff", "--name-only", f"{EXECUTION_START_COMMIT}..HEAD"]).stdout.splitlines()
+    changed_set = set(changed)
+    disallowed = sorted(
+        path
+        for path in changed_set
+        if path not in ALLOWED_CHANGED_FILES and not any(path.startswith(prefix) for prefix in ALLOWED_CHANGED_PREFIXES)
+    )
+    frozen_changed = sorted(path for path in changed_set if path in FROZEN_FILES)
+    v0_1_changed = sorted(path for path in changed_set if path.startswith("skills/ai-drama-storyboard-design-skill/v0.1.0/"))
+    try:
+        manifest = json.loads((REPO_ROOT / "skills/ai-drama-storyboard-design-skill/v0.2.0/skill.json").read_text(encoding="utf-8"))
+        validators = {item.get("validator_id") for item in manifest.get("validators", []) if item.get("required") is True}
+    except Exception:
+        validators = set()
+    missing_validators = sorted(REQUIRED_CANONICAL_VALIDATORS - validators)
     return [
         _check("branch", branch == EXPECTED_BRANCH, branch, EXPECTED_BRANCH, branch),
         _check("execution_start_ancestor", ancestor.returncode == 0, "merge-base exit=%s" % ancestor.returncode, "0", str(ancestor.returncode)),
         _check("working_tree_clean", status == "", "clean" if status == "" else status, "clean", status or "clean"),
         _check("git_diff_check", diff_check.returncode == 0, diff_check.stdout.strip() or "clean", "clean", diff_check.stdout.strip() or diff_check.stderr.strip() or "clean"),
+        _check("changed_file_allowlist", not disallowed, ",".join(disallowed) or "all changed files allowed", "no disallowed files", ",".join(disallowed)),
+        _check("frozen_docs_unchanged", not frozen_changed, ",".join(frozen_changed) or "unchanged", "unchanged", ",".join(frozen_changed)),
+        _check("v0_1_0_unchanged", not v0_1_changed, ",".join(v0_1_changed) or "unchanged", "unchanged", ",".join(v0_1_changed)),
+        _check("required_canonical_validators", not missing_validators, ",".join(sorted(validators)), ",".join(sorted(REQUIRED_CANONICAL_VALIDATORS)), ",".join(missing_validators)),
         _pytest_check("final_pytest"),
     ]
 

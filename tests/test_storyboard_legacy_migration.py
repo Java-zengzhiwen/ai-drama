@@ -81,3 +81,39 @@ def test_legacy_migration_requires_matching_candidate_hash(tmp_path):
             service.confirm_legacy_storyboard_migration(legacy.revision_id, "0" * 64, tmp_path / "confirm")
 
         assert exc.value.code == "LEGACY_MIGRATION_REQUIRES_REVIEW"
+
+
+def test_legacy_migration_fails_closed_when_required_legacy_fields_are_missing(tmp_path):
+    with _service(tmp_path) as service:
+        legacy = _legacy_storyboard(service)
+        incomplete = service.store.write_text_object("# Storyboard\n\n## 场次：1-1\n\n### 镜头 1\n- duration_seconds: 8\n")
+        broken = service.store.insert_revision(
+            artifact_id=legacy.artifact_id,
+            artifact_type="storyboard",
+            project_id=legacy.project_id,
+            chapter_id=legacy.chapter_id,
+            run_id=legacy.run_id,
+            skill_id=legacy.skill_id,
+            skill_version=legacy.skill_version,
+            skill_package_hash=legacy.skill_package_hash,
+            runtime_provider="test",
+            runtime_model="test",
+            content_object_id=incomplete,
+            content_hash="incomplete",
+            raw_response_object_id=incomplete,
+            parser_version=legacy.parser_version,
+            content_profile="storyboard-markdown-mvp-v1",
+        )
+        dep = service.store.revision_dependencies(legacy.revision_id)[0]
+        service.store.insert_revision_dependency(
+            child_revision_id=broken.revision_id,
+            parent_revision_id=dep.parent_revision_id,
+            relation_type=dep.relation_type,
+            parent_content_hash=dep.parent_content_hash,
+            parent_approval_record_id=dep.parent_approval_record_id,
+        )
+
+        with pytest.raises(WorkflowGateError) as exc:
+            service.preview_legacy_storyboard_migration(broken.revision_id, tmp_path / "preview")
+
+        assert exc.value.code == "LEGACY_MIGRATION_REQUIRES_REVIEW"

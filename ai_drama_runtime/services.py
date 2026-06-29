@@ -19,7 +19,7 @@ from .parser import (
 )
 from .request import build_runtime_request, build_storyboard_runtime_request
 from .runtime import RuntimeErrorBase, run_runtime
-from .validators import run_declared_validators
+from .validators import recursive_freshness_status, run_declared_validators
 from .storyboard_canonical import CONTENT_PROFILE as STORYBOARD_CANONICAL_PROFILE, canonical_storyboard_hash, parse_canonical_json, serialize_canonical_json
 from .storyboard_migration import StoryboardMigrationError, legacy_markdown_to_canonical, write_migration_preview
 from .storyboard_renderer import render_storyboard_markdown
@@ -439,14 +439,7 @@ class RuntimeService:
         revision = self._revision_or_raise(revision_id)
         if revision.artifact_type != "storyboard":
             return "FRESH"
-        source_revision_id = self.revision_source_revision_id(revision_id)
-        if not source_revision_id:
-            return "STALE"
-        source = self.store.get_revision(source_revision_id)
-        if source is None:
-            return "STALE"
-        current = self.store.current_approved(source.artifact_id)
-        return "FRESH" if current and current.revision_id == source_revision_id else "STALE"
+        return recursive_freshness_status(self.store, revision_id)
 
     def compare_revisions(self, left_revision_id, right_revision_id):
         left = self._revision_or_raise(left_revision_id)

@@ -44,6 +44,96 @@
       "current_profile_reason": "validates canonical storyboard schema"
     },
     {
+      "validator_id": "storyboard_shot_identity",
+      "entrypoint": "validators/native_storyboard_canonical.py",
+      "required": true,
+      "applies_to": [
+        "storyboard_revision"
+      ],
+      "command": [],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "runtime_native",
+      "validator_origin": "runtime_native",
+      "required_artifacts": [
+        "storyboard_canonical_json"
+      ],
+      "current_profile_status": "APPLICABLE",
+      "current_profile_reason": "validates canonical scene and shot identity"
+    },
+    {
+      "validator_id": "storyboard_shot_order",
+      "entrypoint": "validators/native_storyboard_canonical.py",
+      "required": true,
+      "applies_to": [
+        "storyboard_revision"
+      ],
+      "command": [],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "runtime_native",
+      "validator_origin": "runtime_native",
+      "required_artifacts": [
+        "storyboard_canonical_json"
+      ],
+      "current_profile_status": "APPLICABLE",
+      "current_profile_reason": "validates canonical scene, shot, and action order"
+    },
+    {
+      "validator_id": "storyboard_duration",
+      "entrypoint": "validators/native_storyboard_canonical.py",
+      "required": true,
+      "applies_to": [
+        "storyboard_revision"
+      ],
+      "command": [],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "runtime_native",
+      "validator_origin": "runtime_native",
+      "required_artifacts": [
+        "storyboard_canonical_json"
+      ],
+      "current_profile_status": "APPLICABLE",
+      "current_profile_reason": "validates canonical storyboard duration bounds"
+    },
+    {
+      "validator_id": "storyboard_source_coverage",
+      "entrypoint": "validators/native_storyboard_canonical.py",
+      "required": true,
+      "applies_to": [
+        "storyboard_revision"
+      ],
+      "command": [],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "runtime_native",
+      "validator_origin": "runtime_native",
+      "required_artifacts": [
+        "storyboard_canonical_json"
+      ],
+      "current_profile_status": "APPLICABLE",
+      "current_profile_reason": "validates canonical source scene coverage"
+    },
+    {
+      "validator_id": "storyboard_continuity",
+      "entrypoint": "validators/native_storyboard_canonical.py",
+      "required": true,
+      "applies_to": [
+        "storyboard_revision"
+      ],
+      "command": [],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "runtime_native",
+      "validator_origin": "runtime_native",
+      "required_artifacts": [
+        "storyboard_canonical_json"
+      ],
+      "current_profile_status": "APPLICABLE",
+      "current_profile_reason": "validates canonical continuity references"
+    },
+    {
       "validator_id": "storyboard_renderer_parity",
       "entrypoint": "validators/native_storyboard_canonical.py",
       "required": true,

@@ -25,6 +25,30 @@ def _parse_legacy_shots(markdown):
     scenes = []
     shots = []
     current = None
+    current_fields = set()
+    required_fields = {
+        "source_scene_reference",
+        "duration_seconds",
+        "shot_size",
+        "camera_angle",
+        "camera_movement",
+        "visual_composition",
+        "character_positions",
+        "character_actions",
+        "emotion_performance",
+        "dialogue",
+        "sound_notes",
+        "continuity_in",
+        "continuity_out",
+    }
+
+    def _finish_current():
+        if current is None:
+            return
+        missing = sorted(required_fields - current_fields)
+        if missing:
+            raise StoryboardMigrationError("legacy shot missing required fields: %s" % ",".join(missing))
+        shots.append(current)
     global_shot_index = 0
     scene_id_by_ref = {}
     for raw_line in markdown.splitlines():
@@ -50,9 +74,9 @@ def _parse_legacy_shots(markdown):
         if re.match(r"^###\s*(?:镜头|Shot)\b", line):
             if not current_scene_reference:
                 raise StoryboardMigrationError("shot appears before scene")
-            if current is not None:
-                shots.append(current)
+            _finish_current()
             global_shot_index += 1
+            current_fields = set()
             scene_id = scene_id_by_ref[current_scene_reference]
             shot_order_by_scene[scene_id] = shot_order_by_scene.get(scene_id, 0) + 1
             current = {
@@ -83,6 +107,8 @@ def _parse_legacy_shots(markdown):
         if current is None or not field_match:
             continue
         key, value = field_match.group(1), field_match.group(2).strip()
+        if key in required_fields:
+            current_fields.add(key)
         if key == "source_scene_reference" and value:
             current["source_scene_reference"] = value
         elif key == "duration_seconds":
@@ -128,7 +154,7 @@ def _parse_legacy_shots(markdown):
         elif key == "continuity_out" and value:
             current["continuity_out"]["must_preserve"] = [value]
     if current is not None:
-        shots.append(current)
+        _finish_current()
     if not scenes or not shots:
         raise StoryboardMigrationError("legacy storyboard lacks scenes or shots")
     return scenes, shots

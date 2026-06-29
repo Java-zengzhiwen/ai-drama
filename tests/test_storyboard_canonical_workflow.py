@@ -58,6 +58,11 @@ def test_canonical_storyboard_run_stores_canonical_json_and_dependency(tmp_path)
         assert render_storyboard_markdown(canonical).startswith("# Storyboard Canonical Render\n")
         statuses = {item.validator_id: item.status for item in result.validation_results}
         assert statuses["storyboard_canonical_schema"] == "PASS"
+        assert statuses["storyboard_shot_identity"] == "PASS"
+        assert statuses["storyboard_shot_order"] == "PASS"
+        assert statuses["storyboard_duration"] == "PASS"
+        assert statuses["storyboard_source_coverage"] == "PASS"
+        assert statuses["storyboard_continuity"] == "PASS"
         assert statuses["storyboard_renderer_parity"] == "PASS"
         assert statuses["storyboard_source_freshness"] == "PASS"
 
@@ -79,3 +84,90 @@ def test_canonical_storyboard_export_renders_markdown_without_rewriting_canonica
 
         assert output.read_text(encoding="utf-8").startswith("# Storyboard Canonical Render\n")
         assert service.store.read_text(result.revision.content_object_id) == canonical_before
+
+
+def test_canonical_source_coverage_validator_detects_missing_script_scene(tmp_path):
+    with _service(tmp_path) as service:
+        source_run = service.run_acceptance(
+            load_skill_package(SCRIPT_SKILL_ROOT),
+            SCRIPT_ACCEPTANCE_ROOT,
+            "mock",
+            "mock",
+            mock_mode="three_scene_script",
+        )
+        service.approve_revision(source_run.revision.revision_id, "tester")
+
+        result = service.run_storyboard(
+            load_skill_package(STORYBOARD_CANONICAL_SKILL_ROOT),
+            source_run.revision.revision_id,
+            "mock",
+            "mock-storyboard-canonical-v1",
+        )
+
+        statuses = {item.validator_id: item for item in result.validation_results}
+        assert statuses["storyboard_source_coverage"].status == "FAIL"
+        assert statuses["storyboard_source_coverage"].error_code == "SHOT_COVERAGE_INCOMPLETE"
+
+
+def test_canonical_continuity_validator_detects_unknown_source_unit(tmp_path):
+    with _service(tmp_path) as service:
+        source = _approved_script_revision(service)
+        result = service.run_storyboard(
+            load_skill_package(STORYBOARD_CANONICAL_SKILL_ROOT),
+            source.revision_id,
+            "mock",
+            "mock-storyboard-canonical-v1",
+        )
+        canonical = parse_canonical_json(service.store.read_text(result.revision.content_object_id))
+        canonical["shots"][0]["continuity_out"]["source_unit_or_shot_id"] = "SHOT_MISSING"
+        object_id = service.store.write_text_object(__import__("json").dumps(canonical, ensure_ascii=False, sort_keys=True))
+        broken = service.store.insert_revision(
+            artifact_id=result.revision.artifact_id,
+            artifact_type="storyboard",
+            project_id=result.revision.project_id,
+            chapter_id=result.revision.chapter_id,
+            run_id=result.run.run_id,
+            skill_id=result.revision.skill_id,
+            skill_version=result.revision.skill_version,
+            skill_package_hash=result.revision.skill_package_hash,
+            runtime_provider="test",
+            runtime_model="test",
+            content_object_id=object_id,
+            content_hash=canonical_storyboard_hash(canonical),
+            raw_response_object_id=object_id,
+            parser_version=result.revision.parser_version,
+            content_profile=CONTENT_PROFILE,
+        )
+        validations = __import__("ai_drama_runtime.validators", fromlist=["run_declared_validators"]).run_declared_validators(
+            service.store,
+            load_skill_package(STORYBOARD_CANONICAL_SKILL_ROOT),
+            broken,
+            REPO_ROOT,
+            repo_root=REPO_ROOT,
+        )
+        continuity = {item.validator_id: item for item in validations}["storyboard_continuity"]
+        assert continuity.status == "FAIL"
+        assert continuity.error_code == "SHOT_MAPPING_INVALID"
+
+
+def test_canonical_freshness_detects_parent_hash_mismatch_and_blocks_approval(tmp_path):
+    with _service(tmp_path) as service:
+        source = _approved_script_revision(service)
+        result = service.run_storyboard(
+            load_skill_package(STORYBOARD_CANONICAL_SKILL_ROOT),
+            source.revision_id,
+            "mock",
+            "mock-storyboard-canonical-v1",
+        )
+        service.store.conn.execute(
+            "UPDATE revision_dependencies SET parent_content_hash = ? WHERE child_revision_id = ?",
+            ("0" * 64, result.revision.revision_id),
+        )
+        service.store.conn.commit()
+
+        assert service.revision_freshness(result.revision.revision_id) == "STALE"
+        import pytest
+        from ai_drama_runtime.services import ApprovalBlocked
+
+        with pytest.raises(ApprovalBlocked):
+            service.approve_revision(result.revision.revision_id, "tester")

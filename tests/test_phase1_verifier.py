@@ -77,3 +77,31 @@ def test_phase1_verifier_portable_mode_passes():
 
     assert result.returncode == 0
     assert "PHASE1_STORYBOARD_CANONICALIZATION: PASS" in result.stdout
+
+
+def test_phase1_final_checks_include_scope_and_required_validators(monkeypatch):
+    verifier = _load_verifier_module()
+
+    def fake_run(args, **kwargs):
+        command = " ".join(args)
+        if command == "git branch --show-current":
+            return subprocess.CompletedProcess(args, 0, verifier.EXPECTED_BRANCH + "\n", "")
+        if command == "git status --short":
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if command.startswith("git merge-base --is-ancestor"):
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if command == "git diff --check":
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if command.startswith("git diff --name-only"):
+            return subprocess.CompletedProcess(args, 0, "ai_drama_runtime/storyboard_canonical.py\n", "")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(verifier, "_run", fake_run)
+    monkeypatch.setattr(verifier, "_pytest_check", lambda name: verifier.CheckResult(name, True, "ok", "ok", "ok"))
+
+    names = {item.name for item in verifier.final_checks()}
+
+    assert "changed_file_allowlist" in names
+    assert "frozen_docs_unchanged" in names
+    assert "v0_1_0_unchanged" in names
+    assert "required_canonical_validators" in names

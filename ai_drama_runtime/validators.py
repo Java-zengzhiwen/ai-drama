@@ -96,11 +96,56 @@ def _freshness_status(store, revision_id, seen=None):
     return "FRESH"
 
 
+def recursive_freshness_status(store, revision_id):
+    status = _freshness_status(store, revision_id)
+    return "STALE" if status in {"SOURCE_STALE", "DEPENDENCY_MISSING", "DEPENDENCY_CYCLE_DETECTED"} else status
+
+
+def _extract_script_scenes(text):
+    import re
+
+    scenes = []
+    for line in text.splitlines():
+        match = re.match(r"^##\s*(?:Scene(?:\s*:\s*|\s+)?|场次：)(.+?)\s*$", line)
+        if match:
+            scenes.append(match.group(1).strip())
+    return scenes
+
+
+def _validate_source_coverage(store, revision, canonical):
+    deps = store.revision_dependencies(revision.revision_id)
+    if not deps:
+        raise ValueError("missing source dependency")
+    source = store.get_revision(deps[0].parent_revision_id)
+    if source is None:
+        raise ValueError("missing source revision")
+    source_scenes = _extract_script_scenes(store.read_text(source.content_object_id))
+    scene_refs = [scene["source_scene_reference"] for scene in canonical["scenes"]]
+    missing = [scene for scene in source_scenes if scene not in scene_refs]
+    extra = [ref for ref in scene_refs if ref not in source_scenes]
+    if missing or extra:
+        raise ValueError("missing=%s extra=%s" % (missing, extra))
+
+
+def _validate_continuity(canonical):
+    shot_ids = {shot["shot_id"] for shot in canonical["shots"]}
+    for shot in canonical["shots"]:
+        for key in ("continuity_in", "continuity_out"):
+            source_ref = shot[key].get("source_unit_or_shot_id")
+            if source_ref is not None and source_ref not in shot_ids:
+                raise ValueError("%s references unknown shot %s" % (key, source_ref))
+
+
 def _run_native_canonical_validator(store, revision, validator):
     if _revision_content_profile(revision) != "storyboard-canonical-v1":
         return None
     if validator.validator_id not in {
         "storyboard_canonical_schema",
+        "storyboard_shot_identity",
+        "storyboard_shot_order",
+        "storyboard_duration",
+        "storyboard_source_coverage",
+        "storyboard_continuity",
         "storyboard_renderer_parity",
         "storyboard_source_freshness",
     }:
@@ -114,11 +159,20 @@ def _run_native_canonical_validator(store, revision, validator):
     report = {"validator_id": validator.validator_id, "final_status": "pass"}
     try:
         canonical = parse_canonical_json(store.read_text(revision.content_object_id))
-        if validator.validator_id == "storyboard_canonical_schema":
+        if validator.validator_id in {
+            "storyboard_canonical_schema",
+            "storyboard_shot_identity",
+            "storyboard_shot_order",
+            "storyboard_duration",
+        }:
             actual_hash = canonical_storyboard_hash(canonical)
             if actual_hash != revision.content_hash:
                 raise CanonicalStoryboardError("CANONICAL_HASH_MISMATCH", "stored content hash does not match canonical bytes")
             report["canonical_hash"] = actual_hash
+        elif validator.validator_id == "storyboard_source_coverage":
+            _validate_source_coverage(store, revision, canonical)
+        elif validator.validator_id == "storyboard_continuity":
+            _validate_continuity(canonical)
         elif validator.validator_id == "storyboard_renderer_parity":
             first = render_storyboard_markdown(canonical)
             second = render_storyboard_markdown(canonical)
@@ -136,6 +190,17 @@ def _run_native_canonical_validator(store, revision, validator):
         report["final_status"] = "fail"
         report["error_code"] = exc.code
         report["message"] = exc.safe_message
+    except ValueError as exc:
+        status = "FAIL"
+        if validator.validator_id == "storyboard_source_coverage":
+            error_code = "SHOT_COVERAGE_INCOMPLETE"
+        elif validator.validator_id == "storyboard_continuity":
+            error_code = "SHOT_MAPPING_INVALID"
+        else:
+            error_code = "CANONICAL_SCHEMA_INVALID"
+        report["final_status"] = "fail"
+        report["error_code"] = error_code
+        report["message"] = str(exc)
     return _insert(
         store,
         revision,

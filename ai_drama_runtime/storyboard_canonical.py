@@ -106,6 +106,9 @@ def _require_required_keys(obj, keys, path):
     missing = [key for key in keys if key not in obj]
     if missing:
         raise CanonicalStoryboardError("CANONICAL_SCHEMA_INVALID", "%s missing required keys: %s" % (path, ",".join(missing)))
+    extra = [key for key in obj if key not in keys]
+    if extra:
+        raise CanonicalStoryboardError("CANONICAL_SCHEMA_INVALID", "%s additional property not allowed: %s" % (path, ",".join(extra)))
 
 
 def validate_storyboard_canonical(data) -> None:

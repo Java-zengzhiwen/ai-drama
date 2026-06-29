@@ -130,6 +130,20 @@ def test_schema_rejects_null_required_array():
         validate_storyboard_canonical(data)
 
 
+def test_schema_rejects_unknown_and_approval_metadata_fields():
+    data = _valid_storyboard()
+    data["script_approval_record_id"] = "approval"
+
+    with pytest.raises(CanonicalStoryboardError, match="additional property"):
+        validate_storyboard_canonical(data)
+
+    data = _valid_storyboard()
+    data["source"]["script_approval_record_id"] = "approval"
+
+    with pytest.raises(CanonicalStoryboardError, match="additional property"):
+        validate_storyboard_canonical(data)
+
+
 def test_schema_rejects_invalid_duration():
     data = _valid_storyboard()
     data["shots"][0]["duration_seconds"] = 4
