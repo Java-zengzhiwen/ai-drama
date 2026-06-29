@@ -75,10 +75,17 @@ Phase 1 Final Baseline
 d9f13967d90ae0b2829c3182dd0aebe85c495daf
 
 → Phase 2 Design Baseline Commit
-  containing only the two Phase 2 specification files
+f933182a3db4b3f03de31b4241da29e5be9e3fdd
+containing only the two approved Phase 2 specification files
+
+→ Phase 2 Planning Baseline Commit
+containing exactly:
+- tests/acceptance/test_storyboard_workflow_acceptance.py
+- docs/superpowers/specs/2026-06-29-phase-2-agent-execution-acceptance-contract.md
 
 → Phase 2 Execution Start Commit
-  adding only the approved Implementation Plan
+adding only:
+- docs/superpowers/plans/2026-06-29-phase-2-minimal-bundle-foundation-implementation-plan.md
 ```
 
 ### Existing Test Baseline
@@ -101,9 +108,12 @@ Conditions:
 
 1. `HEAD` must equal the execution start commit supplied by the launch prompt.
 2. `d9f13967d90ae0b2829c3182dd0aebe85c495daf` must be an ancestor of `HEAD`.
-3. The working tree must be clean.
-4. The baseline test suite must report `135 passed`.
-5. The diff between the Phase 1 baseline and the execution start commit must contain only the Phase 2 Design, Phase 2 Contract, and the Phase 2 Implementation Plan.
+3. `f933182a3db4b3f03de31b4241da29e5be9e3fdd` must be an ancestor of `HEAD`.
+4. The launch prompt identifies the exact Phase 2 Planning Baseline.
+5. The diff from Design Baseline to Planning Baseline contains exactly the two portability-correction files.
+6. The diff from Planning Baseline to Execution Start Commit contains exactly the approved Implementation Plan.
+7. The working tree must be clean.
+8. The baseline test suite must report `135 passed`.
 
 If any condition fails, stop and report.
 
@@ -612,7 +622,7 @@ Implementation must stop and report if any of the following occur:
 | P2-001 | verify baseline branch, baseline commit, and clean-tree preflight | git preflight checks | pass | N/A | preflight |
 | P2-002 | verify baseline test count is 135 passed before implementation | `python3 -m pytest -q` | `135 passed` | N/A | preflight |
 | P2-003 | verify the Phase 2 design/contract baseline contains only the two draft docs | git diff name-only against Phase 1 baseline | only the two spec files | N/A | preflight |
-| P2-004 | verify the execution start baseline adds only the approved Implementation Plan | git diff name-only against execution start commit | only design, contract, plan | N/A | preflight |
+| P2-004 | verify the Planning Baseline contains exactly the two authorized verification-portability files and the Execution Start Commit adds only the approved Implementation Plan | two git diff name-only checks: Design Baseline..Planning Baseline and Planning Baseline..Execution Start Commit | exact corrective pair followed by exact plan file | N/A | preflight |
 | P2-005 | verify the final verifier checks the exact changed-file allowlist | final verifier allowlist check | allowlist match | N/A | final |
 | P2-006 | RESERVED | N/A | RESERVED | N/A | N/A |
 | P2-007 | RESERVED | N/A | RESERVED | N/A | N/A |
@@ -773,15 +783,64 @@ None at the architecture level.
 
 ---
 
-## 17. Foundation Conflicts
+## 17. Post-Freeze Corrective Addendum - Verification Portability
+
+This addendum corrects verification portability only. It does not authorize Phase 2 implementation.
+
+Frozen facts:
+
+1. The Phase 2 Design Baseline Commit remains `f933182a3db4b3f03de31b4241da29e5be9e3fdd`.
+2. A separate Phase 2 Planning Baseline Commit is permitted after that Design Baseline solely to correct a pre-existing Phase 1 acceptance-test portability defect.
+3. The corrective diff from the Design Baseline to the Planning Baseline may contain exactly:
+   - `tests/acceptance/test_storyboard_workflow_acceptance.py`
+   - `docs/superpowers/specs/2026-06-29-phase-2-agent-execution-acceptance-contract.md`
+4. The correction must preserve the historical Phase 1 report unchanged, remove current-branch equality from historical report validation, replace fixed pytest counts with semantic successful-run checks, and make no Runtime, Skill, workflow, verifier, or Phase 2 implementation change.
+5. The future preparation sequence is:
+
+   ```text
+   Phase 1 Final Baseline
+   d9f13967d90ae0b2829c3182dd0aebe85c495daf
+
+   → Phase 2 Design Baseline
+   f933182a3db4b3f03de31b4241da29e5be9e3fdd
+
+   → Phase 2 Planning Baseline
+   verification portability correction only
+
+   → Phase 2 Execution Start Commit
+   adds only the approved Phase 2 Implementation Plan
+   ```
+
+6. Future preflight must verify:
+   - Phase 1 Final Baseline is an ancestor;
+   - Phase 2 Design Baseline is an ancestor;
+   - the launch prompt supplies the exact Planning Baseline Commit;
+   - the diff from Phase 2 Design Baseline to Planning Baseline contains exactly the two corrective files above;
+   - the diff from Planning Baseline to Execution Start Commit contains exactly the approved Phase 2 Implementation Plan;
+   - the working tree is clean;
+   - the baseline suite is green.
+7. This addendum corrects verification portability only. It does not authorize Phase 2 implementation.
+
+Final statuses remain:
+
+```text
+Design Status: APPROVED AND FROZEN
+Contract Status: APPROVED AND FROZEN
+Implementation Planning: AUTHORIZED AFTER PORTABILITY CORRECTION PASSES FULL LOCAL AND GITHUB CI VERIFICATION
+Implementation: NOT AUTHORIZED
+```
+
+---
+
+## 18. Foundation Conflicts
 
 None. This contract stays additive to the frozen Phase 1 foundation and does not authorize Shot Prompt, asset binding, execution planning, target adapters, LibTV, Agnes, or `execution_ready=true`.
 
 ---
 
-## 18. Final State
+## 19. Final State
 
 Design Status: APPROVED AND FROZEN
 Contract Status: APPROVED AND FROZEN
-Implementation Planning: AUTHORIZED
+Implementation Planning: AUTHORIZED AFTER PORTABILITY CORRECTION PASSES FULL LOCAL AND GITHUB CI VERIFICATION
 Implementation: NOT AUTHORIZED
