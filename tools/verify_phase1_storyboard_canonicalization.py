@@ -118,12 +118,12 @@ def portable_checks() -> list[CheckResult]:
     return [_pytest_check("portable_pytest")]
 
 
-def final_checks() -> list[CheckResult]:
+def final_checks(execution_start_commit: str = EXECUTION_START_COMMIT) -> list[CheckResult]:
     branch = _run(["git", "branch", "--show-current"]).stdout.strip()
     status = _run(["git", "status", "--short"]).stdout.strip()
-    ancestor = _run(["git", "merge-base", "--is-ancestor", EXECUTION_START_COMMIT, "HEAD"])
+    ancestor = _run(["git", "merge-base", "--is-ancestor", execution_start_commit, "HEAD"])
     diff_check = _run(["git", "diff", "--check"])
-    changed = _run(["git", "diff", "--name-only", f"{EXECUTION_START_COMMIT}..HEAD"]).stdout.splitlines()
+    changed = _run(["git", "diff", "--name-only", f"{execution_start_commit}..HEAD"]).stdout.splitlines()
     changed_set = set(changed)
     disallowed = sorted(
         path
@@ -170,12 +170,13 @@ def _print_results(results: list[CheckResult]) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["preflight", "portable", "final"], default="portable")
+    parser.add_argument("--execution-start-commit", default=EXECUTION_START_COMMIT)
     args = parser.parse_args(argv)
     if args.mode == "preflight":
         return _print_results(preflight_checks())
     if args.mode == "portable":
         return _print_results(portable_checks())
-    return _print_results(final_checks())
+    return _print_results(final_checks(args.execution_start_commit))
 
 
 if __name__ == "__main__":

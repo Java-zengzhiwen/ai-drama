@@ -64,13 +64,21 @@ def parse_storyboard_canonical_response(raw):
         raise ParseError("STORYBOARD_PARSER_EMPTY_OUTPUT", "empty runtime response")
     try:
         data = parse_canonical_json(raw)
-    except CanonicalStoryboardError:
+    except CanonicalStoryboardError as exc:
+        raise ParseError(exc.code, exc.safe_message) from exc
+    if isinstance(data, dict) and "storyboard_canonical" in data:
+        data = data["storyboard_canonical"]
+    elif isinstance(data, dict) and "choices" in data:
         try:
-            wrapper = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ParseError("STORYBOARD_PARSER_INVALID_OUTPUT", str(exc)) from exc
-        data = wrapper.get("storyboard_canonical") if isinstance(wrapper, dict) else None
-    else:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ParseError("CANONICAL_SCHEMA_INVALID", "OpenAI-compatible response does not contain choices[0].message.content") from exc
+        if not isinstance(content, str) or not content.strip():
+            raise ParseError("CANONICAL_SCHEMA_INVALID", "OpenAI-compatible response content must be non-empty JSON text")
+        try:
+            data = parse_canonical_json(content)
+        except CanonicalStoryboardError as exc:
+            raise ParseError(exc.code, exc.safe_message) from exc
         if isinstance(data, dict) and "storyboard_canonical" in data:
             data = data["storyboard_canonical"]
     try:

@@ -23,20 +23,31 @@
   "contracts": [
     "contracts/storyboard-canonical-contract-v1.md"
   ],
-  "validator_support_files": [],
+  "validator_support_files": [
+    "validators/common_canonical.py"
+  ],
   "validators": [
     {
       "validator_id": "storyboard_canonical_schema",
-      "entrypoint": "validators/native_storyboard_canonical.py",
+      "entrypoint": "validators/validate_storyboard_canonical_schema.py",
       "required": true,
       "applies_to": [
         "storyboard_revision"
       ],
-      "command": [],
+      "command": [
+        "{python}",
+        "{entrypoint}",
+        "--revision",
+        "{revision_path}",
+        "--report",
+        "{report_path}",
+        "--repo-root",
+        "{repo_root}"
+      ],
       "dependencies": [],
       "timeout_seconds": 10,
-      "expected_exit_behavior": "runtime_native",
-      "validator_origin": "runtime_native",
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "skill_package",
       "required_artifacts": [
         "storyboard_canonical_json"
       ],
@@ -45,16 +56,25 @@
     },
     {
       "validator_id": "storyboard_shot_identity",
-      "entrypoint": "validators/native_storyboard_canonical.py",
+      "entrypoint": "validators/validate_storyboard_shot_identity.py",
       "required": true,
       "applies_to": [
         "storyboard_revision"
       ],
-      "command": [],
+      "command": [
+        "{python}",
+        "{entrypoint}",
+        "--revision",
+        "{revision_path}",
+        "--report",
+        "{report_path}",
+        "--repo-root",
+        "{repo_root}"
+      ],
       "dependencies": [],
       "timeout_seconds": 10,
-      "expected_exit_behavior": "runtime_native",
-      "validator_origin": "runtime_native",
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "skill_package",
       "required_artifacts": [
         "storyboard_canonical_json"
       ],
@@ -63,16 +83,25 @@
     },
     {
       "validator_id": "storyboard_shot_order",
-      "entrypoint": "validators/native_storyboard_canonical.py",
+      "entrypoint": "validators/validate_storyboard_shot_order.py",
       "required": true,
       "applies_to": [
         "storyboard_revision"
       ],
-      "command": [],
+      "command": [
+        "{python}",
+        "{entrypoint}",
+        "--revision",
+        "{revision_path}",
+        "--report",
+        "{report_path}",
+        "--repo-root",
+        "{repo_root}"
+      ],
       "dependencies": [],
       "timeout_seconds": 10,
-      "expected_exit_behavior": "runtime_native",
-      "validator_origin": "runtime_native",
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "skill_package",
       "required_artifacts": [
         "storyboard_canonical_json"
       ],
@@ -81,16 +110,25 @@
     },
     {
       "validator_id": "storyboard_duration",
-      "entrypoint": "validators/native_storyboard_canonical.py",
+      "entrypoint": "validators/validate_storyboard_duration.py",
       "required": true,
       "applies_to": [
         "storyboard_revision"
       ],
-      "command": [],
+      "command": [
+        "{python}",
+        "{entrypoint}",
+        "--revision",
+        "{revision_path}",
+        "--report",
+        "{report_path}",
+        "--repo-root",
+        "{repo_root}"
+      ],
       "dependencies": [],
       "timeout_seconds": 10,
-      "expected_exit_behavior": "runtime_native",
-      "validator_origin": "runtime_native",
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "skill_package",
       "required_artifacts": [
         "storyboard_canonical_json"
       ],
@@ -117,16 +155,25 @@
     },
     {
       "validator_id": "storyboard_continuity",
-      "entrypoint": "validators/native_storyboard_canonical.py",
+      "entrypoint": "validators/validate_storyboard_continuity.py",
       "required": true,
       "applies_to": [
         "storyboard_revision"
       ],
-      "command": [],
+      "command": [
+        "{python}",
+        "{entrypoint}",
+        "--revision",
+        "{revision_path}",
+        "--report",
+        "{report_path}",
+        "--repo-root",
+        "{repo_root}"
+      ],
       "dependencies": [],
       "timeout_seconds": 10,
-      "expected_exit_behavior": "runtime_native",
-      "validator_origin": "runtime_native",
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "skill_package",
       "required_artifacts": [
         "storyboard_canonical_json"
       ],

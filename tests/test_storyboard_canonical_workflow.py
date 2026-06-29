@@ -1,6 +1,13 @@
+import copy
+import json
+import subprocess
+import sys
 from pathlib import Path
 
+import pytest
+
 from ai_drama_runtime.manifest import load_skill_package
+from ai_drama_runtime.runtime import RuntimeResponse
 from ai_drama_runtime.services import RuntimeService
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_runtime.storyboard_canonical import CONTENT_PROFILE, canonical_storyboard_hash, parse_canonical_json
@@ -21,6 +28,30 @@ def _approved_script_revision(service):
     result = service.run_acceptance(load_skill_package(SCRIPT_SKILL_ROOT), SCRIPT_ACCEPTANCE_ROOT, "mock", "mock-script")
     service.approve_revision(result.revision.revision_id, "tester")
     return service.store.current_approved("shengsi-chapter-001")
+
+
+def _canonical_fixture(name="valid_minimal.json"):
+    return parse_canonical_json((REPO_ROOT / "tests" / "fixtures" / "storyboard_canonical" / name).read_text(encoding="utf-8"))
+
+
+def _openai_chat_completion(content):
+    return json.dumps(
+        {
+            "id": "chatcmpl-storyboard-test",
+            "object": "chat.completion",
+            "created": 1800000000,
+            "model": "storyboard-canonical-test",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": content},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 321, "completion_tokens": 654, "total_tokens": 975},
+        },
+        ensure_ascii=False,
+    )
 
 
 def test_canonical_storyboard_skill_package_is_discoverable():
@@ -65,6 +96,36 @@ def test_canonical_storyboard_run_stores_canonical_json_and_dependency(tmp_path)
         assert statuses["storyboard_continuity"] == "PASS"
         assert statuses["storyboard_renderer_parity"] == "PASS"
         assert statuses["storyboard_source_freshness"] == "PASS"
+
+
+def test_openai_compatible_chat_completion_stores_canonical_pending_revision(tmp_path, monkeypatch):
+    def fake_openai(runtime_request, started):
+        from ai_drama_runtime.runtime import _mock_storyboard_canonical
+
+        canonical = _mock_storyboard_canonical(runtime_request)
+        raw = _openai_chat_completion(json.dumps({"storyboard_canonical": canonical}, ensure_ascii=False, sort_keys=True))
+        return RuntimeResponse(raw=raw, provider="openai-compatible", model="storyboard-model", usage={"usage_status": "PROVIDED"}, duration_ms=1)
+
+    monkeypatch.setattr("ai_drama_runtime.runtime._run_openai_compatible", fake_openai)
+
+    with _service(tmp_path) as service:
+        source = _approved_script_revision(service)
+        result = service.run_storyboard(
+            load_skill_package(STORYBOARD_CANONICAL_SKILL_ROOT),
+            source.revision_id,
+            "openai-compatible",
+            "storyboard-model",
+        )
+
+        assert result.run.status == "SUCCEEDED"
+        assert result.revision.runtime_provider == "openai-compatible"
+        assert result.revision.approval_status == "pending"
+        assert result.revision.content_profile == CONTENT_PROFILE
+        canonical = parse_canonical_json(service.store.read_text(result.revision.content_object_id))
+        assert canonical["source"]["script_revision_id"] == source.revision_id
+        assert canonical["source"]["script_content_hash"] == source.content_hash
+        assert result.revision.content_hash == canonical_storyboard_hash(canonical)
+        assert {item.validator_id: item.status for item in result.validation_results}["storyboard_canonical_schema"] == "PASS"
 
 
 def test_canonical_storyboard_export_renders_markdown_without_rewriting_canonical(tmp_path):
@@ -171,3 +232,72 @@ def test_canonical_freshness_detects_parent_hash_mismatch_and_blocks_approval(tm
 
         with pytest.raises(ApprovalBlocked):
             service.approve_revision(result.revision.revision_id, "tester")
+
+
+def test_canonical_pure_validators_are_declared_as_subprocesses():
+    package = load_skill_package(STORYBOARD_CANONICAL_SKILL_ROOT)
+    validators = {item.validator_id: item for item in package.validators}
+
+    for validator_id in {
+        "storyboard_canonical_schema",
+        "storyboard_shot_identity",
+        "storyboard_shot_order",
+        "storyboard_duration",
+        "storyboard_continuity",
+    }:
+        validator = validators[validator_id]
+        assert validator.command
+        assert validator.expected_exit_behavior == "zero_is_pass"
+        assert validator.validator_origin == "skill_package"
+
+    for validator_id in {"storyboard_source_coverage", "storyboard_source_freshness", "storyboard_renderer_parity"}:
+        validator = validators[validator_id]
+        assert validator.command == []
+        assert validator.expected_exit_behavior == "runtime_native"
+        assert validator.validator_origin == "runtime_native"
+
+
+def _run_canonical_validator(validator_id, canonical, tmp_path):
+    revision_path = tmp_path / ("%s.json" % validator_id)
+    report_path = tmp_path / ("%s-report.json" % validator_id)
+    revision_path.write_text(json.dumps(canonical, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(STORYBOARD_CANONICAL_SKILL_ROOT / "validators" / ("validate_%s.py" % validator_id)),
+            "--revision",
+            str(revision_path),
+            "--report",
+            str(report_path),
+            "--repo-root",
+            str(REPO_ROOT),
+        ],
+        cwd=STORYBOARD_CANONICAL_SKILL_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
+    return proc, report
+
+
+@pytest.mark.parametrize(
+    "validator_id, mutate, expected_error",
+    [
+        ("storyboard_canonical_schema", lambda data: data.pop("source"), "CANONICAL_SCHEMA_INVALID"),
+        ("storyboard_shot_identity", lambda data: data["shots"].append(copy.deepcopy(data["shots"][0])), "SHOT_ID_INVALID"),
+        ("storyboard_shot_order", lambda data: data["shots"][0].__setitem__("shot_order", 0), "SHOT_ORDER_INVALID"),
+        ("storyboard_duration", lambda data: data["shots"][0].__setitem__("duration_seconds", 16), "STORYBOARD_DURATION_INVALID"),
+        ("storyboard_continuity", lambda data: data["shots"][0]["continuity_out"].__setitem__("source_unit_or_shot_id", "SHOT_MISSING"), "SHOT_MAPPING_INVALID"),
+    ],
+)
+def test_canonical_pure_validators_execute_as_subprocesses_and_fail_on_invalid_input(tmp_path, validator_id, mutate, expected_error):
+    canonical = _canonical_fixture()
+    mutate(canonical)
+
+    proc, report = _run_canonical_validator(validator_id, canonical, tmp_path)
+
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    assert report["validator_id"] == validator_id
+    assert report["final_status"] == "fail"
+    assert report["error_code"] == expected_error

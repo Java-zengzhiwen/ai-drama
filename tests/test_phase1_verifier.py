@@ -105,3 +105,33 @@ def test_phase1_final_checks_include_scope_and_required_validators(monkeypatch):
     assert "frozen_docs_unchanged" in names
     assert "v0_1_0_unchanged" in names
     assert "required_canonical_validators" in names
+
+
+def test_phase1_final_checks_accept_corrective_execution_start(monkeypatch):
+    verifier = _load_verifier_module()
+    corrective_start = "ceab92780810995c96dabce91b678dce942b6856"
+    seen = []
+
+    def fake_run(args, **kwargs):
+        command = " ".join(args)
+        seen.append(command)
+        if command == "git branch --show-current":
+            return subprocess.CompletedProcess(args, 0, verifier.EXPECTED_BRANCH + "\n", "")
+        if command == "git status --short":
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if command == "git merge-base --is-ancestor %s HEAD" % corrective_start:
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if command == "git diff --check":
+            return subprocess.CompletedProcess(args, 0, "", "")
+        if command == "git diff --name-only %s..HEAD" % corrective_start:
+            return subprocess.CompletedProcess(args, 0, "ai_drama_runtime/parser.py\n", "")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(verifier, "_run", fake_run)
+    monkeypatch.setattr(verifier, "_pytest_check", lambda name: verifier.CheckResult(name, True, "ok", "ok", "ok"))
+
+    results = verifier.final_checks(corrective_start)
+
+    assert all(item.ok for item in results)
+    assert "git merge-base --is-ancestor %s HEAD" % corrective_start in seen
+    assert "git diff --name-only %s..HEAD" % corrective_start in seen

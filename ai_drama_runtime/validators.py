@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import importlib.util
 import subprocess
 import sys
@@ -140,17 +141,12 @@ def _run_native_canonical_validator(store, revision, validator):
     if _revision_content_profile(revision) != "storyboard-canonical-v1":
         return None
     if validator.validator_id not in {
-        "storyboard_canonical_schema",
-        "storyboard_shot_identity",
-        "storyboard_shot_order",
-        "storyboard_duration",
         "storyboard_source_coverage",
-        "storyboard_continuity",
         "storyboard_renderer_parity",
         "storyboard_source_freshness",
     }:
         return None
-    from .storyboard_canonical import CanonicalStoryboardError, canonical_storyboard_hash, parse_canonical_json
+    from .storyboard_canonical import CanonicalStoryboardError, parse_canonical_json
     from .storyboard_renderer import render_storyboard_markdown
 
     started = time.time()
@@ -159,20 +155,8 @@ def _run_native_canonical_validator(store, revision, validator):
     report = {"validator_id": validator.validator_id, "final_status": "pass"}
     try:
         canonical = parse_canonical_json(store.read_text(revision.content_object_id))
-        if validator.validator_id in {
-            "storyboard_canonical_schema",
-            "storyboard_shot_identity",
-            "storyboard_shot_order",
-            "storyboard_duration",
-        }:
-            actual_hash = canonical_storyboard_hash(canonical)
-            if actual_hash != revision.content_hash:
-                raise CanonicalStoryboardError("CANONICAL_HASH_MISMATCH", "stored content hash does not match canonical bytes")
-            report["canonical_hash"] = actual_hash
-        elif validator.validator_id == "storyboard_source_coverage":
+        if validator.validator_id == "storyboard_source_coverage":
             _validate_source_coverage(store, revision, canonical)
-        elif validator.validator_id == "storyboard_continuity":
-            _validate_continuity(canonical)
         elif validator.validator_id == "storyboard_renderer_parity":
             first = render_storyboard_markdown(canonical)
             second = render_storyboard_markdown(canonical)
@@ -194,8 +178,6 @@ def _run_native_canonical_validator(store, revision, validator):
         status = "FAIL"
         if validator.validator_id == "storyboard_source_coverage":
             error_code = "SHOT_COVERAGE_INCOMPLETE"
-        elif validator.validator_id == "storyboard_continuity":
-            error_code = "SHOT_MAPPING_INVALID"
         else:
             error_code = "CANONICAL_SCHEMA_INVALID"
         report["final_status"] = "fail"
@@ -297,6 +279,13 @@ def run_declared_validators(store, skill, revision, acceptance_root, repo_root=N
                 )
                 duration_ms = int((time.time() - started) * 1000)
                 report_text = report_path.read_text(encoding="utf-8") if report_path.exists() else "{}\n"
+                error_code = ""
+                if proc.returncode != 0:
+                    error_code = "VALIDATOR_EXECUTION_ERROR"
+                    try:
+                        error_code = json.loads(report_text).get("error_code") or error_code
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
                 results.append(
                     _insert(
                         store,
@@ -304,7 +293,7 @@ def run_declared_validators(store, skill, revision, acceptance_root, repo_root=N
                         validator,
                         "PASS" if proc.returncode == 0 else "FAIL",
                         exit_code=proc.returncode,
-                        error_code="" if proc.returncode == 0 else "VALIDATOR_EXECUTION_ERROR",
+                        error_code=error_code,
                         duration_ms=duration_ms,
                         stdout=proc.stdout,
                         stderr=proc.stderr,
