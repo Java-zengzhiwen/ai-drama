@@ -71,6 +71,8 @@ class RevisionRecord:
     content_hash: str
     raw_response_object_id: str
     parser_version: str
+    content_profile: str
+    derivation_type: str
     supersedes_revision_id: str
     approval_status: str
     created_at: str
@@ -234,6 +236,8 @@ class RuntimeStore:
               content_hash TEXT NOT NULL,
               raw_response_object_id TEXT NOT NULL,
               parser_version TEXT NOT NULL,
+              content_profile TEXT NOT NULL DEFAULT '',
+              derivation_type TEXT NOT NULL DEFAULT 'model_generation',
               supersedes_revision_id TEXT NOT NULL,
               approval_status TEXT NOT NULL,
               created_at TEXT NOT NULL,
@@ -368,6 +372,22 @@ class RuntimeStore:
                 DROP TABLE revision_dependencies_old;
                 """
             )
+        revision_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(revisions)").fetchall()}
+        if revision_columns and "content_profile" not in revision_columns:
+            self.conn.execute("ALTER TABLE revisions ADD COLUMN content_profile TEXT NOT NULL DEFAULT ''")
+        if revision_columns and "derivation_type" not in revision_columns:
+            self.conn.execute("ALTER TABLE revisions ADD COLUMN derivation_type TEXT NOT NULL DEFAULT 'model_generation'")
+        self.conn.execute(
+            """
+            UPDATE revisions
+            SET content_profile = CASE
+              WHEN artifact_type = 'drama_script' THEN 'markdown-script-mvp-v1'
+              WHEN artifact_type = 'storyboard' THEN 'storyboard-markdown-mvp-v1'
+              ELSE content_profile
+            END
+            WHERE content_profile = ''
+            """
+        )
         gate_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(workflow_gate_records)").fetchall()}
         if gate_columns and "request_reference" not in gate_columns:
             self.conn.executescript(
@@ -505,6 +525,14 @@ class RuntimeStore:
         values.setdefault("number", int(row["n"]))
         values.setdefault("supersedes_revision_id", previous["revision_id"] if previous else "")
         values.setdefault("approval_status", "pending")
+        values.setdefault("derivation_type", "model_generation")
+        if "content_profile" not in values:
+            if values["artifact_type"] == "drama_script":
+                values["content_profile"] = "markdown-script-mvp-v1"
+            elif values["artifact_type"] == "storyboard":
+                values["content_profile"] = "storyboard-markdown-mvp-v1"
+            else:
+                values["content_profile"] = ""
         values.setdefault("created_at", now_iso())
         columns = list(values)
         self.conn.execute(

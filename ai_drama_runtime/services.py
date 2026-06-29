@@ -8,10 +8,20 @@ import time
 from .store import now_iso
 
 from .acceptance import load_acceptance_bundle
-from .parser import PARSER_VERSION, STORYBOARD_PARSER_VERSION, ParseError, parse_script_response, parse_storyboard_response
+from .parser import (
+    PARSER_VERSION,
+    STORYBOARD_CANONICAL_PARSER_VERSION,
+    STORYBOARD_PARSER_VERSION,
+    ParseError,
+    parse_script_response,
+    parse_storyboard_canonical_response,
+    parse_storyboard_response,
+)
 from .request import build_runtime_request, build_storyboard_runtime_request
 from .runtime import RuntimeErrorBase, run_runtime
 from .validators import run_declared_validators
+from .storyboard_canonical import CONTENT_PROFILE as STORYBOARD_CANONICAL_PROFILE, canonical_storyboard_hash, parse_canonical_json
+from .storyboard_renderer import render_storyboard_markdown
 
 
 class ApprovalBlocked(RuntimeError):
@@ -65,6 +75,10 @@ def _approved_approval_record(store, revision_id):
 
 def _sha256_text(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _skill_profile_id(skill):
+    return ((skill.metadata.get("execution_profiles") or [{}])[0]).get("profile_id", "")
 
 
 def _required_input_types(skill):
@@ -301,8 +315,12 @@ class RuntimeService:
             )
             return RunResult(run=run, revision=None, validation_results=[], adapter_request_json=request_json)
         response_object_id = self.store.write_text_object(response.raw)
+        profile_id = _skill_profile_id(skill)
         try:
-            storyboard_text = parse_storyboard_response(response.raw)
+            if profile_id == STORYBOARD_CANONICAL_PROFILE:
+                storyboard_text = parse_storyboard_canonical_response(response.raw)
+            else:
+                storyboard_text = parse_storyboard_response(response.raw)
         except ParseError as exc:
             run = self.store.update_run(
                 run.run_id,
@@ -321,7 +339,7 @@ class RuntimeService:
             )
             return RunResult(run=run, revision=None, validation_results=[], adapter_request_json=request_json)
         content_object_id = self.store.write_text_object(storyboard_text)
-        content_hash = _sha256_text(storyboard_text)
+        content_hash = canonical_storyboard_hash(parse_canonical_json(storyboard_text)) if profile_id == STORYBOARD_CANONICAL_PROFILE else _sha256_text(storyboard_text)
         run = self.store.update_run(
             run.run_id,
             status="SUCCEEDED",
@@ -349,7 +367,9 @@ class RuntimeService:
             content_object_id=content_object_id,
             content_hash=content_hash,
             raw_response_object_id=response_object_id,
-            parser_version=STORYBOARD_PARSER_VERSION,
+            parser_version=STORYBOARD_CANONICAL_PARSER_VERSION if profile_id == STORYBOARD_CANONICAL_PROFILE else STORYBOARD_PARSER_VERSION,
+            content_profile=profile_id or "storyboard-markdown-mvp-v1",
+            derivation_type="model_generation",
         )
         self.store.insert_revision_dependency(
             child_revision_id=revision.revision_id,
@@ -470,8 +490,8 @@ class RuntimeService:
                 "right": {item.validator_id: item.status for item in self.store.validation_results(right.revision_id)},
             },
         }
-        left_text = self.store.read_text(left.content_object_id).splitlines(keepends=True)
-        right_text = self.store.read_text(right.content_object_id).splitlines(keepends=True)
+        left_text = self._revision_display_text(left).splitlines(keepends=True)
+        right_text = self._revision_display_text(right).splitlines(keepends=True)
         return "metadata:\n%s\ninput_hash_diff:\n%s\nrequest_hash_diff:\n%s\nvalidator_status:\n%s\ntext_diff:\n%s" % (
             json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True),
             json.dumps(metadata["input_hashes"], ensure_ascii=False, indent=2, sort_keys=True),
@@ -489,7 +509,7 @@ class RuntimeService:
         if not force and (output.exists() or sidecar.exists()):
             raise ExportConflict("output or provenance sidecar exists; use --force")
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(self.store.read_text(revision.content_object_id), encoding="utf-8")
+        output.write_text(self._revision_display_text(revision), encoding="utf-8")
         approval = self.store.latest_approval(revision.revision_id)
         run = self.store.get_run(revision.run_id)
         inputs = [
@@ -510,6 +530,7 @@ class RuntimeService:
             "provider": revision.runtime_provider,
             "model": revision.runtime_model,
             "content_hash": revision.content_hash,
+            "content_profile": getattr(revision, "content_profile", ""),
             "freshness_status": self.revision_freshness(revision.revision_id),
             "source_revision_id": self.revision_source_revision_id(revision.revision_id),
             "source_approval_record": self.revision_source_approval_record(revision.revision_id),
@@ -539,3 +560,9 @@ class RuntimeService:
         if revision is None:
             raise NotFound("revision not found: %s" % revision_id)
         return revision
+
+    def _revision_display_text(self, revision):
+        text = self.store.read_text(revision.content_object_id)
+        if getattr(revision, "content_profile", "") == STORYBOARD_CANONICAL_PROFILE:
+            return render_storyboard_markdown(parse_canonical_json(text))
+        return text
