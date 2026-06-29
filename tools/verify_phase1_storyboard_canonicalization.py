@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -29,8 +30,8 @@ class CheckResult:
     actual: str = ""
 
 
-def _run(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(args, cwd=REPO_ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+def _run(args: list[str], *, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(args, cwd=REPO_ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
 
 
 def _check(name: str, ok: bool, evidence: str, expected: str = "", actual: str = "") -> CheckResult:
@@ -43,6 +44,15 @@ def _pytest_summary() -> CheckResult:
     match = re.search(r"(^|\s)(\d+) passed(?:\s|$)", output)
     actual = "%s passed" % match.group(2) if match else output.strip().splitlines()[-1] if output.strip() else ""
     return _check("baseline_pytest", proc.returncode == 0 and actual == "92 passed", actual, "92 passed", actual)
+
+
+def _pytest_check(name: str) -> CheckResult:
+    env = dict(os.environ)
+    env["PHASE1_VERIFIER_INNER"] = "1"
+    proc = _run([sys.executable, "-m", "pytest", "-q"], env=env)
+    output = proc.stdout + proc.stderr
+    summary = output.strip().splitlines()[-1] if output.strip() else ""
+    return _check(name, proc.returncode == 0, summary, "pytest returncode 0", "returncode %s; %s" % (proc.returncode, summary))
 
 
 def preflight_checks() -> list[CheckResult]:
@@ -68,6 +78,24 @@ def preflight_checks() -> list[CheckResult]:
     ]
 
 
+def portable_checks() -> list[CheckResult]:
+    return [_pytest_check("portable_pytest")]
+
+
+def final_checks() -> list[CheckResult]:
+    branch = _run(["git", "branch", "--show-current"]).stdout.strip()
+    status = _run(["git", "status", "--short"]).stdout.strip()
+    ancestor = _run(["git", "merge-base", "--is-ancestor", EXECUTION_START_COMMIT, "HEAD"])
+    diff_check = _run(["git", "diff", "--check"])
+    return [
+        _check("branch", branch == EXPECTED_BRANCH, branch, EXPECTED_BRANCH, branch),
+        _check("execution_start_ancestor", ancestor.returncode == 0, "merge-base exit=%s" % ancestor.returncode, "0", str(ancestor.returncode)),
+        _check("working_tree_clean", status == "", "clean" if status == "" else status, "clean", status or "clean"),
+        _check("git_diff_check", diff_check.returncode == 0, diff_check.stdout.strip() or "clean", "clean", diff_check.stdout.strip() or diff_check.stderr.strip() or "clean"),
+        _pytest_check("final_pytest"),
+    ]
+
+
 def _print_results(results: list[CheckResult]) -> int:
     failures = [item for item in results if not item.ok]
     if failures:
@@ -90,12 +118,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.mode == "preflight":
         return _print_results(preflight_checks())
-    print("PHASE1_STORYBOARD_CANONICALIZATION: FAIL")
-    print("- check: mode")
-    print("  evidence: mode %s is not implemented yet" % args.mode)
-    print("  expected: implementation slice after preflight")
-    print("  actual: pending")
-    return 1
+    if args.mode == "portable":
+        return _print_results(portable_checks())
+    return _print_results(final_checks())
 
 
 if __name__ == "__main__":

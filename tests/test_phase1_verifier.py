@@ -1,7 +1,14 @@
 import subprocess
 import sys
+import os
 from importlib import util
 from pathlib import Path
+
+import pytest
+
+
+if os.environ.get("PHASE1_VERIFIER_INNER") == "1":
+    pytest.skip("skip verifier self-tests inside verifier pytest run", allow_module_level=True)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -63,3 +70,10 @@ def test_phase1_verifier_rejects_unknown_mode():
 
     assert result.returncode != 0
     assert "invalid choice" in result.stderr
+
+
+def test_phase1_verifier_portable_mode_passes():
+    result = _verifier("--mode", "portable")
+
+    assert result.returncode == 0
+    assert "PHASE1_STORYBOARD_CANONICALIZATION: PASS" in result.stdout
