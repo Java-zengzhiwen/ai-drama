@@ -24,6 +24,13 @@ def test_renderer_matches_minimal_golden():
     assert not rendered.endswith("\n\n")
 
 
+def test_renderer_matches_full_golden():
+    data = _fixture("valid_full.json")
+    expected = open("tests/golden/storyboard_renderer/expected_rendered_full.md", encoding="utf-8").read()
+
+    assert render_storyboard_markdown(data) == expected
+
+
 def test_renderer_is_deterministic_across_environment_changes(monkeypatch):
     data = _fixture("valid_minimal.json")
     first = render_storyboard_markdown(data)

@@ -1,0 +1,110 @@
+{
+  "schema_version": "storyboard-canonical-v1",
+  "project_id": "project-demo",
+  "chapter_id": "chapter-001",
+  "source": {
+    "script_artifact_id": "script-demo",
+    "script_revision_id": "script-revision-001",
+    "script_content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "scenes": [
+    {
+      "scene_id": "SCENE_001",
+      "scene_order": 1,
+      "source_scene_reference": "1-1",
+      "location": "study",
+      "time": "night",
+      "interior_exterior": "interior",
+      "characters": [
+        "CHAR_A",
+        "CHAR_B"
+      ],
+      "summary": "Character A confronts Character B with the account book."
+    }
+  ],
+  "shots": [
+    {
+      "scene_id": "SCENE_001",
+      "shot_id": "SHOT_001",
+      "shot_order": 1,
+      "source_scene_reference": "1-1",
+      "duration_seconds": 10,
+      "shot_size": "close",
+      "camera_angle": "slight_high",
+      "camera_movement": {
+        "type": "push_in",
+        "intensity": "slow"
+      },
+      "visual_composition": {
+        "framing": "tight two-shot across the account book",
+        "subject_focus": "CHAR_A",
+        "background_relation": "lamp and ledger stay visible",
+        "screen_direction": "left_to_right"
+      },
+      "character_positions": [
+        {
+          "character_id": "CHAR_A",
+          "screen_zone": "left",
+          "depth": "foreground",
+          "pose": "leaning over the table",
+          "facing": "right"
+        },
+        {
+          "character_id": "CHAR_B",
+          "screen_zone": "right",
+          "depth": "midground",
+          "pose": "seated",
+          "facing": "left"
+        }
+      ],
+      "character_actions": [
+        {
+          "character_id": "CHAR_A",
+          "action_order": 1,
+          "action": "places the account book on the table"
+        },
+        {
+          "character_id": "CHAR_B",
+          "action_order": 2,
+          "action": "looks away from the marked page"
+        }
+      ],
+      "emotion_performance": [
+        {
+          "character_id": "CHAR_A",
+          "emotion": "controlled anger",
+          "intensity": "high",
+          "performance_note": "voice held low"
+        }
+      ],
+      "dialogue": [
+        {
+          "speaker_character_id": "CHAR_A",
+          "text": "账不会骗人。",
+          "lip_sync_required": true
+        }
+      ],
+      "sound_notes": [
+        "paper slides",
+        "distant night watch"
+      ],
+      "continuity_in": {
+        "must_preserve": [
+          "lamp position",
+          "account book"
+        ],
+        "must_change": [],
+        "source_unit_or_shot_id": null
+      },
+      "continuity_out": {
+        "must_preserve": [
+          "account book"
+        ],
+        "must_change": [
+          "CHAR_B eye line"
+        ],
+        "source_unit_or_shot_id": "SHOT_000"
+      }
+    }
+  ]
+}

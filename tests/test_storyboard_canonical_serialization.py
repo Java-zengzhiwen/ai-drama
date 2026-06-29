@@ -1,4 +1,5 @@
 import pytest
+from pathlib import Path
 
 from ai_drama_runtime.storyboard_canonical import (
     CanonicalStoryboardError,
@@ -77,6 +78,10 @@ def _valid_storyboard():
     }
 
 
+def _fixture_text(name):
+    return Path("tests/fixtures/storyboard_canonical/%s" % name).read_text(encoding="utf-8")
+
+
 def test_canonical_serialization_is_nfc_and_key_order_stable():
     left = _valid_storyboard()
     right = {
@@ -131,3 +136,12 @@ def test_schema_rejects_invalid_duration():
 
     with pytest.raises(CanonicalStoryboardError, match="STORYBOARD_DURATION_INVALID"):
         validate_storyboard_canonical(data)
+
+
+def test_required_invalid_fixtures_are_rejected():
+    with pytest.raises(CanonicalStoryboardError, match="duplicate JSON key"):
+        parse_canonical_json(_fixture_text("invalid_duplicate_key.json"))
+    with pytest.raises(CanonicalStoryboardError, match="STORYBOARD_DURATION_INVALID"):
+        validate_storyboard_canonical(parse_canonical_json(_fixture_text("invalid_duration.json")))
+    with pytest.raises(CanonicalStoryboardError, match="SHOT_ORDER_INVALID"):
+        validate_storyboard_canonical(parse_canonical_json(_fixture_text("invalid_order.json")))
