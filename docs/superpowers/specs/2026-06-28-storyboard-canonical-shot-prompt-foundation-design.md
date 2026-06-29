@@ -120,7 +120,7 @@ Revision derivation type identifies how a revision was produced. It is not an ar
 - New canonical revisions use the canonical JSON object as the primary `content_object_id`.
 - Markdown is not the canonical object for new canonical revisions; it is a derived output stored in `revision_outputs`.
 - Legacy Markdown Storyboard and canonical Storyboard remain revisions under the same logical `storyboard` artifact.
-- `legacy_migration` creates a new canonical revision under that same logical artifact unless a future migration explicitly chooses a separate artifact boundary.
+- `legacy_migration` always creates a new canonical revision under the same logical `storyboard` artifact.
 - After a canonical revision is approved, it becomes the current approved revision for the logical artifact; the legacy Markdown revision remains historical but is no longer current approved.
 
 ### `revision_outputs`
@@ -149,12 +149,52 @@ Primary key:
 
 Foreign key:
 
-- `revision_id` references `revisions(revision_id)`
+- `revision_id REFERENCES revisions(revision_id) ON DELETE RESTRICT`
 
 Allowed `logical_type` values:
 
 - Storyboard: `rendered_markdown`, `bundle_manifest`
 - Shot Prompt: `rendered_positive_prompt`, `rendered_negative_prompt`, `rendered_markdown`, `bundle_manifest`
+
+Database-level logical type set:
+
+- `rendered_positive_prompt`
+- `rendered_negative_prompt`
+- `rendered_markdown`
+- `bundle_manifest`
+
+`logical_type` must be constrained by a database CHECK or equivalent application-enforced enum to this fixed set. The application layer still restricts legal combinations by Artifact Type and Content Profile.
+
+Object identity rules:
+
+- object_id is not globally unique.
+- The same immutable content-addressed object may be referenced by multiple revision_outputs rows.
+- content_hash must equal the SHA-256 of the exact object-store bytes referenced by object_id.
+- Object-store content is immutable.
+
+Timestamp rules:
+
+- created_at is audit metadata only.
+- created_at is excluded from:
+  - storyboard_canonical_hash
+  - prompt_content_hash
+  - asset_binding_hash
+  - canonical_revision_hash
+  - bundle_manifest_hash
+
+Indexes:
+
+- `PRIMARY KEY(revision_output_id)`
+- `UNIQUE(revision_id, logical_type)`
+- `INDEX(content_hash)`
+- `INDEX(object_id)`
+
+Append-only rules:
+
+- Normal business flow forbids UPDATE and DELETE.
+- Renderer upgrades create a new revision.
+- Existing output rows are never overwritten.
+- Delete is only for rollback or maintenance, not business flow.
 
 Not allowed here:
 
@@ -254,6 +294,80 @@ The JSON types for these fields are frozen as follows:
 - `continuity_in`: object
 - `continuity_out`: object
 
+### Minimum element schemas
+
+`character_positions[]`:
+
+```json
+{
+  "character_id": "CHARACTER_ID",
+  "screen_zone": "left|center|right",
+  "depth": "foreground|midground|background",
+  "pose": "string",
+  "facing": "string|null"
+}
+```
+
+`character_actions[]`:
+
+```json
+{
+  "character_id": "CHARACTER_ID",
+  "action_order": 1,
+  "action": "string"
+}
+```
+
+`action_order` is a positive integer and strictly increases within the Shot.
+
+`emotion_performance[]`:
+
+```json
+{
+  "character_id": "CHARACTER_ID",
+  "emotion": "string",
+  "intensity": "low|medium|high",
+  "performance_note": "string|null"
+}
+```
+
+`dialogue[]`:
+
+```json
+{
+  "speaker_character_id": "CHARACTER_ID",
+  "text": "string",
+  "lip_sync_required": true
+}
+```
+
+`sound_notes[]`:
+
+```text
+array<non-empty string>
+```
+
+`visual_composition`:
+
+```json
+{
+  "framing": "string",
+  "subject_focus": "string",
+  "background_relation": "string",
+  "screen_direction": "string|null"
+}
+```
+
+`continuity_in` / `continuity_out`:
+
+```json
+{
+  "must_preserve": ["string"],
+  "must_change": ["string"],
+  "source_unit_or_shot_id": "string|null"
+}
+```
+
 Recommended shape:
 
 ```json
@@ -269,19 +383,22 @@ Recommended shape:
   "visual_composition": {
     "framing": "centered medium composition",
     "subject_focus": "CHARACTER_A",
-    "background_relation": "neutral background"
+    "background_relation": "neutral background",
+    "screen_direction": null
   },
   "character_positions": [
     {
       "character_id": "CHARACTER_A",
       "screen_zone": "center",
       "depth": "foreground",
-      "pose": "standing"
+      "pose": "standing",
+      "facing": null
     }
   ],
   "character_actions": [
     {
       "character_id": "CHARACTER_A",
+      "action_order": 1,
       "action": "looks at camera"
     }
   ],
@@ -290,11 +407,13 @@ Recommended shape:
   "sound_notes": [],
   "continuity_in": {
     "must_preserve": ["wardrobe", "prop_state"],
-    "must_change": []
+    "must_change": [],
+    "source_unit_or_shot_id": null
   },
   "continuity_out": {
     "must_preserve": ["wardrobe", "prop_state"],
-    "must_change": []
+    "must_change": [],
+    "source_unit_or_shot_id": null
   }
 }
 ```
@@ -307,7 +426,7 @@ Recommended shape:
 - `duration_seconds` is an integer.
 - Storyboard-layer shots stay within 5-15 seconds.
 - Empty strings are not allowed as a substitute for missing data.
-- `emotion_performance`, `dialogue`, and `sound_notes` are required non-null arrays; use `[]` when empty and never `null`.
+- `character_actions`, `emotion_performance`, `dialogue`, `sound_notes`, and `character_positions` are required non-null arrays; use `[]` when empty and never `null`.
 - `camera_movement` remains `object | null`.
 - Free-form Markdown cannot replace structured fields.
 - Renderer output must never be written back into canonical Storyboard JSON.
@@ -365,6 +484,19 @@ Required:
 - `style`
 - `constraints`
 
+Minimum element schemas:
+
+- `scene`: object with `location`, `time`, `environment_state`
+- `characters`: array<object> with `character_id`, `position`, `costume_continuity`, `identity_requirement`
+- `composition`: object with `shot_size`, `subject_focus`, `background_relation`
+- `camera`: object with `angle`, `movement`
+- `actions`: array<object> with `character_id`, `action_order`, `action`
+- `performance`: array<object> with `character_id`, `emotion`, `intensity`, `performance_note`
+- `dialogue_lipsync`: array<object> with `speaker_character_id`, `text`, `lip_sync_required`
+- `continuity`: object with `must_preserve`, `must_change`, `source_unit_or_shot_id`
+- `style`: object with `visual_style`, `lighting`
+- `constraints`: array<object> with `constraint_type`, `value`
+
 The JSON types for these fields are frozen as follows:
 
 - `scene`: object
@@ -377,6 +509,20 @@ The JSON types for these fields are frozen as follows:
 - `continuity`: object
 - `style`: object
 - `constraints`: array<object>
+
+Required component fields must exist, match the frozen JSON type, and not be null.
+
+Object completeness:
+
+- `scene`, `composition`, `camera`, `continuity`, and `style` must not be empty objects.
+
+Array completeness:
+
+- `characters`: If the source Storyboard Shot contains one or more characters, `characters` must be non-empty. If the source Storyboard Shot explicitly contains no characters, `[]` is allowed.
+- `actions`: If the source Storyboard Shot declares one or more character actions, `actions` must be non-empty. If the source Storyboard Shot explicitly declares no actions, `[]` is allowed.
+- `performance`: If the source Storyboard Shot contains characters or emotion/performance requirements, `performance` must be non-empty. If the source Storyboard Shot explicitly contains no characters and no performance requirement, `[]` is allowed.
+- `dialogue_lipsync`: If source dialogue exists and `lip_sync_required = true`, `dialogue_lipsync` must be non-empty. `dialogue_lipsync may be [] only when no source dialogue exists or all source dialogue has lip_sync_required = false`.
+- `constraints`: `[]` is allowed. If source continuity or production constraints exist, `constraints` must fully carry them.
 
 `reference_requirements` fields:
 
@@ -485,8 +631,8 @@ The JSON types for these fields are frozen as follows:
           "scene_identity_required": true,
           "character_identity_required": true,
           "costume_continuity_required": true,
-          "prop_identity_required": true,
-          "previous_unit_continuity_required": true
+          "prop_identity_required": false,
+          "previous_unit_continuity_required": false
         }
       },
       {
@@ -576,7 +722,7 @@ The JSON types for these fields are frozen as follows:
           "scene_identity_required": true,
           "character_identity_required": true,
           "costume_continuity_required": true,
-          "prop_identity_required": true,
+          "prop_identity_required": false,
           "previous_unit_continuity_required": true
         }
       }
@@ -599,8 +745,63 @@ The JSON types for these fields are frozen as follows:
       },
       {
         "reference_id": "REF_002",
+        "unit_id": "UNIT_SHOT_001_01",
+        "requirement_role": "character_identity_required",
+        "required": true,
+        "asset_identifier": null,
+        "asset_revision_id": null,
+        "asset_content_hash": null,
+        "local_evidence_hash": null,
+        "registry_evidence_id": null
+      },
+      {
+        "reference_id": "REF_003",
+        "unit_id": "UNIT_SHOT_001_01",
+        "requirement_role": "costume_continuity_required",
+        "required": true,
+        "asset_identifier": null,
+        "asset_revision_id": null,
+        "asset_content_hash": null,
+        "local_evidence_hash": null,
+        "registry_evidence_id": null
+      },
+      {
+        "reference_id": "REF_004",
+        "unit_id": "UNIT_SHOT_001_02",
+        "requirement_role": "scene_identity_required",
+        "required": true,
+        "asset_identifier": null,
+        "asset_revision_id": null,
+        "asset_content_hash": null,
+        "local_evidence_hash": null,
+        "registry_evidence_id": null
+      },
+      {
+        "reference_id": "REF_005",
         "unit_id": "UNIT_SHOT_001_02",
         "requirement_role": "character_identity_required",
+        "required": true,
+        "asset_identifier": null,
+        "asset_revision_id": null,
+        "asset_content_hash": null,
+        "local_evidence_hash": null,
+        "registry_evidence_id": null
+      },
+      {
+        "reference_id": "REF_006",
+        "unit_id": "UNIT_SHOT_001_02",
+        "requirement_role": "costume_continuity_required",
+        "required": true,
+        "asset_identifier": null,
+        "asset_revision_id": null,
+        "asset_content_hash": null,
+        "local_evidence_hash": null,
+        "registry_evidence_id": null
+      },
+      {
+        "reference_id": "REF_007",
+        "unit_id": "UNIT_SHOT_001_02",
+        "requirement_role": "previous_unit_continuity_required",
         "required": true,
         "asset_identifier": null,
         "asset_revision_id": null,
@@ -628,6 +829,19 @@ Each reference entry must include:
 - `registry_evidence_id`
 
 Pending states may leave the asset identity and evidence fields null, but required references must still be declared.
+
+For every Unit:
+
+- Each requirement field set to true must have exactly one matching top-level reference declaration.
+- Matching key = `(unit_id, requirement_role)`.
+- A requirement field set to false must have no required reference declaration.
+- Every `reference.unit_id` must point to an existing Unit.
+- Every `reference.requirement_role` must be one of the frozen requirement field names.
+- Duplicate `(unit_id, requirement_role)` references are invalid.
+- Missing required reference declarations are invalid.
+- Orphan references are invalid.
+
+A pending reference declaration may have all asset identity and evidence fields null. Its presence still satisfies declaration completeness, but not binding completeness.
 
 ### Frozen rules
 
@@ -989,6 +1203,7 @@ Formal review export persistent record:
 - `export_kind = formal_review`
 - `diagnostic_only = false`
 - `not_an_execution_package = true`
+- `freshness_status = FRESH`
 
 ### Diagnostic export
 
@@ -1000,6 +1215,20 @@ Diagnostic export persistent record:
 - `freshness_status = STALE`
 - `diagnostic_only = true`
 - `not_an_execution_package = true`
+Diagnostic exports must be written as persistent records and rejected as dependency parents.
+
+The dependency-creation entrypoint must reject any export record where:
+
+- `export_kind = diagnostic`
+- or `diagnostic_only = true`
+
+and return `DIAGNOSTIC_EXPORT_NOT_PARENTABLE`.
+
+Execution Planning must reject diagnostic exports as inputs.
+
+Diagnostic parenting error code:
+
+- `DIAGNOSTIC_EXPORT_NOT_PARENTABLE`
 
 ### Execution export
 
@@ -1039,8 +1268,8 @@ Execution export persistent record:
 | `shot_prompt_mapping_integrity` | yes | units + source shots | yes | 1:1 default, 1:N split, no N:1 merge | merge, duplicate mapping, or cross-scene reference | no | `SHOT_MAPPING_INVALID` / `SHOT_MERGE_FORBIDDEN` |
 | `shot_prompt_split_integrity` | yes | split metadata | yes | split index/count are contiguous and consistent | invalid split sequence | no | `SPLIT_SEQUENCE_INVALID` |
 | `shot_prompt_duration_integrity` | yes | timing fields | yes | group duration matches sums and drift stays within ±2s | drift outside policy or sum mismatch | no | `DURATION_VARIANCE_INVALID` |
-| `shot_prompt_component_completeness` | yes | prompt_components | yes | all required components are present and non-empty | missing prompt component | no | `PROMPT_COMPONENT_INCOMPLETE` |
-| `shot_prompt_reference_requirement_integrity` | yes | reference_requirements | yes | requirement roles and booleans are structurally valid | malformed requirement declaration | no | `REFERENCE_REQUIREMENT_INVALID` |
+| `shot_prompt_component_completeness` | yes | prompt_components | yes | all required component fields exist, match frozen JSON types, and satisfy source-dependent conditional completeness rules | missing field, null field, wrong JSON type, empty required object, or missing source-dependent required array content | no | `PROMPT_COMPONENT_INCOMPLETE` |
+| `shot_prompt_reference_requirement_integrity` | yes | reference_requirements | yes | all true requirements have exactly one matching top-level reference; false requirements have no required reference; all references point to existing Units; no duplicate mapping exists | missing reference, duplicate reference, orphan Unit reference, unknown requirement_role, or required reference declared for a false requirement | no | `REFERENCE_REQUIREMENT_INVALID` |
 | `shot_prompt_forbidden_platform_fields` | yes | canonical JSON | no | no adapter payload or future target fields appear in canonical content | forbidden field present | no | `FORBIDDEN_PLATFORM_FIELD` |
 | `shot_prompt_renderer_parity` | yes | canonical JSON + renderer | no | renderer output matches canonical bytes exactly | byte mismatch | no | `RENDERER_PARITY_FAILED` |
 | `shot_prompt_bundle_integrity` | yes | bundle members + manifest | yes | member and manifest hashes match | member or manifest mismatch | no | `BUNDLE_INTEGRITY_FAILED` |
@@ -1197,6 +1426,7 @@ Frozen domain symbolic codes:
 - `SPLIT_SEQUENCE_INVALID`
 - `DURATION_VARIANCE_INVALID`
 - `PROMPT_COMPONENT_INCOMPLETE`
+- `DIAGNOSTIC_EXPORT_NOT_PARENTABLE`
 - `REFERENCE_REQUIREMENT_INVALID`
 - `FORBIDDEN_PLATFORM_FIELD`
 - `ASSET_BINDING_INVALID`
@@ -1227,8 +1457,25 @@ These are domain codes only; they are distinct from numeric CLI exit codes.
 
 - `revision_outputs(revision_id, logical_type)`
 - `revision_outputs(content_hash)`
+- `revision_outputs(object_id)`
 - `revision_binding_records(revision_id, binding_completeness, binding_verification)`
 - `revision_readiness_records(revision_id, readiness_state)`
+
+`revision_outputs` indexes:
+
+- `PRIMARY KEY(revision_output_id)`
+- `UNIQUE(revision_id, logical_type)`
+- `INDEX(content_hash)`
+- `INDEX(object_id)`
+
+export_records additively gains:
+
+- `export_kind`
+- `diagnostic_only`
+- `not_an_execution_package`
+- `freshness_status`
+
+`export_kind = formal_review | diagnostic | execution`
 
 ### Compatibility strategy
 
@@ -1237,6 +1484,7 @@ These are domain codes only; they are distinct from numeric CLI exit codes.
 - Do not auto-backfill canonical JSON for historical revisions without explicit migration commands.
 - Do not introduce asset registry or execution planning tables in the same migration step.
 - Rollback should remove only the additive tables and indexes.
+- `revision_outputs` stays bound to `revision_output_id TEXT PRIMARY KEY`, `revision_id REFERENCES revisions(revision_id) ON DELETE RESTRICT`, `UNIQUE(revision_id, logical_type)`, and the frozen logical type set above.
 
 ## 25. Acceptance Criteria
 
@@ -1261,7 +1509,14 @@ These are domain codes only; they are distinct from numeric CLI exit codes.
 | Upstream reapproval of source storyboard | dependent Shot Prompt revision becomes stale |
 | Formal review export | allowed only under the formal review conditions and marked as non-execution |
 | Diagnostic export of stale revision | allowed only through explicit diagnostic path and marked diagnostic-only |
+| Diagnostic export used as dependency parent | fails with `DIAGNOSTIC_EXPORT_NOT_PARENTABLE` |
+| Diagnostic export passed to Execution Planning | rejected before planning starts |
 | Execution export | blocked with `EXPORT_NOT_EXECUTION_READY` |
+| Source Shot has dialogue with `lip_sync_required=true` but `dialogue_lipsync=[]` | `PROMPT_COMPONENT_INCOMPLETE` |
+| Source Shot has no dialogue and `dialogue_lipsync=[]` | PASS |
+| true requirement without reference | `REFERENCE_REQUIREMENT_INVALID` |
+| duplicate `(unit_id, requirement_role)` | `REFERENCE_REQUIREMENT_INVALID` |
+| reference points to missing Unit | `REFERENCE_REQUIREMENT_INVALID` |
 
 ## 26. Delivery Phases
 
