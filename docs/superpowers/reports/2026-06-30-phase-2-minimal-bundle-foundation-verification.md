@@ -13,7 +13,7 @@
 
 - `python3 migration/tools/verify_migration.py` -> `{"status": "valid", "checked_files": 81}`
 - `python3 -m py_compile ...` -> pass
-- Full pytest: `180 passed in 139.47s (0:02:19)`
+- Full pytest: `180 passed in 140.39s (0:02:20)`
 - Portable verifier: `PHASE2_MINIMAL_BUNDLE_FOUNDATION: PASS`
 - Final verifier: `PHASE2_MINIMAL_BUNDLE_FOUNDATION: PASS`
 
@@ -30,7 +30,7 @@ v0_1_0_unchanged=unchanged
 v0_2_0_unchanged=unchanged
 script_v0_6_1_unchanged=unchanged
 workflow_unchanged=unchanged
-final_pytest=177 passed, 1 skipped in 142.07s (0:02:22)
+final_pytest=180 passed, 1 skipped in 140.39s (0:02:20)
 PHASE2_MINIMAL_BUNDLE_FOUNDATION: PASS
 ```
 
