@@ -436,7 +436,13 @@ class RuntimeService:
                 raise BundleError("BUNDLE_INTEGRITY_FAILED", exc.safe_message) from exc
             raise
         freshness = self.revision_freshness(revision.revision_id)
-        if revision.approval_status != "approved" or freshness != "FRESH":
+        results = self.store.validation_results(revision.revision_id)
+        blocking = [
+            item
+            for item in results
+            if item.required and item.validator_id != "storyboard_bundle_integrity" and item.status != "PASS"
+        ]
+        if revision.approval_status != "approved" or freshness != "FRESH" or blocking:
             raise BundleExportError("FORMAL_REVIEW_EXPORT_BLOCKED", "formal-review export gates did not pass")
         return self._atomic_successful_bundle_export(
             revision=revision,
@@ -463,6 +469,57 @@ class RuntimeService:
             diagnostic_only=True,
         )
 
+    def _execution_bundle_status(self, revision):
+        try:
+            integrity = self.check_storyboard_bundle_integrity(revision.revision_id)
+            return "verified", integrity["bundle_manifest_hash"]
+        except BundleError as exc:
+            if exc.code == "BUNDLE_NOT_MATERIALIZED":
+                return "not_materialized", ""
+            return "invalid", ""
+
+    def _record_storyboard_execution_block(self, revision, output):
+        bundle_status, bundle_manifest_hash = self._execution_bundle_status(revision)
+        export_id = uuid.uuid4().hex
+        provenance = self._export_provenance(
+            export_id=export_id,
+            export_kind="execution",
+            revision=revision,
+            bundle_manifest_hash=bundle_manifest_hash,
+            bundle_status=bundle_status,
+            freshness_status="",
+            diagnostic_only=False,
+            destination=output,
+            error_code="EXPORT_NOT_EXECUTION_READY",
+        )
+        provenance_object_id = self.store.write_bytes_object(self._canonical_json_v1_bytes(provenance))
+        export = self.store.insert_export_record(
+            export_id=export_id,
+            artifact_id=revision.artifact_id,
+            revision_id=revision.revision_id,
+            run_id=revision.run_id,
+            content_hash=revision.content_hash,
+            destination=str(output),
+            provenance_object_id=provenance_object_id,
+            export_kind="execution",
+            freshness_status="",
+            diagnostic_only=0,
+            not_an_execution_package=1,
+            execution_ready=0,
+            bundle_manifest_hash=bundle_manifest_hash,
+            error_code="EXPORT_NOT_EXECUTION_READY",
+        )
+        return {
+            "status": "BLOCKED",
+            "export_id": export.export_id,
+            "revision_id": revision.revision_id,
+            "export_kind": "execution",
+            "bundle_status": bundle_status,
+            "bundle_manifest_hash": bundle_manifest_hash,
+            "error_code": "EXPORT_NOT_EXECUTION_READY",
+            "error_message": "Storyboard bundle export is not execution-ready in Phase 2",
+        }
+
     def export_storyboard_bundle(self, revision_id, export_kind, output):
         revision = self._revision_or_raise(revision_id)
         if revision.artifact_type != "storyboard" or revision.content_profile != STORYBOARD_CANONICAL_PROFILE:
@@ -472,7 +529,9 @@ class RuntimeService:
             return self._export_storyboard_formal_review(revision, output)
         if normalized == "diagnostic":
             return self._export_storyboard_diagnostic(revision, output)
-        raise BundleExportError("EXPORT_NOT_EXECUTION_READY", "execution export is not implemented in this slice")
+        if normalized == "execution":
+            return self._record_storyboard_execution_block(revision, output)
+        raise BundleExportError("EXPORT_NOT_EXECUTION_READY", "unsupported bundle export kind")
 
     def attach_export_dependency(self, child_revision_id, parent_export_id, relation_type):
         export = self.store.get_export_record(parent_export_id)

@@ -645,6 +645,21 @@ def test_formal_review_export_blocks_unapproved_stale_or_failed_validator(tmp_pa
         assert stale_exc.value.code == "FORMAL_REVIEW_EXPORT_BLOCKED"
         assert not (tmp_path / "stale").exists()
 
+        service.store.conn.execute(
+            "UPDATE revision_dependencies SET parent_content_hash = ? WHERE child_revision_id = ?",
+            (service.store.get_revision(service.revision_source_revision_id(unapproved.revision_id)).content_hash, unapproved.revision_id),
+        )
+        service.store.conn.execute(
+            "UPDATE validation_results SET status = ?, error_code = ? WHERE revision_id = ? AND validator_id = ?",
+            ("FAIL", "FORCED_FAIL", unapproved.revision_id, "storyboard_canonical_schema"),
+        )
+        service.store.conn.commit()
+        with pytest.raises(BundleExportError) as validator_exc:
+            service.export_storyboard_bundle(unapproved.revision_id, "formal-review", tmp_path / "failed-validator")
+        assert validator_exc.value.code == "FORMAL_REVIEW_EXPORT_BLOCKED"
+        assert not (tmp_path / "failed-validator").exists()
+        assert [item for item in service.store.export_records(unapproved.artifact_id) if item.destination.endswith("failed-validator")] == []
+
 
 def test_formal_review_export_rejects_existing_destination(tmp_path):
     with _service(tmp_path) as service:
@@ -676,3 +691,44 @@ def test_diagnostic_export_requires_stale_revision(tmp_path):
         assert result["status"] == "EXPORTED"
         assert result["diagnostic_only"] is True
         assert result["freshness_status"] == "STALE"
+
+
+def test_execution_export_records_block_without_filesystem_writes(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _approved_bundle_revision(service)
+        output = tmp_path / "execution"
+
+        result = service.export_storyboard_bundle(revision.revision_id, "execution", output)
+
+        assert result["status"] == "BLOCKED"
+        assert result["export_kind"] == "execution"
+        assert result["bundle_status"] == "verified"
+        assert result["bundle_manifest_hash"]
+        assert result["error_code"] == "EXPORT_NOT_EXECUTION_READY"
+        assert not output.exists()
+
+
+def test_execution_export_persists_blocked_attempt_without_filesystem_writes(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service, materialize=False)
+        output = tmp_path / "execution-missing"
+
+        result = service.export_storyboard_bundle(revision.revision_id, "execution", output)
+        export = service.store.get_export_record(result["export_id"])
+
+        assert result["status"] == "BLOCKED"
+        assert result["bundle_status"] == "not_materialized"
+        assert result["bundle_manifest_hash"] == ""
+        assert export.export_kind == "execution"
+        assert export.destination == str(output)
+        assert export.content_hash == revision.content_hash
+        assert export.bundle_manifest_hash == ""
+        assert export.error_code == "EXPORT_NOT_EXECUTION_READY"
+        assert export.not_an_execution_package is True
+        assert export.execution_ready is False
+        assert export.provenance_object_id
+        provenance = json.loads(service.store.read_text(export.provenance_object_id))
+        assert provenance["export_kind"] == "execution"
+        assert provenance["bundle_status"] == "not_materialized"
+        assert provenance["error_code"] == "EXPORT_NOT_EXECUTION_READY"
+        assert not output.exists()
