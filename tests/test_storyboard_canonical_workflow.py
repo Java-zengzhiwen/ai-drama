@@ -9,6 +9,7 @@ import pytest
 from ai_drama_runtime.manifest import load_skill_package
 from ai_drama_runtime.runtime import RuntimeResponse
 from ai_drama_runtime.services import RuntimeService
+from ai_drama_runtime.services import BundleError
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_runtime.storyboard_canonical import CONTENT_PROFILE, canonical_storyboard_hash, parse_canonical_json
 from ai_drama_runtime.storyboard_renderer import render_storyboard_markdown
@@ -301,3 +302,117 @@ def test_canonical_pure_validators_execute_as_subprocesses_and_fail_on_invalid_i
     assert report["validator_id"] == validator_id
     assert report["final_status"] == "fail"
     assert report["error_code"] == expected_error
+
+
+def test_materialize_bundle_creates_both_outputs_transactionally(tmp_path):
+    with _service(tmp_path) as service:
+        source = _approved_script_revision(service)
+        result = service.run_storyboard(
+            load_skill_package(STORYBOARD_CANONICAL_SKILL_ROOT),
+            source.revision_id,
+            "mock",
+            "mock-storyboard-canonical-v1",
+        )
+
+        materialized = service.materialize_storyboard_bundle(result.revision.revision_id)
+        outputs = {item.logical_type: item for item in service.store.revision_outputs(result.revision.revision_id)}
+
+        assert materialized["status"] == "MATERIALIZED"
+        assert materialized["revision_id"] == result.revision.revision_id
+        assert materialized["approval_status"] == "pending"
+        assert materialized["bundle_integrity"] == "PASS"
+        assert set(outputs) == {"rendered_markdown", "bundle_manifest"}
+        assert materialized["rendered_markdown_output_id"] == outputs["rendered_markdown"].revision_output_id
+        assert materialized["bundle_manifest_output_id"] == outputs["bundle_manifest"].revision_output_id
+        canonical = parse_canonical_json(service.store.read_text(result.revision.content_object_id))
+        assert service.store.read_bytes_object(outputs["rendered_markdown"].object_id) == render_storyboard_markdown(canonical).encode("utf-8")
+        manifest = json.loads(service.store.read_text(outputs["bundle_manifest"].object_id))
+        assert manifest["revision_id"] == result.revision.revision_id
+        assert manifest["canonical_content_hash"] == result.revision.content_hash
+        assert manifest["bundle_manifest_hash"] == materialized["bundle_manifest_hash"]
+        assert result.revision == service.store.get_revision(result.revision.revision_id)
+
+
+def test_materialize_bundle_returns_already_materialized_for_exact_rows(tmp_path):
+    with _service(tmp_path) as service:
+        source = _approved_script_revision(service)
+        result = service.run_storyboard(
+            load_skill_package(STORYBOARD_CANONICAL_SKILL_ROOT),
+            source.revision_id,
+            "mock",
+            "mock-storyboard-canonical-v1",
+        )
+
+        first = service.materialize_storyboard_bundle(result.revision.revision_id)
+        second = service.materialize_storyboard_bundle(result.revision.revision_id)
+
+        assert first["status"] == "MATERIALIZED"
+        assert second["status"] == "ALREADY_MATERIALIZED"
+        assert second["rendered_markdown_output_id"] == first["rendered_markdown_output_id"]
+        assert second["bundle_manifest_output_id"] == first["bundle_manifest_output_id"]
+        assert second["bundle_manifest_hash"] == first["bundle_manifest_hash"]
+        assert len(service.store.revision_outputs(result.revision.revision_id)) == 2
+
+
+def test_materialize_bundle_rejects_partial_output_rows(tmp_path):
+    with _service(tmp_path) as service:
+        source = _approved_script_revision(service)
+        result = service.run_storyboard(
+            load_skill_package(STORYBOARD_CANONICAL_SKILL_ROOT),
+            source.revision_id,
+            "mock",
+            "mock-storyboard-canonical-v1",
+        )
+        markdown = service._rendered_markdown_output(parse_canonical_json(service.store.read_text(result.revision.content_object_id)))
+        object_id = service.store.write_bytes_object(markdown["bytes"])
+        service.store.insert_revision_outputs_transaction(
+            [
+                {
+                    "revision_id": result.revision.revision_id,
+                    "logical_type": "rendered_markdown",
+                    "object_id": object_id,
+                    "content_hash": markdown["content_hash"],
+                    "media_type": markdown["media_type"],
+                    "generator": markdown["generator"],
+                    "generator_version": markdown["generator_version"],
+                }
+            ]
+        )
+        service.store.conn.commit()
+
+        with pytest.raises(BundleError) as exc:
+            service.materialize_storyboard_bundle(result.revision.revision_id)
+
+        assert exc.value.code == "BUNDLE_OUTPUT_CONFLICT"
+        assert len(service.store.revision_outputs(result.revision.revision_id)) == 1
+
+
+def test_materialize_bundle_rejects_unexpected_output_combination(tmp_path):
+    with _service(tmp_path) as service:
+        source = _approved_script_revision(service)
+        result = service.run_storyboard(
+            load_skill_package(STORYBOARD_CANONICAL_SKILL_ROOT),
+            source.revision_id,
+            "mock",
+            "mock-storyboard-canonical-v1",
+        )
+        object_id = service.store.write_text_object("legacy prompt")
+        service.store.insert_revision_outputs_transaction(
+            [
+                {
+                    "revision_id": result.revision.revision_id,
+                    "logical_type": "rendered_positive_prompt",
+                    "object_id": object_id,
+                    "content_hash": object_id,
+                    "media_type": "text/plain",
+                    "generator": "legacy",
+                    "generator_version": "1",
+                }
+            ]
+        )
+        service.store.conn.commit()
+
+        with pytest.raises(BundleError) as exc:
+            service.materialize_storyboard_bundle(result.revision.revision_id)
+
+        assert exc.value.code == "BUNDLE_OUTPUT_CONFLICT"

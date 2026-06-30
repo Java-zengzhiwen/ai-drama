@@ -33,6 +33,13 @@ class ExportConflict(RuntimeError):
     pass
 
 
+class BundleError(RuntimeError):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.safe_message = message
+
+
 class NotFound(RuntimeError):
     pass
 
@@ -167,6 +174,67 @@ class RuntimeService:
             "bundle_manifest_hash": bundle_manifest_hash,
             "manifest": manifest,
         }
+
+    def _storyboard_bundle_payloads(self, revision):
+        canonical = parse_canonical_json(self.store.read_text(revision.content_object_id))
+        rendered = self._rendered_markdown_output(canonical)
+        manifest = self._build_storyboard_bundle_manifest(
+            revision_id=revision.revision_id,
+            canonical_content_hash=revision.content_hash,
+            rendered_markdown_hash=rendered["content_hash"],
+        )
+        return rendered, manifest
+
+    def _materialized_bundle_response(self, revision, status, outputs):
+        by_type = {item.logical_type: item for item in outputs}
+        manifest = json.loads(self.store.read_text(by_type["bundle_manifest"].object_id))
+        return {
+            "status": status,
+            "revision_id": revision.revision_id,
+            "rendered_markdown_output_id": by_type["rendered_markdown"].revision_output_id,
+            "bundle_manifest_output_id": by_type["bundle_manifest"].revision_output_id,
+            "bundle_manifest_hash": manifest["bundle_manifest_hash"],
+            "bundle_integrity": "PASS",
+            "approval_status": revision.approval_status,
+        }
+
+    def materialize_storyboard_bundle(self, revision_id):
+        revision = self._revision_or_raise(revision_id)
+        if revision.artifact_type != "storyboard" or revision.content_profile != STORYBOARD_CANONICAL_PROFILE:
+            raise BundleError("BUNDLE_PROFILE_UNSUPPORTED", "revision does not use the Storyboard canonical bundle profile")
+        existing = self.store.revision_outputs(revision.revision_id)
+        existing_types = {item.logical_type for item in existing}
+        if existing_types == {"rendered_markdown", "bundle_manifest"} and len(existing) == 2:
+            return self._materialized_bundle_response(revision, "ALREADY_MATERIALIZED", existing)
+        if existing:
+            raise BundleError("BUNDLE_OUTPUT_CONFLICT", "revision outputs are partial or conflicting")
+
+        rendered, manifest = self._storyboard_bundle_payloads(revision)
+        rendered_object_id = self.store.write_bytes_object(rendered["bytes"])
+        manifest_object_id = self.store.write_bytes_object(manifest["bytes"])
+        rows = [
+            {
+                "revision_id": revision.revision_id,
+                "logical_type": rendered["logical_type"],
+                "object_id": rendered_object_id,
+                "content_hash": rendered["content_hash"],
+                "media_type": rendered["media_type"],
+                "generator": rendered["generator"],
+                "generator_version": rendered["generator_version"],
+            },
+            {
+                "revision_id": revision.revision_id,
+                "logical_type": manifest["logical_type"],
+                "object_id": manifest_object_id,
+                "content_hash": manifest["content_hash"],
+                "media_type": manifest["media_type"],
+                "generator": manifest["generator"],
+                "generator_version": manifest["generator_version"],
+            },
+        ]
+        with self.store.conn:
+            outputs = self.store.insert_revision_outputs_transaction(rows)
+        return self._materialized_bundle_response(revision, "MATERIALIZED", outputs)
 
     def run_acceptance(self, skill, acceptance_root, runtime, model, mock_mode="success"):
         _validate_skill_input_mode(skill, "input")
