@@ -627,9 +627,11 @@ class RuntimeService:
         required = [item for item in results if item.required]
         if not required:
             raise ApprovalBlocked("missing required validator result")
-        blocking = [item for item in required if item.status not in {"PASS"}]
+        blocking = [item for item in required if item.validator_id != "storyboard_bundle_integrity" and item.status not in {"PASS"}]
         if blocking:
             raise ApprovalBlocked("required validators did not pass: %s" % ", ".join(item.validator_id for item in blocking))
+        if revision.artifact_type == "storyboard" and getattr(revision, "content_profile", "") == STORYBOARD_CANONICAL_PROFILE:
+            self.check_storyboard_bundle_integrity(revision_id)
         self.store.approve_in_transaction(revision, reviewer, note)
         return self.store.get_revision(revision_id)
 

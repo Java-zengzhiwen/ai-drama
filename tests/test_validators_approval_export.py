@@ -438,3 +438,56 @@ def test_v020_uses_live_bundle_integrity_checker(tmp_path, monkeypatch):
 
         assert result["status"] == "ALREADY_MATERIALIZED"
         assert calls == [revision.revision_id]
+
+
+def test_approval_blocks_missing_bundle(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service, materialize=False)
+
+        with pytest.raises(BundleError) as exc:
+            service.approve_revision(revision.revision_id, "tester")
+
+        assert exc.value.code == "BUNDLE_NOT_MATERIALIZED"
+        assert service.store.get_revision(revision.revision_id).approval_status == "pending"
+
+
+def test_approval_blocks_invalid_bundle(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service)
+        markdown = service.store.get_revision_output(revision.revision_id, "rendered_markdown")
+        service.store.conn.execute(
+            "UPDATE revision_outputs SET generator = ? WHERE revision_output_id = ?",
+            ("wrong-renderer", markdown.revision_output_id),
+        )
+        service.store.conn.commit()
+
+        with pytest.raises(BundleError) as exc:
+            service.approve_revision(revision.revision_id, "tester")
+
+        assert exc.value.code == "BUNDLE_INTEGRITY_FAILED"
+        assert service.store.get_revision(revision.revision_id).approval_status == "pending"
+
+
+def test_approval_does_not_implicitly_materialize_bundle(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service, materialize=False)
+
+        with pytest.raises(BundleError) as exc:
+            service.approve_revision(revision.revision_id, "tester")
+
+        assert exc.value.code == "BUNDLE_NOT_MATERIALIZED"
+        assert service.store.revision_outputs(revision.revision_id) == []
+
+
+def test_existing_approved_phase1_revision_is_not_revoked(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service)
+        service.materialize_storyboard_bundle(revision.revision_id)
+        service.approve_revision(revision.revision_id, "tester")
+        assert service.store.get_revision(revision.revision_id).approval_status == "approved"
+
+        service.store.conn.execute("DELETE FROM revision_outputs WHERE revision_id = ?", (revision.revision_id,))
+        service.store.conn.commit()
+
+        assert service.store.get_revision(revision.revision_id).approval_status == "approved"
+        assert service.current_approved(revision.artifact_id).revision_id == revision.revision_id
