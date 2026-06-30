@@ -13,7 +13,7 @@
 
 - `python3 migration/tools/verify_migration.py` -> `{"status": "valid", "checked_files": 81}`
 - `python3 -m py_compile ...` -> pass
-- Full pytest: `180 passed in 140.39s (0:02:20)`
+- Full pytest: `183 passed in 139.17s (0:02:19)`
 - Portable verifier: `PHASE2_MINIMAL_BUNDLE_FOUNDATION: PASS`
 - Final verifier: `PHASE2_MINIMAL_BUNDLE_FOUNDATION: PASS`
 
