@@ -4,7 +4,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import time
+import uuid
 from .store import now_iso
 
 from .acceptance import load_acceptance_bundle
@@ -337,107 +339,129 @@ class RuntimeService:
             "error_code": error_code,
         }
 
-    def _write_bundle_export_files(self, revision, by_type, provenance, output):
-        output = Path(output)
-        output.mkdir(parents=True, exist_ok=False)
-        output.joinpath("canonical-content.json").write_bytes(self.store.read_bytes_object(revision.content_object_id))
-        output.joinpath("rendered-markdown.md").write_bytes(self.store.read_bytes_object(by_type["rendered_markdown"].object_id))
-        output.joinpath("export-provenance.json").write_bytes(self._canonical_json_v1_bytes(provenance))
-        output.joinpath("bundle-manifest.json").write_bytes(self.store.read_bytes_object(by_type["bundle_manifest"].object_id))
+    def _write_bundle_export_files(self, revision, by_type, provenance, staging):
+        staging = Path(staging)
+        canonical_bytes = self.store.read_bytes_object(revision.content_object_id)
+        markdown_bytes = self.store.read_bytes_object(by_type["rendered_markdown"].object_id)
+        provenance_bytes = self._canonical_json_v1_bytes(provenance)
+        manifest_bytes = self.store.read_bytes_object(by_type["bundle_manifest"].object_id)
+        staging.joinpath("canonical-content.json").write_bytes(canonical_bytes)
+        staging.joinpath("rendered-markdown.md").write_bytes(markdown_bytes)
+        staging.joinpath("export-provenance.json").write_bytes(provenance_bytes)
+        staging.joinpath("bundle-manifest.json").write_bytes(manifest_bytes)
+        if staging.joinpath("canonical-content.json").read_bytes() != canonical_bytes:
+            raise BundleExportError("BUNDLE_INTEGRITY_FAILED", "canonical export bytes changed during write")
+        if staging.joinpath("rendered-markdown.md").read_bytes() != markdown_bytes:
+            raise BundleExportError("BUNDLE_INTEGRITY_FAILED", "rendered Markdown export bytes changed during write")
+        if staging.joinpath("export-provenance.json").read_bytes() != provenance_bytes:
+            raise BundleExportError("BUNDLE_INTEGRITY_FAILED", "export provenance bytes changed during write")
+        if staging.joinpath("bundle-manifest.json").read_bytes() != manifest_bytes:
+            raise BundleExportError("BUNDLE_INTEGRITY_FAILED", "bundle manifest export bytes changed during write")
+        return provenance_bytes
 
-    def _export_storyboard_formal_review(self, revision, output):
-        by_type, integrity = self._bundle_export_payloads(revision)
-        freshness = self.revision_freshness(revision.revision_id)
-        if revision.approval_status != "approved" or freshness != "FRESH":
-            raise BundleExportError("FORMAL_REVIEW_EXPORT_BLOCKED", "formal-review export gates did not pass")
-        export_id = __import__("uuid").uuid4().hex
+    def _commit_export_transaction(self):
+        self.store.conn.commit()
+
+    def _atomic_successful_bundle_export(self, *, revision, output, by_type, integrity, export_kind, freshness, diagnostic_only):
+        output = Path(output)
+        if output.exists():
+            raise BundleExportError("EXPORT_DESTINATION_EXISTS", "export destination already exists")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        staging = output.parent / (".%s.%s.staging" % (output.name, uuid.uuid4().hex))
+        staging.mkdir()
+        export_id = uuid.uuid4().hex
         provenance = self._export_provenance(
             export_id=export_id,
-            export_kind="formal_review",
+            export_kind=export_kind,
             revision=revision,
             bundle_manifest_hash=integrity["bundle_manifest_hash"],
             bundle_status="verified",
             freshness_status=freshness,
-            diagnostic_only=False,
+            diagnostic_only=diagnostic_only,
             destination=output,
         )
-        self._write_bundle_export_files(revision, by_type, provenance, output)
-        provenance_object_id = self.store.write_bytes_object(self._canonical_json_v1_bytes(provenance))
-        export = self.store.insert_export_record(
-            export_id=export_id,
-            artifact_id=revision.artifact_id,
-            revision_id=revision.revision_id,
-            run_id=revision.run_id,
-            content_hash=revision.content_hash,
-            destination=str(output),
-            provenance_object_id=provenance_object_id,
-            export_kind="formal_review",
-            freshness_status=freshness,
-            diagnostic_only=0,
-            not_an_execution_package=1,
-            execution_ready=0,
-            bundle_manifest_hash=integrity["bundle_manifest_hash"],
-            error_code="",
-        )
+        final_exists = False
+        try:
+            provenance_bytes = self._write_bundle_export_files(revision, by_type, provenance, staging)
+            provenance_object_id = self.store.write_bytes_object(provenance_bytes)
+            self.store.conn.execute("BEGIN")
+            export = self.store.insert_export_record_in_transaction(
+                export_id=export_id,
+                artifact_id=revision.artifact_id,
+                revision_id=revision.revision_id,
+                run_id=revision.run_id,
+                content_hash=revision.content_hash,
+                destination=str(output),
+                provenance_object_id=provenance_object_id,
+                export_kind=export_kind,
+                freshness_status=freshness,
+                diagnostic_only=1 if diagnostic_only else 0,
+                not_an_execution_package=1,
+                execution_ready=0,
+                bundle_manifest_hash=integrity["bundle_manifest_hash"],
+                error_code="",
+            )
+            os.replace(staging, output)
+            final_exists = True
+            self._commit_export_transaction()
+        except Exception as exc:
+            try:
+                self.store.conn.rollback()
+            finally:
+                if staging.exists():
+                    shutil.rmtree(staging)
+                if final_exists and output.exists():
+                    shutil.rmtree(output)
+            if isinstance(exc, BundleExportError):
+                raise
+            raise BundleExportError("FORMAL_REVIEW_EXPORT_BLOCKED", str(exc)) from exc
         return {
             "status": "EXPORTED",
             "export_id": export.export_id,
             "revision_id": revision.revision_id,
-            "export_kind": "formal_review",
+            "export_kind": export_kind,
             "destination": str(output),
             "bundle_manifest_hash": integrity["bundle_manifest_hash"],
             "freshness_status": freshness,
-            "diagnostic_only": False,
+            "diagnostic_only": diagnostic_only,
             "not_an_execution_package": True,
             "execution_ready": False,
         }
+
+    def _export_storyboard_formal_review(self, revision, output):
+        try:
+            by_type, integrity = self._bundle_export_payloads(revision)
+        except BundleError as exc:
+            if exc.code == "REVISION_OUTPUT_COMBINATION_INVALID":
+                raise BundleError("BUNDLE_INTEGRITY_FAILED", exc.safe_message) from exc
+            raise
+        freshness = self.revision_freshness(revision.revision_id)
+        if revision.approval_status != "approved" or freshness != "FRESH":
+            raise BundleExportError("FORMAL_REVIEW_EXPORT_BLOCKED", "formal-review export gates did not pass")
+        return self._atomic_successful_bundle_export(
+            revision=revision,
+            output=output,
+            by_type=by_type,
+            integrity=integrity,
+            export_kind="formal_review",
+            freshness=freshness,
+            diagnostic_only=False,
+        )
 
     def _export_storyboard_diagnostic(self, revision, output):
         by_type, integrity = self._bundle_export_payloads(revision)
         freshness = self.revision_freshness(revision.revision_id)
         if freshness != "STALE":
             raise BundleExportError("DIAGNOSTIC_EXPORT_REQUIRES_STALE", "diagnostic export requires a STALE revision")
-        export_id = __import__("uuid").uuid4().hex
-        provenance = self._export_provenance(
-            export_id=export_id,
-            export_kind="diagnostic",
+        return self._atomic_successful_bundle_export(
             revision=revision,
-            bundle_manifest_hash=integrity["bundle_manifest_hash"],
-            bundle_status="verified",
-            freshness_status=freshness,
-            diagnostic_only=True,
-            destination=output,
-        )
-        self._write_bundle_export_files(revision, by_type, provenance, output)
-        provenance_object_id = self.store.write_bytes_object(self._canonical_json_v1_bytes(provenance))
-        export = self.store.insert_export_record(
-            export_id=export_id,
-            artifact_id=revision.artifact_id,
-            revision_id=revision.revision_id,
-            run_id=revision.run_id,
-            content_hash=revision.content_hash,
-            destination=str(output),
-            provenance_object_id=provenance_object_id,
+            output=output,
+            by_type=by_type,
+            integrity=integrity,
             export_kind="diagnostic",
-            freshness_status=freshness,
-            diagnostic_only=1,
-            not_an_execution_package=1,
-            execution_ready=0,
-            bundle_manifest_hash=integrity["bundle_manifest_hash"],
-            error_code="",
+            freshness=freshness,
+            diagnostic_only=True,
         )
-        return {
-            "status": "EXPORTED",
-            "export_id": export.export_id,
-            "revision_id": revision.revision_id,
-            "export_kind": "diagnostic",
-            "destination": str(output),
-            "bundle_manifest_hash": integrity["bundle_manifest_hash"],
-            "freshness_status": freshness,
-            "diagnostic_only": True,
-            "not_an_execution_package": True,
-            "execution_ready": False,
-        }
 
     def export_storyboard_bundle(self, revision_id, export_kind, output):
         revision = self._revision_or_raise(revision_id)

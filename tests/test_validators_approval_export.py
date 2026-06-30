@@ -6,7 +6,7 @@ import pytest
 
 from ai_drama_runtime.manifest import SkillValidator
 from ai_drama_runtime.manifest import load_skill_package
-from ai_drama_runtime.services import ApprovalBlocked, BundleError, DiagnosticParentError, ExportConflict, RuntimeService
+from ai_drama_runtime.services import ApprovalBlocked, BundleError, BundleExportError, DiagnosticParentError, ExportConflict, RuntimeService
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_runtime.validators import run_declared_validators
 
@@ -559,3 +559,120 @@ def test_formal_review_export_is_atomic(tmp_path):
         assert provenance["bundle_manifest_hash"] == result["bundle_manifest_hash"]
         assert provenance["bundle_status"] == "verified"
         assert provenance["error_code"] == ""
+
+
+def test_formal_review_export_rolls_back_audit_when_rename_fails(tmp_path, monkeypatch):
+    with _service(tmp_path) as service:
+        revision = _approved_bundle_revision(service)
+        output = tmp_path / "rename-fail"
+
+        def fail_replace(src, dst):
+            raise OSError("simulated rename failure")
+
+        monkeypatch.setattr("ai_drama_runtime.services.os.replace", fail_replace)
+
+        with pytest.raises(BundleExportError):
+            service.export_storyboard_bundle(revision.revision_id, "formal-review", output)
+
+        assert not output.exists()
+        assert [item for item in service.store.export_records(revision.artifact_id) if item.export_kind == "formal_review"] == []
+        assert [path for path in tmp_path.iterdir() if path.name.startswith(".rename-fail.")] == []
+
+
+def test_formal_review_export_compensates_final_directory_when_commit_fails(tmp_path, monkeypatch):
+    with _service(tmp_path) as service:
+        revision = _approved_bundle_revision(service)
+        output = tmp_path / "commit-fail"
+
+        def fail_commit():
+            raise RuntimeError("simulated commit failure")
+
+        monkeypatch.setattr(service, "_commit_export_transaction", fail_commit)
+
+        with pytest.raises(BundleExportError):
+            service.export_storyboard_bundle(revision.revision_id, "formal-review", output)
+
+        assert not output.exists()
+        assert [item for item in service.store.export_records(revision.artifact_id) if item.export_kind == "formal_review"] == []
+
+
+def test_formal_review_export_blocks_missing_bundle_before_general_gate(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service, materialize=False)
+
+        with pytest.raises(BundleError) as exc:
+            service.export_storyboard_bundle(revision.revision_id, "formal-review", tmp_path / "blocked")
+
+        assert exc.value.code == "BUNDLE_NOT_MATERIALIZED"
+        assert not (tmp_path / "blocked").exists()
+
+
+def test_formal_review_export_blocks_invalid_bundle_before_general_gate(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service)
+        markdown = service.store.get_revision_output(revision.revision_id, "rendered_markdown")
+        service.store.conn.execute(
+            "UPDATE revision_outputs SET generator = ? WHERE revision_output_id = ?",
+            ("wrong-renderer", markdown.revision_output_id),
+        )
+        service.store.conn.commit()
+
+        with pytest.raises(BundleError) as exc:
+            service.export_storyboard_bundle(revision.revision_id, "formal-review", tmp_path / "blocked")
+
+        assert exc.value.code == "BUNDLE_INTEGRITY_FAILED"
+        assert not (tmp_path / "blocked").exists()
+
+
+def test_formal_review_export_blocks_unapproved_stale_or_failed_validator(tmp_path):
+    with _service(tmp_path) as service:
+        unapproved = _canonical_storyboard_revision(service)
+
+        with pytest.raises(BundleExportError) as exc:
+            service.export_storyboard_bundle(unapproved.revision_id, "formal-review", tmp_path / "unapproved")
+
+        assert exc.value.code == "FORMAL_REVIEW_EXPORT_BLOCKED"
+        assert not (tmp_path / "unapproved").exists()
+
+        service.approve_revision(unapproved.revision_id, "tester")
+        service.store.conn.execute(
+            "UPDATE revision_dependencies SET parent_content_hash = ? WHERE child_revision_id = ?",
+            ("0" * 64, unapproved.revision_id),
+        )
+        service.store.conn.commit()
+        with pytest.raises(BundleExportError) as stale_exc:
+            service.export_storyboard_bundle(unapproved.revision_id, "formal-review", tmp_path / "stale")
+        assert stale_exc.value.code == "FORMAL_REVIEW_EXPORT_BLOCKED"
+        assert not (tmp_path / "stale").exists()
+
+
+def test_formal_review_export_rejects_existing_destination(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _approved_bundle_revision(service)
+        output = tmp_path / "exists"
+        output.mkdir()
+
+        with pytest.raises(BundleExportError) as exc:
+            service.export_storyboard_bundle(revision.revision_id, "formal-review", output)
+
+        assert exc.value.code == "EXPORT_DESTINATION_EXISTS"
+
+
+def test_diagnostic_export_requires_stale_revision(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _approved_bundle_revision(service)
+
+        with pytest.raises(BundleExportError) as exc:
+            service.export_storyboard_bundle(revision.revision_id, "diagnostic", tmp_path / "fresh-diagnostic")
+
+        assert exc.value.code == "DIAGNOSTIC_EXPORT_REQUIRES_STALE"
+
+        service.store.conn.execute(
+            "UPDATE revision_dependencies SET parent_content_hash = ? WHERE child_revision_id = ?",
+            ("0" * 64, revision.revision_id),
+        )
+        service.store.conn.commit()
+        result = service.export_storyboard_bundle(revision.revision_id, "diagnostic", tmp_path / "stale-diagnostic")
+        assert result["status"] == "EXPORTED"
+        assert result["diagnostic_only"] is True
+        assert result["freshness_status"] == "STALE"
