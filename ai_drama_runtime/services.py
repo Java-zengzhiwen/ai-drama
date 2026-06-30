@@ -188,14 +188,77 @@ class RuntimeService:
     def _materialized_bundle_response(self, revision, status, outputs):
         by_type = {item.logical_type: item for item in outputs}
         manifest = json.loads(self.store.read_text(by_type["bundle_manifest"].object_id))
+        integrity = self.check_storyboard_bundle_integrity(revision.revision_id)
         return {
             "status": status,
             "revision_id": revision.revision_id,
             "rendered_markdown_output_id": by_type["rendered_markdown"].revision_output_id,
             "bundle_manifest_output_id": by_type["bundle_manifest"].revision_output_id,
             "bundle_manifest_hash": manifest["bundle_manifest_hash"],
-            "bundle_integrity": "PASS",
+            "bundle_integrity": integrity["status"],
             "approval_status": revision.approval_status,
+        }
+
+    def _bundle_output_map_or_raise(self, revision_id):
+        outputs = self.store.revision_outputs(revision_id)
+        if not outputs:
+            raise BundleError("BUNDLE_NOT_MATERIALIZED", "Storyboard bundle is not materialized")
+        by_type = {item.logical_type: item for item in outputs}
+        if len(outputs) != len(by_type) or set(by_type) != {"rendered_markdown", "bundle_manifest"}:
+            raise BundleError("REVISION_OUTPUT_COMBINATION_INVALID", "Storyboard revision output combination is invalid")
+        return by_type
+
+    def check_storyboard_bundle_integrity(self, revision_id):
+        revision = self._revision_or_raise(revision_id)
+        if revision.artifact_type != "storyboard" or revision.content_profile != STORYBOARD_CANONICAL_PROFILE:
+            raise BundleError("BUNDLE_PROFILE_UNSUPPORTED", "revision does not use the Storyboard canonical bundle profile")
+        by_type = self._bundle_output_map_or_raise(revision.revision_id)
+        output_bytes = {}
+        for output in by_type.values():
+            try:
+                data = self.store.read_bytes_object(output.object_id)
+            except FileNotFoundError as exc:
+                raise BundleError("REVISION_OUTPUT_HASH_MISMATCH", "revision output object is missing") from exc
+            actual = self._sha256_bytes(data)
+            if actual != output.object_id or actual != output.content_hash:
+                raise BundleError("REVISION_OUTPUT_HASH_MISMATCH", "revision output hash does not match exact bytes")
+            output_bytes[output.logical_type] = data
+
+        canonical = parse_canonical_json(self.store.read_text(revision.content_object_id))
+        expected_rendered = self._rendered_markdown_output(canonical)
+        rendered = by_type["rendered_markdown"]
+        if (
+            rendered.media_type != expected_rendered["media_type"]
+            or rendered.generator != expected_rendered["generator"]
+            or rendered.generator_version != expected_rendered["generator_version"]
+            or output_bytes["rendered_markdown"] != expected_rendered["bytes"]
+        ):
+            raise BundleError("BUNDLE_INTEGRITY_FAILED", "rendered Markdown output does not match frozen renderer contract")
+
+        manifest_output = by_type["bundle_manifest"]
+        if (
+            manifest_output.media_type != "application/json"
+            or manifest_output.generator != "bundle-manifest-builder"
+            or manifest_output.generator_version != "1"
+        ):
+            raise BundleError("BUNDLE_INTEGRITY_FAILED", "bundle manifest metadata does not match frozen contract")
+        try:
+            manifest = json.loads(output_bytes["bundle_manifest"].decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise BundleError("BUNDLE_INTEGRITY_FAILED", "bundle manifest is not valid canonical JSON") from exc
+        expected_manifest = self._build_storyboard_bundle_manifest(
+            revision_id=revision.revision_id,
+            canonical_content_hash=revision.content_hash,
+            rendered_markdown_hash=rendered.content_hash,
+        )
+        if manifest != expected_manifest["manifest"]:
+            raise BundleError("BUNDLE_INTEGRITY_FAILED", "bundle manifest contents do not match frozen contract")
+        if output_bytes["bundle_manifest"] != expected_manifest["bytes"]:
+            raise BundleError("BUNDLE_INTEGRITY_FAILED", "bundle manifest bytes are not canonical-json-v1")
+        return {
+            "status": "PASS",
+            "revision_id": revision.revision_id,
+            "bundle_manifest_hash": expected_manifest["bundle_manifest_hash"],
         }
 
     def materialize_storyboard_bundle(self, revision_id):

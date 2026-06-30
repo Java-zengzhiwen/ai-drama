@@ -144,6 +144,7 @@ def _run_native_canonical_validator(store, revision, validator):
         "storyboard_source_coverage",
         "storyboard_renderer_parity",
         "storyboard_source_freshness",
+        "storyboard_bundle_integrity",
     }:
         return None
     from .storyboard_canonical import CanonicalStoryboardError, parse_canonical_json
@@ -168,6 +169,11 @@ def _run_native_canonical_validator(store, revision, validator):
             report["freshness_status"] = freshness
             if freshness != "FRESH":
                 raise CanonicalStoryboardError(freshness, "source freshness is %s" % freshness)
+        elif validator.validator_id == "storyboard_bundle_integrity":
+            from .services import RuntimeService
+
+            integrity = RuntimeService(store).check_storyboard_bundle_integrity(revision.revision_id)
+            report["bundle_manifest_hash"] = integrity["bundle_manifest_hash"]
     except CanonicalStoryboardError as exc:
         status = "FAIL"
         error_code = exc.code
@@ -183,6 +189,14 @@ def _run_native_canonical_validator(store, revision, validator):
         report["final_status"] = "fail"
         report["error_code"] = error_code
         report["message"] = str(exc)
+    except RuntimeError as exc:
+        if not hasattr(exc, "code"):
+            raise
+        status = "FAIL"
+        error_code = exc.code
+        report["final_status"] = "fail"
+        report["error_code"] = exc.code
+        report["message"] = exc.safe_message
     return _insert(
         store,
         revision,

@@ -6,7 +6,7 @@ import pytest
 
 from ai_drama_runtime.manifest import SkillValidator
 from ai_drama_runtime.manifest import load_skill_package
-from ai_drama_runtime.services import ApprovalBlocked, ExportConflict, RuntimeService
+from ai_drama_runtime.services import ApprovalBlocked, BundleError, ExportConflict, RuntimeService
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_runtime.validators import run_declared_validators
 
@@ -14,10 +14,35 @@ from ai_drama_runtime.validators import run_declared_validators
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ACCEPTANCE_ROOT = REPO_ROOT / "acceptance" / "shengsi-chapter-001"
 SKILL_ROOT = REPO_ROOT / "skills" / "ai-drama-script-adaptation-skill" / "v0.6.1-rc2.4"
+STORYBOARD_CANONICAL_SKILL_ROOT = REPO_ROOT / "skills" / "ai-drama-storyboard-design-skill" / "v0.2.0"
 
 
 def _service(tmp_path):
-    return RuntimeService(RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects"))
+    return RuntimeService(RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects"), repo_root=REPO_ROOT)
+
+
+def _canonical_storyboard_revision(service, *, materialize=True):
+    script = service.run_acceptance(load_skill_package(SKILL_ROOT), ACCEPTANCE_ROOT, "mock", "mock-script")
+    service.approve_revision(script.revision.revision_id, "tester")
+    storyboard = service.run_storyboard(
+        load_skill_package(STORYBOARD_CANONICAL_SKILL_ROOT),
+        script.revision.revision_id,
+        "mock",
+        "mock-storyboard-canonical-v1",
+    )
+    if materialize:
+        service.materialize_storyboard_bundle(storyboard.revision.revision_id)
+    return storyboard.revision
+
+
+def _set_output_object(service, output, data):
+    object_id = service.store.write_bytes_object(data)
+    service.store.conn.execute(
+        "UPDATE revision_outputs SET object_id = ?, content_hash = ? WHERE revision_output_id = ?",
+        (object_id, object_id, output.revision_output_id),
+    )
+    service.store.conn.commit()
+    return object_id
 
 
 def test_validator_statuses_and_required_approval_block(tmp_path):
@@ -295,3 +320,121 @@ def test_timeout_expired_bytes_are_persisted_as_text_and_validators_continue(tmp
         assert store.read_text(by_id["timeout"].stdout_object_id) == "partial-\ufffd-out"
         assert store.read_text(by_id["timeout"].stderr_object_id) == "partial-\ufffd-err"
         assert by_id["pass"].status == "PASS"
+
+
+def test_bundle_integrity_passes_valid_bundle(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service)
+
+        result = service.check_storyboard_bundle_integrity(revision.revision_id)
+
+        assert result["status"] == "PASS"
+        assert result["bundle_manifest_hash"]
+
+
+def test_bundle_integrity_reports_missing_bundle(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service, materialize=False)
+
+        with pytest.raises(BundleError) as exc:
+            service.check_storyboard_bundle_integrity(revision.revision_id)
+
+        assert exc.value.code == "BUNDLE_NOT_MATERIALIZED"
+
+
+def test_bundle_integrity_reports_revision_output_hash_mismatch(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service)
+        markdown = service.store.get_revision_output(revision.revision_id, "rendered_markdown")
+        service.store.conn.execute(
+            "UPDATE revision_outputs SET content_hash = ? WHERE revision_output_id = ?",
+            ("0" * 64, markdown.revision_output_id),
+        )
+        service.store.conn.commit()
+
+        with pytest.raises(BundleError) as exc:
+            service.check_storyboard_bundle_integrity(revision.revision_id)
+
+        assert exc.value.code == "REVISION_OUTPUT_HASH_MISMATCH"
+
+
+def test_bundle_integrity_reports_invalid_output_combination(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service, materialize=False)
+        object_id = service.store.write_text_object("prompt")
+        service.store.insert_revision_outputs_transaction(
+            [
+                {
+                    "revision_id": revision.revision_id,
+                    "logical_type": "rendered_positive_prompt",
+                    "object_id": object_id,
+                    "content_hash": object_id,
+                    "media_type": "text/plain",
+                    "generator": "legacy",
+                    "generator_version": "1",
+                },
+                {
+                    "revision_id": revision.revision_id,
+                    "logical_type": "rendered_negative_prompt",
+                    "object_id": object_id,
+                    "content_hash": object_id,
+                    "media_type": "text/plain",
+                    "generator": "legacy",
+                    "generator_version": "1",
+                },
+            ]
+        )
+        service.store.conn.commit()
+
+        with pytest.raises(BundleError) as exc:
+            service.check_storyboard_bundle_integrity(revision.revision_id)
+
+        assert exc.value.code == "REVISION_OUTPUT_COMBINATION_INVALID"
+
+
+def test_bundle_integrity_reports_renderer_byte_or_metadata_failure(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service)
+        markdown = service.store.get_revision_output(revision.revision_id, "rendered_markdown")
+        service.store.conn.execute(
+            "UPDATE revision_outputs SET generator_version = ? WHERE revision_output_id = ?",
+            ("9.9.9", markdown.revision_output_id),
+        )
+        service.store.conn.commit()
+
+        with pytest.raises(BundleError) as exc:
+            service.check_storyboard_bundle_integrity(revision.revision_id)
+
+        assert exc.value.code == "BUNDLE_INTEGRITY_FAILED"
+
+
+def test_bundle_integrity_reports_manifest_semantic_failure(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service)
+        manifest_output = service.store.get_revision_output(revision.revision_id, "bundle_manifest")
+        manifest = json.loads(service.store.read_text(manifest_output.object_id))
+        manifest["bundle_manifest_hash"] = "0" * 64
+        _set_output_object(service, manifest_output, service._canonical_json_v1_bytes(manifest))
+
+        with pytest.raises(BundleError) as exc:
+            service.check_storyboard_bundle_integrity(revision.revision_id)
+
+        assert exc.value.code == "BUNDLE_INTEGRITY_FAILED"
+
+
+def test_v020_uses_live_bundle_integrity_checker(tmp_path, monkeypatch):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service)
+        calls = []
+        original = service.check_storyboard_bundle_integrity
+
+        def wrapped(revision_id):
+            calls.append(revision_id)
+            return original(revision_id)
+
+        monkeypatch.setattr(service, "check_storyboard_bundle_integrity", wrapped)
+
+        result = service.materialize_storyboard_bundle(revision.revision_id)
+
+        assert result["status"] == "ALREADY_MATERIALIZED"
+        assert calls == [revision.revision_id]
