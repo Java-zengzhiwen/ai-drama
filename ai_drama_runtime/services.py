@@ -49,6 +49,13 @@ class BundleExportError(RuntimeError):
         self.safe_message = message
 
 
+class BundleApprovalBlocked(RuntimeError):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.safe_message = message
+
+
 class DiagnosticParentError(RuntimeError):
     def __init__(self, code, message):
         super().__init__(message)
@@ -275,6 +282,49 @@ class RuntimeService:
             "status": "PASS",
             "revision_id": revision.revision_id,
             "bundle_manifest_hash": expected_manifest["bundle_manifest_hash"],
+        }
+
+    def bundle_outputs(self, revision_id):
+        revision = self._revision_or_raise(revision_id)
+        if revision.artifact_type != "storyboard" or revision.content_profile != STORYBOARD_CANONICAL_PROFILE:
+            raise BundleError("BUNDLE_PROFILE_UNSUPPORTED", "revision does not use the Storyboard canonical bundle profile")
+        outputs = self.store.revision_outputs(revision.revision_id)
+        materialization_status = "NOT_MATERIALIZED"
+        bundle_integrity = "NOT_CHECKED"
+        bundle_manifest_hash = ""
+        if outputs:
+            types = {item.logical_type for item in outputs}
+            if types == {"rendered_markdown", "bundle_manifest"} and len(outputs) == 2:
+                materialization_status = "MATERIALIZED"
+                try:
+                    integrity = self.check_storyboard_bundle_integrity(revision.revision_id)
+                    bundle_integrity = "PASS"
+                    bundle_manifest_hash = integrity["bundle_manifest_hash"]
+                except BundleError:
+                    bundle_integrity = "FAIL"
+            else:
+                materialization_status = "CONFLICT"
+                bundle_integrity = "FAIL"
+        return {
+            "revision_id": revision.revision_id,
+            "artifact_type": revision.artifact_type,
+            "content_profile": revision.content_profile,
+            "materialization_status": materialization_status,
+            "bundle_integrity": bundle_integrity,
+            "bundle_manifest_hash": bundle_manifest_hash,
+            "outputs": [
+                {
+                    "revision_output_id": item.revision_output_id,
+                    "logical_type": item.logical_type,
+                    "object_id": item.object_id,
+                    "content_hash": item.content_hash,
+                    "media_type": item.media_type,
+                    "generator": item.generator,
+                    "generator_version": item.generator_version,
+                    "created_at": item.created_at,
+                }
+                for item in outputs
+            ],
         }
 
     def materialize_storyboard_bundle(self, revision_id):
