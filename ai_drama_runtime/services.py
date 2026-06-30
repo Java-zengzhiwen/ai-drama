@@ -240,7 +240,7 @@ class RuntimeService:
         for output in by_type.values():
             try:
                 data = self.store.read_bytes_object(output.object_id)
-            except FileNotFoundError as exc:
+            except (FileNotFoundError, RuntimeError) as exc:
                 raise BundleError("REVISION_OUTPUT_HASH_MISMATCH", "revision output object is missing") from exc
             actual = self._sha256_bytes(data)
             if actual != output.object_id or actual != output.content_hash:
@@ -283,6 +283,16 @@ class RuntimeService:
             "revision_id": revision.revision_id,
             "bundle_manifest_hash": expected_manifest["bundle_manifest_hash"],
         }
+
+    def _bundle_integrity_failure_code(self, code):
+        if code == "BUNDLE_NOT_MATERIALIZED":
+            return code
+        return "BUNDLE_INTEGRITY_FAILED"
+
+    def _normalize_bundle_integrity_error(self, exc):
+        if exc.code == "BUNDLE_NOT_MATERIALIZED":
+            return exc
+        return BundleError("BUNDLE_INTEGRITY_FAILED", exc.safe_message)
 
     def bundle_outputs(self, revision_id):
         revision = self._revision_or_raise(revision_id)
@@ -482,9 +492,7 @@ class RuntimeService:
         try:
             by_type, integrity = self._bundle_export_payloads(revision)
         except BundleError as exc:
-            if exc.code == "REVISION_OUTPUT_COMBINATION_INVALID":
-                raise BundleError("BUNDLE_INTEGRITY_FAILED", exc.safe_message) from exc
-            raise
+            raise BundleError(self._bundle_integrity_failure_code(exc.code), exc.safe_message) from exc
         freshness = self.revision_freshness(revision.revision_id)
         results = self.store.validation_results(revision.revision_id)
         blocking = [
@@ -505,7 +513,10 @@ class RuntimeService:
         )
 
     def _export_storyboard_diagnostic(self, revision, output):
-        by_type, integrity = self._bundle_export_payloads(revision)
+        try:
+            by_type, integrity = self._bundle_export_payloads(revision)
+        except BundleError as exc:
+            raise BundleError(self._bundle_integrity_failure_code(exc.code), exc.safe_message) from exc
         freshness = self.revision_freshness(revision.revision_id)
         if freshness != "STALE":
             raise BundleExportError("DIAGNOSTIC_EXPORT_REQUIRES_STALE", "diagnostic export requires a STALE revision")
@@ -526,6 +537,8 @@ class RuntimeService:
         except BundleError as exc:
             if exc.code == "BUNDLE_NOT_MATERIALIZED":
                 return "not_materialized", ""
+            if exc.code == "REVISION_OUTPUT_HASH_MISMATCH":
+                return "invalid", ""
             return "invalid", ""
 
     def _record_storyboard_execution_block(self, revision, output):
@@ -929,7 +942,10 @@ class RuntimeService:
         if blocking:
             raise ApprovalBlocked("required validators did not pass: %s" % ", ".join(item.validator_id for item in blocking))
         if revision.artifact_type == "storyboard" and getattr(revision, "content_profile", "") == STORYBOARD_CANONICAL_PROFILE:
-            self.check_storyboard_bundle_integrity(revision_id)
+            try:
+                self.check_storyboard_bundle_integrity(revision_id)
+            except BundleError as exc:
+                raise self._normalize_bundle_integrity_error(exc) from exc
         self.store.approve_in_transaction(revision, reviewer, note)
         return self.store.get_revision(revision_id)
 

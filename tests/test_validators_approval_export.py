@@ -364,6 +364,39 @@ def test_bundle_integrity_reports_revision_output_hash_mismatch(tmp_path):
         assert exc.value.code == "REVISION_OUTPUT_HASH_MISMATCH"
 
 
+def test_bundle_integrity_reports_corrupted_object_bytes(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service)
+        markdown = service.store.get_revision_output(revision.revision_id, "rendered_markdown")
+        path = service.store.object_path(markdown.object_id)
+        path.write_bytes(b"corrupted bytes")
+
+        with pytest.raises(BundleError) as exc:
+            service.check_storyboard_bundle_integrity(revision.revision_id)
+
+        assert exc.value.code == "REVISION_OUTPUT_HASH_MISMATCH"
+
+        result = service.export_storyboard_bundle(revision.revision_id, "execution", tmp_path / "corrupted-execution")
+        assert result["status"] == "BLOCKED"
+        assert result["bundle_status"] == "invalid"
+        assert result["bundle_manifest_hash"] == ""
+        assert result["error_code"] == "EXPORT_NOT_EXECUTION_READY"
+        assert not (tmp_path / "corrupted-execution").exists()
+
+
+def test_formal_review_export_reports_corrupted_object_bytes_with_integrity_code(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _approved_bundle_revision(service)
+        markdown = service.store.get_revision_output(revision.revision_id, "rendered_markdown")
+        service.store.object_path(markdown.object_id).write_bytes(b"corrupted bytes")
+
+        with pytest.raises(BundleError) as exc:
+            service.export_storyboard_bundle(revision.revision_id, "formal-review", tmp_path / "corrupted-formal-review")
+
+        assert exc.value.code == "BUNDLE_INTEGRITY_FAILED"
+        assert not (tmp_path / "corrupted-formal-review").exists()
+
+
 def test_bundle_integrity_reports_invalid_output_combination(tmp_path):
     with _service(tmp_path) as service:
         revision = _canonical_storyboard_revision(service, materialize=False)
@@ -472,6 +505,40 @@ def test_approval_blocks_invalid_bundle(tmp_path):
 
         assert exc.value.code == "BUNDLE_INTEGRITY_FAILED"
         assert service.store.get_revision(revision.revision_id).approval_status == "pending"
+
+
+def test_approval_blocks_invalid_output_combination_with_frozen_code(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _canonical_storyboard_revision(service, materialize=False)
+        object_id = service.store.write_text_object("prompt")
+        service.store.insert_revision_outputs_transaction(
+            [
+                {
+                    "revision_id": revision.revision_id,
+                    "logical_type": "rendered_positive_prompt",
+                    "object_id": object_id,
+                    "content_hash": object_id,
+                    "media_type": "text/plain",
+                    "generator": "legacy",
+                    "generator_version": "1",
+                },
+                {
+                    "revision_id": revision.revision_id,
+                    "logical_type": "rendered_negative_prompt",
+                    "object_id": object_id,
+                    "content_hash": object_id,
+                    "media_type": "text/plain",
+                    "generator": "legacy",
+                    "generator_version": "1",
+                },
+            ]
+        )
+        service.store.conn.commit()
+
+        with pytest.raises(BundleError) as exc:
+            service.approve_revision(revision.revision_id, "tester")
+
+        assert exc.value.code == "BUNDLE_INTEGRITY_FAILED"
 
 
 def test_approval_does_not_implicitly_materialize_bundle(tmp_path):
