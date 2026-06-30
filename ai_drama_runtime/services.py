@@ -500,7 +500,21 @@ class RuntimeService:
             parent_content_hash=source_revision.content_hash,
             parent_approval_record_id=(self.store.latest_approval(source_revision.revision_id).record_id if self.store.latest_approval(source_revision.revision_id) else ""),
         )
+        if skill.version == "v0.2.1" and profile_id == STORYBOARD_CANONICAL_PROFILE:
+            try:
+                prevalidation = [self._auto_materialize_storyboard_bundle(revision, run.run_id)]
+            except BundleError as exc:
+                run = self.store.update_run(
+                    run.run_id,
+                    status="VALIDATION_FAILED",
+                    error_code=exc.code,
+                    error_message=exc.safe_message,
+                )
+                return RunResult(run=run, revision=revision, validation_results=[], adapter_request_json=request_json)
+        else:
+            prevalidation = []
         validations = run_declared_validators(self.store, skill, revision, self.repo_root, repo_root=self.repo_root)
+        validations = prevalidation + [item for item in validations if item.validator_id != "storyboard_bundle_integrity"]
         blocking = [item for item in validations if item.required and item.status not in {"PASS", "NOT_APPLICABLE"}]
         if blocking:
             validator_ids = ", ".join(item.validator_id for item in blocking)
@@ -511,6 +525,31 @@ class RuntimeService:
                 error_message="required validators did not pass: %s" % validator_ids,
             )
         return RunResult(run=run, revision=revision, validation_results=validations, adapter_request_json=request_json)
+
+    def _auto_materialize_storyboard_bundle(self, revision, run_id):
+        self.materialize_storyboard_bundle(revision.revision_id)
+        report = json.dumps(
+            {
+                "validator_id": "storyboard_bundle_integrity",
+                "final_status": "pass",
+                "materialization_status": "MATERIALIZED",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        return self.store.insert_validation(
+            revision_id=revision.revision_id,
+            validator_id="storyboard_bundle_integrity",
+            validator_name="storyboard_bundle_integrity",
+            status="PASS",
+            required=1,
+            exit_code=0,
+            error_code="",
+            duration_ms=0,
+            stdout_object_id=self.store.write_text_object(""),
+            stderr_object_id=self.store.write_text_object(""),
+            report_object_id=self.store.write_text_object(report + "\n"),
+        )
 
     def approve_revision(self, revision_id, reviewer, note=""):
         revision = self._revision_or_raise(revision_id)

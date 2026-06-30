@@ -18,6 +18,7 @@ from ai_drama_runtime.storyboard_renderer import render_storyboard_markdown
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT_SKILL_ROOT = REPO_ROOT / "skills" / "ai-drama-script-adaptation-skill" / "v0.6.1-rc2.4"
 STORYBOARD_CANONICAL_SKILL_ROOT = REPO_ROOT / "skills" / "ai-drama-storyboard-design-skill" / "v0.2.0"
+STORYBOARD_CANONICAL_V021_SKILL_ROOT = REPO_ROOT / "skills" / "ai-drama-storyboard-design-skill" / "v0.2.1"
 SCRIPT_ACCEPTANCE_ROOT = REPO_ROOT / "acceptance" / "shengsi-chapter-001"
 
 
@@ -416,3 +417,63 @@ def test_materialize_bundle_rejects_unexpected_output_combination(tmp_path):
             service.materialize_storyboard_bundle(result.revision.revision_id)
 
         assert exc.value.code == "BUNDLE_OUTPUT_CONFLICT"
+
+
+def test_v021_auto_materializes_before_declared_validation(tmp_path):
+    with _service(tmp_path) as service:
+        source = _approved_script_revision(service)
+        result = service.run_storyboard(
+            load_skill_package(STORYBOARD_CANONICAL_V021_SKILL_ROOT),
+            source.revision_id,
+            "mock",
+            "mock-storyboard-canonical-v1",
+        )
+
+        outputs = {item.logical_type: item for item in service.store.revision_outputs(result.revision.revision_id)}
+        validations = {item.validator_id: item for item in result.validation_results}
+
+        assert result.run.status == "SUCCEEDED"
+        assert set(outputs) == {"rendered_markdown", "bundle_manifest"}
+        assert validations["storyboard_bundle_integrity"].status == "PASS"
+        assert validations["storyboard_bundle_integrity"].required is True
+        assert list(validations).index("storyboard_bundle_integrity") < list(validations).index("storyboard_canonical_schema")
+
+
+def test_v021_materialization_failure_leaves_pending_revision_and_zero_rows(tmp_path, monkeypatch):
+    with _service(tmp_path) as service:
+        source = _approved_script_revision(service)
+
+        def fail_materialize(revision, run_id):
+            raise BundleError("BUNDLE_NOT_MATERIALIZED", "simulated materialization failure")
+
+        monkeypatch.setattr(service, "_auto_materialize_storyboard_bundle", fail_materialize)
+        result = service.run_storyboard(
+            load_skill_package(STORYBOARD_CANONICAL_V021_SKILL_ROOT),
+            source.revision_id,
+            "mock",
+            "mock-storyboard-canonical-v1",
+        )
+
+        stored = service.store.get_revision(result.revision.revision_id)
+        assert stored.approval_status == "pending"
+        assert result.run.status == "VALIDATION_FAILED"
+        assert result.run.error_code == "BUNDLE_NOT_MATERIALIZED"
+        assert service.store.revision_outputs(result.revision.revision_id) == []
+        assert result.validation_results == []
+        assert service.store.latest_approval(result.revision.revision_id) is None
+
+
+def test_v021_skill_declares_required_bundle_integrity_validator():
+    package = load_skill_package(STORYBOARD_CANONICAL_V021_SKILL_ROOT)
+    v020 = load_skill_package(STORYBOARD_CANONICAL_SKILL_ROOT)
+    validators = {item.validator_id: item for item in package.validators}
+
+    assert package.version == "v0.2.1"
+    assert package.metadata["provenance"]["source"] == "phase_2_minimal_bundle_foundation"
+    assert package.metadata["execution_profiles"] == v020.metadata["execution_profiles"]
+    bundle = validators["storyboard_bundle_integrity"]
+    assert bundle.required is True
+    assert bundle.command == []
+    assert bundle.expected_exit_behavior == "runtime_native"
+    assert bundle.validator_origin == "runtime_native"
+    assert bundle.required_artifacts == ["storyboard_bundle"]
