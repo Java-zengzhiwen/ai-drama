@@ -6,7 +6,7 @@ import pytest
 
 from ai_drama_runtime.manifest import SkillValidator
 from ai_drama_runtime.manifest import load_skill_package
-from ai_drama_runtime.services import ApprovalBlocked, BundleError, ExportConflict, RuntimeService
+from ai_drama_runtime.services import ApprovalBlocked, BundleError, DiagnosticParentError, ExportConflict, RuntimeService
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_runtime.validators import run_declared_validators
 
@@ -33,6 +33,12 @@ def _canonical_storyboard_revision(service, *, materialize=True):
     if materialize:
         service.materialize_storyboard_bundle(storyboard.revision.revision_id)
     return storyboard.revision
+
+
+def _approved_bundle_revision(service):
+    revision = _canonical_storyboard_revision(service)
+    service.approve_revision(revision.revision_id, "tester")
+    return service.store.get_revision(revision.revision_id)
 
 
 def _set_output_object(service, output, data):
@@ -491,3 +497,65 @@ def test_existing_approved_phase1_revision_is_not_revoked(tmp_path):
 
         assert service.store.get_revision(revision.revision_id).approval_status == "approved"
         assert service.current_approved(revision.artifact_id).revision_id == revision.revision_id
+
+
+def test_diagnostic_export_cannot_be_dependency_parent(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _approved_bundle_revision(service)
+        service.store.conn.execute(
+            "UPDATE revision_dependencies SET parent_content_hash = ? WHERE child_revision_id = ?",
+            ("0" * 64, revision.revision_id),
+        )
+        service.store.conn.commit()
+        result = service.export_storyboard_bundle(revision.revision_id, "diagnostic", tmp_path / "diagnostic-export")
+
+        with pytest.raises(DiagnosticParentError) as exc:
+            service.attach_export_dependency("child-revision", result["export_id"], "derived_from_export")
+
+        assert exc.value.code == "DIAGNOSTIC_EXPORT_NOT_PARENTABLE"
+
+
+def test_formal_review_export_records_success_only_after_atomic_completion(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _approved_bundle_revision(service)
+        result = service.export_storyboard_bundle(revision.revision_id, "formal-review", tmp_path / "formal-review")
+        export = service.store.get_export_record(result["export_id"])
+
+        assert result["status"] == "EXPORTED"
+        assert result["export_kind"] == "formal_review"
+        assert result["diagnostic_only"] is False
+        assert result["not_an_execution_package"] is True
+        assert result["execution_ready"] is False
+        assert export.export_kind == "formal_review"
+        assert export.content_hash == revision.content_hash
+        assert export.bundle_manifest_hash == result["bundle_manifest_hash"]
+        assert export.error_code == ""
+        assert not hasattr(export, "status")
+
+
+def test_formal_review_export_is_atomic(tmp_path):
+    with _service(tmp_path) as service:
+        revision = _approved_bundle_revision(service)
+        output = tmp_path / "bundle-export"
+
+        result = service.export_storyboard_bundle(revision.revision_id, "formal-review", output)
+
+        assert result["status"] == "EXPORTED"
+        assert sorted(path.name for path in output.iterdir()) == [
+            "bundle-manifest.json",
+            "canonical-content.json",
+            "export-provenance.json",
+            "rendered-markdown.md",
+        ]
+        manifest_output = service.store.get_revision_output(revision.revision_id, "bundle_manifest")
+        markdown_output = service.store.get_revision_output(revision.revision_id, "rendered_markdown")
+        assert (output / "canonical-content.json").read_bytes() == service.store.read_bytes_object(revision.content_object_id)
+        assert (output / "rendered-markdown.md").read_bytes() == service.store.read_bytes_object(markdown_output.object_id)
+        assert (output / "bundle-manifest.json").read_bytes() == service.store.read_bytes_object(manifest_output.object_id)
+        provenance = json.loads((output / "export-provenance.json").read_text(encoding="utf-8"))
+        assert provenance["schema_version"] == "export-provenance-v1"
+        assert provenance["export_kind"] == "formal_review"
+        assert provenance["canonical_content_hash"] == revision.content_hash
+        assert provenance["bundle_manifest_hash"] == result["bundle_manifest_hash"]
+        assert provenance["bundle_status"] == "verified"
+        assert provenance["error_code"] == ""

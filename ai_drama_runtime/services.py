@@ -40,6 +40,20 @@ class BundleError(RuntimeError):
         self.safe_message = message
 
 
+class BundleExportError(RuntimeError):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.safe_message = message
+
+
+class DiagnosticParentError(RuntimeError):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.safe_message = message
+
+
 class NotFound(RuntimeError):
     pass
 
@@ -298,6 +312,157 @@ class RuntimeService:
         with self.store.conn:
             outputs = self.store.insert_revision_outputs_transaction(rows)
         return self._materialized_bundle_response(revision, "MATERIALIZED", outputs)
+
+    def _bundle_export_payloads(self, revision):
+        by_type = self._bundle_output_map_or_raise(revision.revision_id)
+        integrity = self.check_storyboard_bundle_integrity(revision.revision_id)
+        return by_type, integrity
+
+    def _export_provenance(self, *, export_id, export_kind, revision, bundle_manifest_hash, bundle_status, freshness_status, diagnostic_only, destination, error_code=""):
+        return {
+            "schema_version": "export-provenance-v1",
+            "export_id": export_id,
+            "export_kind": export_kind,
+            "artifact_id": revision.artifact_id,
+            "revision_id": revision.revision_id,
+            "canonical_content_hash": revision.content_hash,
+            "bundle_manifest_hash": bundle_manifest_hash,
+            "bundle_status": bundle_status,
+            "freshness_status": freshness_status,
+            "diagnostic_only": diagnostic_only,
+            "not_an_execution_package": True,
+            "execution_ready": False,
+            "requested_destination": str(destination),
+            "export_time": now_iso(),
+            "error_code": error_code,
+        }
+
+    def _write_bundle_export_files(self, revision, by_type, provenance, output):
+        output = Path(output)
+        output.mkdir(parents=True, exist_ok=False)
+        output.joinpath("canonical-content.json").write_bytes(self.store.read_bytes_object(revision.content_object_id))
+        output.joinpath("rendered-markdown.md").write_bytes(self.store.read_bytes_object(by_type["rendered_markdown"].object_id))
+        output.joinpath("export-provenance.json").write_bytes(self._canonical_json_v1_bytes(provenance))
+        output.joinpath("bundle-manifest.json").write_bytes(self.store.read_bytes_object(by_type["bundle_manifest"].object_id))
+
+    def _export_storyboard_formal_review(self, revision, output):
+        by_type, integrity = self._bundle_export_payloads(revision)
+        freshness = self.revision_freshness(revision.revision_id)
+        if revision.approval_status != "approved" or freshness != "FRESH":
+            raise BundleExportError("FORMAL_REVIEW_EXPORT_BLOCKED", "formal-review export gates did not pass")
+        export_id = __import__("uuid").uuid4().hex
+        provenance = self._export_provenance(
+            export_id=export_id,
+            export_kind="formal_review",
+            revision=revision,
+            bundle_manifest_hash=integrity["bundle_manifest_hash"],
+            bundle_status="verified",
+            freshness_status=freshness,
+            diagnostic_only=False,
+            destination=output,
+        )
+        self._write_bundle_export_files(revision, by_type, provenance, output)
+        provenance_object_id = self.store.write_bytes_object(self._canonical_json_v1_bytes(provenance))
+        export = self.store.insert_export_record(
+            export_id=export_id,
+            artifact_id=revision.artifact_id,
+            revision_id=revision.revision_id,
+            run_id=revision.run_id,
+            content_hash=revision.content_hash,
+            destination=str(output),
+            provenance_object_id=provenance_object_id,
+            export_kind="formal_review",
+            freshness_status=freshness,
+            diagnostic_only=0,
+            not_an_execution_package=1,
+            execution_ready=0,
+            bundle_manifest_hash=integrity["bundle_manifest_hash"],
+            error_code="",
+        )
+        return {
+            "status": "EXPORTED",
+            "export_id": export.export_id,
+            "revision_id": revision.revision_id,
+            "export_kind": "formal_review",
+            "destination": str(output),
+            "bundle_manifest_hash": integrity["bundle_manifest_hash"],
+            "freshness_status": freshness,
+            "diagnostic_only": False,
+            "not_an_execution_package": True,
+            "execution_ready": False,
+        }
+
+    def _export_storyboard_diagnostic(self, revision, output):
+        by_type, integrity = self._bundle_export_payloads(revision)
+        freshness = self.revision_freshness(revision.revision_id)
+        if freshness != "STALE":
+            raise BundleExportError("DIAGNOSTIC_EXPORT_REQUIRES_STALE", "diagnostic export requires a STALE revision")
+        export_id = __import__("uuid").uuid4().hex
+        provenance = self._export_provenance(
+            export_id=export_id,
+            export_kind="diagnostic",
+            revision=revision,
+            bundle_manifest_hash=integrity["bundle_manifest_hash"],
+            bundle_status="verified",
+            freshness_status=freshness,
+            diagnostic_only=True,
+            destination=output,
+        )
+        self._write_bundle_export_files(revision, by_type, provenance, output)
+        provenance_object_id = self.store.write_bytes_object(self._canonical_json_v1_bytes(provenance))
+        export = self.store.insert_export_record(
+            export_id=export_id,
+            artifact_id=revision.artifact_id,
+            revision_id=revision.revision_id,
+            run_id=revision.run_id,
+            content_hash=revision.content_hash,
+            destination=str(output),
+            provenance_object_id=provenance_object_id,
+            export_kind="diagnostic",
+            freshness_status=freshness,
+            diagnostic_only=1,
+            not_an_execution_package=1,
+            execution_ready=0,
+            bundle_manifest_hash=integrity["bundle_manifest_hash"],
+            error_code="",
+        )
+        return {
+            "status": "EXPORTED",
+            "export_id": export.export_id,
+            "revision_id": revision.revision_id,
+            "export_kind": "diagnostic",
+            "destination": str(output),
+            "bundle_manifest_hash": integrity["bundle_manifest_hash"],
+            "freshness_status": freshness,
+            "diagnostic_only": True,
+            "not_an_execution_package": True,
+            "execution_ready": False,
+        }
+
+    def export_storyboard_bundle(self, revision_id, export_kind, output):
+        revision = self._revision_or_raise(revision_id)
+        if revision.artifact_type != "storyboard" or revision.content_profile != STORYBOARD_CANONICAL_PROFILE:
+            raise BundleError("BUNDLE_PROFILE_UNSUPPORTED", "revision does not use the Storyboard canonical bundle profile")
+        normalized = export_kind.replace("_", "-")
+        if normalized == "formal-review":
+            return self._export_storyboard_formal_review(revision, output)
+        if normalized == "diagnostic":
+            return self._export_storyboard_diagnostic(revision, output)
+        raise BundleExportError("EXPORT_NOT_EXECUTION_READY", "execution export is not implemented in this slice")
+
+    def attach_export_dependency(self, child_revision_id, parent_export_id, relation_type):
+        export = self.store.get_export_record(parent_export_id)
+        if export is None:
+            raise NotFound("export not found: %s" % parent_export_id)
+        if export.export_kind == "diagnostic":
+            raise DiagnosticParentError("DIAGNOSTIC_EXPORT_NOT_PARENTABLE", "diagnostic exports cannot be dependency parents")
+        return self.store.insert_revision_dependency(
+            child_revision_id=child_revision_id,
+            parent_revision_id=export.revision_id,
+            relation_type=relation_type,
+            parent_content_hash=export.content_hash,
+            parent_approval_record_id="",
+        )
 
     def run_acceptance(self, skill, acceptance_root, runtime, model, mock_mode="success"):
         _validate_skill_input_mode(skill, "input")
