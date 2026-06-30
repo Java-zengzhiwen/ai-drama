@@ -22,7 +22,7 @@ from .runtime import RuntimeErrorBase, run_runtime
 from .validators import recursive_freshness_status, run_declared_validators
 from .storyboard_canonical import CONTENT_PROFILE as STORYBOARD_CANONICAL_PROFILE, canonical_storyboard_hash, parse_canonical_json, serialize_canonical_json
 from .storyboard_migration import StoryboardMigrationError, legacy_markdown_to_canonical, write_migration_preview
-from .storyboard_renderer import render_storyboard_markdown
+from .storyboard_renderer import RENDERER_ID, RENDERER_VERSION, render_storyboard_markdown
 
 
 class ApprovalBlocked(RuntimeError):
@@ -114,6 +114,59 @@ class RuntimeService:
 
     def __exit__(self, *_):
         self.close()
+
+    def _sha256_bytes(self, data):
+        return hashlib.sha256(data).hexdigest()
+
+    def _canonical_json_v1_bytes(self, value):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+    def _rendered_markdown_output(self, canonical):
+        data = render_storyboard_markdown(canonical).encode("utf-8")
+        return {
+            "logical_type": "rendered_markdown",
+            "bytes": data,
+            "content_hash": self._sha256_bytes(data),
+            "media_type": "text/markdown",
+            "generator": RENDERER_ID,
+            "generator_version": RENDERER_VERSION,
+        }
+
+    def _build_storyboard_bundle_manifest(self, *, revision_id, canonical_content_hash, rendered_markdown_hash):
+        output = {
+            "logical_type": "rendered_markdown",
+            "content_hash": rendered_markdown_hash,
+            "media_type": "text/markdown",
+            "generator": RENDERER_ID,
+            "generator_version": RENDERER_VERSION,
+        }
+        business_preimage = {
+            "schema_version": "bundle-manifest-v1",
+            "artifact_type": "storyboard",
+            "canonical_content_hash": canonical_content_hash,
+            "outputs": [output],
+        }
+        bundle_manifest_hash = self._sha256_bytes(self._canonical_json_v1_bytes(business_preimage))
+        manifest = {
+            "schema_version": "bundle-manifest-v1",
+            "revision_id": revision_id,
+            "artifact_type": "storyboard",
+            "canonical_content_hash": canonical_content_hash,
+            "outputs": [output],
+            "bundle_manifest_hash": bundle_manifest_hash,
+        }
+        data = self._canonical_json_v1_bytes(manifest)
+        return {
+            "logical_type": "bundle_manifest",
+            "bytes": data,
+            "content_hash": self._sha256_bytes(data),
+            "media_type": "application/json",
+            "generator": "bundle-manifest-builder",
+            "generator_version": "1",
+            "business_preimage": business_preimage,
+            "bundle_manifest_hash": bundle_manifest_hash,
+            "manifest": manifest,
+        }
 
     def run_acceptance(self, skill, acceptance_root, runtime, model, mock_mode="success"):
         _validate_skill_input_mode(skill, "input")
