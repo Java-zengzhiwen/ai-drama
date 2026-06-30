@@ -140,6 +140,7 @@ def test_canonical_storyboard_export_renders_markdown_without_rewriting_canonica
             "mock-storyboard-canonical-v1",
         )
         canonical_before = service.store.read_text(result.revision.content_object_id)
+        service.materialize_storyboard_bundle(result.revision.revision_id)
         service.approve_revision(result.revision.revision_id, "tester")
 
         output = tmp_path / "canonical-storyboard.md"
