@@ -3,7 +3,8 @@
 Document Status: DESIGN_SPEC_PENDING_USER_REVIEW
 Review Status Addressed: DESIGN_SPEC_REVISION_REQUIRED
 Design Date: 2026-07-02
-Baseline Commit: 6e8adb961e32714ce5d5c36a33297072ee97473e
+Initial Design Baseline Commit: 6e8adb961e32714ce5d5c36a33297072ee97473e
+Latest Reviewed Design Input Commit: a820c5dd454ef579e34dc1a2d95ad5d09b6e07a3
 Implementation Planning: IMPLEMENTATION_PLANNING_NOT_AUTHORIZED
 Implementation: IMPLEMENTATION_NOT_AUTHORIZED
 
@@ -127,13 +128,33 @@ Top-level object rules:
 | `scope` | string | yes | empty no, null no | exact `set` only | invariant | included in provenance | included in provenance | blocks any other value | no |
 | `source_storyboard_revision_id` | string | yes | empty no, null no | unique per artifact business key | invariant | included in provenance | included in provenance | must match artifact key | yes |
 | `render_language` | string | yes | empty no, null no | enum `zh-Hans`, `en`; one formal language per Revision | invariant | controls natural-language render | controls natural-language render | language consistency lint is non-blocking | no |
-| `renderer.profile_id` | string | yes | empty no, null no | exact renderer profile ID; no version range | invariant | selects renderer profile | selects renderer profile | blocks unknown profile | no |
-| `renderer.version` | string | yes | empty no, null no | exact renderer version; no version range | invariant | selects renderer version | selects renderer version | blocks unavailable renderer | no |
+| `renderer` | object | yes | empty no, null no | additionalProperties=false; see renderer schema below | invariant | selects renderer profile/version | selects renderer profile/version | blocks unavailable renderer | no |
 | `shots` | array of shot objects | yes | empty no, null no | unique `shot_id`; additionalProperties=false | invariant for membership | render source order | render source order | blocks missing source shot | yes |
 | `set_defaults` | object | optional | empty yes, null no | additionalProperties=false | see Section 8 | used before shot render | used before shot render | lint for unused defaults | yes when referencing facts |
-| `review_policy` | object | optional | empty yes, null no | additionalProperties=false | invariant | not rendered as prompt | not rendered as prompt | lint only | no |
 
 The root object has no `negative_constraints` field and no `asset_requirements` field. Negative constraint authority is limited to the set-default and shot-specific paths defined in Section 8. Asset reference authority is limited to `shots[].asset_reference_slots`; derived `asset-requirements.json` is output authority, not stored canonical authority.
+
+The root object has no review-behavior field. Review behavior is stored in Review Records and enforced by Approval Qualification; it is not Phase 3 v1 canonical content.
+
+`renderer` is required and closed with `additionalProperties=false`:
+
+| Field | Type | Required | Empty/null | Enum/unique/closed | Merge | Image renderer | Video renderer | Authoring lint | Storyboard fact reference |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `profile_id` | string | yes | empty no, null no | exact renderer profile ID; no `latest`; no version range | invariant | selects renderer profile | selects renderer profile | blocks unknown profile | no |
+| `version` | string | yes | empty no, null no | exact renderer version; no `latest`; no version range | invariant | selects renderer version | selects renderer version | blocks unavailable renderer | no |
+
+Canonical example:
+
+```json
+{
+  "renderer": {
+    "profile_id": "shot_prompt_standard",
+    "version": "1.0.0"
+  }
+}
+```
+
+Renderer Registry must resolve the exact `(profile_id, version)` pair. Formal Rendering fails closed when the renderer is unavailable. Changing renderer profile or version requires a new Shot Prompt Revision. Render Provenance and Approval Evidence reference and verify these canonical values; they do not create new renderer authority.
 
 Each `shots[]` item is closed with `additionalProperties=false` and contains:
 
@@ -144,7 +165,6 @@ Each `shots[]` item is closed with `additionalProperties=false` and contains:
 - optional `continuity`;
 - optional shot-level `negative_constraints`;
 - optional shot-level `asset_reference_slots`;
-- optional `language_hint`.
 
 `shot_id` is the exact source Storyboard shot ID. There is no separate shot-item `source_shot_id` field in stored canonical content; storing both would create duplicate shot identity authority.
 
@@ -197,7 +217,7 @@ Derived fields appear only in derived outputs, Store rows, or approval evidence.
 | `performance_progression` | string | optional | empty no when present, null no | closed parent object | replace | ignored | temporal performance phrase | warns on timeline ambiguity | yes |
 | `temporal_continuity` | string | optional | empty no when present, null no | closed parent object | replace | ignored | continuity bridge phrase | warns on missing source shot link | yes |
 | `video_only_constraints` | array of strings | optional | empty yes, null no | unique after append_dedup normalization | append_dedup | ignored | appended only to video prompt | warns on still-image terms | optional |
-| `dialogue_intents` | array of objects | optional | empty yes, null no | unique `source_dialogue_ref`; child objects closed | append_dedup by `source_dialogue_ref` | ignored | rendered as speech/performance clauses | validates source dialogue, timing, and visibility consistency | yes |
+| `dialogue_intents` | array of objects | required when `video_intent` exists | empty yes when source shot has no dialogue, null no | unique `source_dialogue_ref`; child objects closed | not inherited; no set-default merge | ignored | rendered in source dialogue order | validates strict source dialogue coverage, timing, and visibility consistency | yes |
 
 ### 4.4 `dialogue_intents` And `delivery`
 
@@ -208,12 +228,20 @@ Derived fields appear only in derived outputs, Store rows, or approval evidence.
 | `source_dialogue_ref` | string | yes | empty no, null no | unique within the shot; must point to source Storyboard dialogue in this shot | append_dedup identity key | ignored | orders dialogue clause by source order | blocks duplicate or cross-shot ref | yes |
 | `utterance_mode` | string | yes | empty no, null no | enum `spoken`, `narration`, `inner_voice` | replace | ignored | selects vocalization mode | blocks lip-sync mismatch | yes |
 | `speaker_visibility` | string | yes | empty no, null no | enum `visible`, `partially_visible`, `off_screen`, `not_applicable` | replace | ignored | selects visibility clause | blocks invalid visibility | yes |
-| `lip_sync` | boolean | optional | null no | only meaningful for `spoken` with visible speaker | replace | ignored | adds lip-sync instruction when true | blocks impossible lip-sync | yes |
+| `lip_sync_required` | boolean | yes | null no | meaningful only for `spoken` with visible speaker | replace | ignored | adds lip-sync instruction when true | blocks impossible lip-sync | yes |
 | `relative_timing` | string | yes | empty no, null no | enum `immediate`, `after_brief_pause`, `after_action_cue`, `after_reaction_cue`, `after_previous_complete`, `interrupt_previous`, `overlap_previous` | replace | ignored | renders relative timing phrase | blocks missing timing | yes |
 | `post_dialogue_hold` | string | optional | empty no when present, null no | enum `none`, `brief`, `sustained` | replace | ignored | renders post-dialogue hold phrase | lint for overuse | optional |
 | `delivery` | object | optional | empty yes, null no | additionalProperties=false | replace | ignored | renders performance delivery | lint for over-specification | optional |
 
 Speaker identity is derived from the referenced Storyboard dialogue. Shot Prompt Canonical does not store `speaker_entity_id` or duplicate speaker facts as editable authority.
+
+Video dialogue coverage is strict:
+
+- when a shot has `video_intent`, `dialogue_intents` must exist;
+- when the source Storyboard shot has dialogue, `dialogue_intents` must cover every source dialogue entry one-to-one, in source order, with no omissions, duplicates, cross-shot references, or Runtime reordering;
+- when the source Storyboard shot has no dialogue, `dialogue_intents` must be an empty array;
+- when a shot has only `image_intent`, `dialogue_intents` is forbidden and Canonical Validation fails if it appears;
+- `dialogue_intents` is forbidden in set defaults because dialogue references are shot-specific and must not be inherited or merged across shots.
 
 `delivery` is closed with `additionalProperties=false`.
 
@@ -230,10 +258,10 @@ Speaker identity is derived from the referenced Storyboard dialogue. Shot Prompt
 Consistency rules:
 
 - `utterance_mode = spoken` permits `speaker_visibility` of `visible`, `partially_visible`, or `off_screen`.
-- `utterance_mode = spoken` with `lip_sync = true` requires `speaker_visibility` of `visible` or `partially_visible`.
-- `utterance_mode = narration` requires `speaker_visibility = not_applicable` and does not permit `lip_sync = true`.
-- `utterance_mode = inner_voice` requires `speaker_visibility = not_applicable` and does not permit `lip_sync = true`.
-- `speaker_visibility = off_screen` does not permit `lip_sync = true`.
+- `utterance_mode = spoken` with `lip_sync_required = true` requires `speaker_visibility` of `visible` or `partially_visible`.
+- `speaker_visibility = off_screen` requires `lip_sync_required = false`.
+- `utterance_mode = narration` requires `speaker_visibility = not_applicable` and `lip_sync_required = false`.
+- `utterance_mode = inner_voice` requires `speaker_visibility = not_applicable` and `lip_sync_required = false`.
 
 ### 4.5 `continuity`
 
@@ -245,11 +273,20 @@ Continuity item objects are closed with `additionalProperties=false`.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `entity_type` | string | yes | empty no, null no | enum `shot`, `character`, `prop`, `location` | append_dedup identity component | renders continuity subject | renders continuity subject | blocks unknown type | yes |
 | `entity_id` | string | yes | empty no, null no | must exist in current shot membership; for `shot`, equals current `shot_id` | append_dedup identity component | renders entity continuity | renders entity continuity | blocks global-only references | yes |
-| `requirement` | string | yes | empty no, null no | closed parent object | append_dedup identity component | continuity phrase | continuity phrase | warns if vague | yes |
+| `requirement` | string | yes | empty no, null no | enum `required`, `optional` | append_dedup identity component | continuity phrase | continuity phrase | warns if vague | yes |
 | `scope` | string | yes | empty no, null no | enum `set_baseline`, `previous_occurrence`, `specific_shot` | append_dedup identity component | controls continuity source | controls continuity source | blocks non-v1 values | yes |
 | `source_shot_id` | string | required only when `scope = specific_shot` | empty no when present, null no | must exist in source Storyboard | append_dedup identity component | bridge reference | temporal bridge reference | blocks missing target for `specific_shot` | yes |
-| `purposes` | array of strings | optional | empty yes, null no | enum values `image`, `video`, `asset_requirement`, `negative_prompt`; unique after append_dedup normalization | append_dedup value | filters image use | filters video use | warns when omitted and ambiguous | no |
+| `purposes` | array of strings | optional | empty yes, null no | enum values `identity`, `costume`, `scene_layout`, `prop_identity`, `prop_state`, `keyframe_reference`; unique after append_dedup normalization | append_dedup value | filters asset-purpose use | filters asset-purpose use | blocks output/modality values | no |
+| `modality_usage` | array of strings | yes | empty no, null no | enum values `image`, `video`; unique after append_dedup normalization | append_dedup value | includes matching image continuity | includes matching video continuity | blocks unsupported modality | no |
 | `note` | string | optional | empty no when present, null no | closed parent object | append_dedup value | not rendered unless selected by renderer profile | not rendered unless selected by renderer profile | lint only | optional |
+
+Continuity scope rules:
+
+- `set_baseline`: `source_shot_id` is forbidden; continuity source is the set baseline.
+- `previous_occurrence`: `source_shot_id` is forbidden; Runtime resolves the previous occurrence of the same entity in the same Source Storyboard Revision. If no earlier shot contains that entity, Canonical Validation fails. Runtime must not look forward.
+- `specific_shot`: `source_shot_id` is required, must belong to the same Source Storyboard Revision, must be earlier than the current shot, must contain the same entity, and must not be the current or a future shot.
+
+Continuity is Shot/Entity level. It must not introduce unstated Storyboard facts or modify frozen Storyboard facts. A duplicate continuity identity with different payload fails canonical validation. Renderers only render continuity whose `modality_usage` contains the current modality.
 
 ### 4.6 `negative_constraints`
 
@@ -272,7 +309,6 @@ Asset reference slot objects are authoring canonical. They are closed with `addi
 
 | Field | Type | Required | Empty/null | Enum/unique/closed | Merge policy | Image renderer | Video renderer | Authoring lint | Storyboard fact reference |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `shot_id` | string | yes | empty no, null no | must be in current set | append_dedup identity component | groups asset requirements | groups asset requirements | blocks missing shot | yes |
 | `entity_type` | string | yes | empty no, null no | enum `character`, `prop`, `location` | append_dedup identity component | entity reference | entity reference | blocks unsupported entity type | yes |
 | `entity_id` | string | yes | empty no, null no | must belong to current Shot membership | append_dedup identity component | entity reference | entity reference | blocks global-only reference | yes |
 | `purposes` | array of objects | yes | empty no, null no | one slot may contain multiple purposes; each purpose object closed | append_dedup payload; divergent duplicate slot fails | purpose notes | purpose notes | keeps enum coarse-grained | yes |
@@ -282,12 +318,16 @@ Purpose objects are closed with `additionalProperties=false`.
 
 | Field | Type | Required | Empty/null | Enum/unique/closed | Merge policy | Image renderer | Video renderer | Authoring lint | Storyboard fact reference |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `purpose` | string | yes | empty no, null no | enum `identity`, `wardrobe`, `prop`, `environment`, `continuity` | append_dedup identity key within slot | purpose note | purpose note | keeps enum coarse-grained | yes |
+| `purpose` | string | yes | empty no, null no | enum `identity`, `costume`, `scene_layout`, `prop_identity`, `prop_state`, `keyframe_reference`, `other` | append_dedup identity key within slot | purpose note | purpose note | keeps enum coarse-grained | yes |
 | `requirement` | string | yes | empty no, null no | enum `required`, `optional` | append_dedup payload | requirement note | requirement note | warns on optional high-risk omission | yes |
 | `modality_usage` | array of strings | yes | empty no, null no | enum values `image`, `video`; unique after append_dedup normalization | append_dedup payload | filters image use | filters video use | blocks unsupported modality | no |
-| `usage_note` | string | optional | empty no when present, null no | required when intent is ambiguous | append_dedup payload | optional note | optional note | lint for vague note | optional |
+| `usage_note` | string | required when `purpose = other`, otherwise optional | empty no when present, null no | closed parent object | append_dedup payload | optional note | optional note | blocks empty note for `other` | optional |
 
 Each shot may contain at most one asset reference slot for the same `(entity_type, entity_id)`. That slot contains one or more purpose objects. This avoids one-slot-per-purpose duplication.
+
+Asset slot shot identity comes only from the parent shot item. Slot objects do not contain `shot_id`.
+
+Within a slot, `purpose` values are unique. A divergent duplicate purpose fails Canonical Validation and must not silently override. `modality_usage` is a non-empty array with unique values limited to `image` and `video`.
 
 `slot_id` is not an author-maintained canonical field and does not appear in stored canonical content. It is Runtime-owned derived output for `asset-requirements.json` only:
 
@@ -295,9 +335,11 @@ Each shot may contain at most one asset reference slot for the same `(entity_typ
 
 `source_storyboard_revision_id`, `shot_id`, `entity_type`, `entity_id`.
 
-Because `purpose` is not part of the tuple, one asset slot can carry multiple purposes without producing multiple slot IDs. Validators reject any authored `slot_id` in canonical input.
+Because `purpose`, `requirement`, `modality_usage`, `notes`, and concrete asset binding data are not part of the tuple, one asset slot can carry multiple purposes without producing multiple slot IDs. Validators reject any authored `slot_id` in canonical input.
 
 Asset slots do not require empty entries for every Storyboard entity. Only entities that need an asset reference slot appear in `asset_reference_slots`. An asset entity must belong to the current Shot membership; upstream canon may provide details for that entity, but it cannot expand the set of entities allowed for the shot.
+
+`asset-requirements.json` is derived by Runtime and adds `shot_id`, `slot_id`, `entity_type`, `entity_id`, `purposes`, and continuity handoff data.
 
 ## 5. Storyboard Fact Binding
 
@@ -383,7 +425,6 @@ Only three merge policies exist in v1:
 | `video_intent` | object | optional | empty yes, null no | only supported child paths; additionalProperties=false | child path policy | ignored | video uses merged values | warns when no video shots exist | optional |
 | `continuity` | array of objects | optional | empty yes, null no | child objects additionalProperties=false; stable key unique | append_dedup | filtered by purposes | filtered by purposes | validates source facts | yes |
 | `negative_constraints` | array of objects | optional | empty yes, null no | child objects additionalProperties=false; `constraint_id` unique | append_dedup | filtered by modality | filtered by modality | warns on vague text | optional |
-| `review_policy` | object | optional | empty yes, null no | additionalProperties=false | invariant | not rendered | not rendered | lint only | no |
 
 Supported set-default paths:
 
@@ -408,9 +449,10 @@ Supported set-default paths:
 | `video_intent.video_only_constraints` | string array | append_dedup | normalized string | video renderer only |
 | `continuity` | object array | append_dedup | `entity_type`, `entity_id`, `scope`, `source_shot_id`, `requirement` | filtered by `purposes` |
 | `negative_constraints` | object array | append_dedup | `constraint_id` | filtered by `modality_usage` |
-| `review_policy` | object | invariant | field path | not rendered |
 
 `set_defaults.negative_constraints` is the only set-wide negative constraint location. Shot-level `negative_constraints` is the only shot-specific negative constraint location. The root object has no negative constraint field, and derived rendered negative prompts are never canonical authority.
+
+`dialogue_intents` is not a supported set-default path. Dialogue references belong to a concrete shot and never participate in set-default inheritance or cross-shot append_dedup.
 
 `append_dedup` is frozen:
 
@@ -430,7 +472,7 @@ Canonical validation and renderers must use the same append_dedup implementation
 
 Rendering is deterministic and derived. Rendered outputs never become canonical authority.
 
-The Phase 3 renderer produces:
+The Phase 3 renderer produces immutable candidate objects first:
 
 - `rendered-positive-prompts.json`;
 - `rendered-negative-prompts.json`;
@@ -438,7 +480,7 @@ The Phase 3 renderer produces:
 - `render-provenance.json`;
 - `review.md`.
 
-The Validation Orchestrator produces `validation-report.json`. The Prompt Renderer does not generate validation reports.
+Candidate objects may be written to the content-addressed object store, but Render and Render Validation do not write formal `revision_outputs`, do not write the Bundle Manifest, and do not make the Revision Bundle-ready. The Validation Orchestrator produces `validation-report.json` as a candidate object after Render Validation. The Prompt Renderer does not generate validation reports.
 
 Positive prompt rendering:
 
@@ -476,7 +518,22 @@ Render provenance does not store its own hash, the Bundle Manifest hash, the Qua
 
 ## 10. Content Bundle And Revision Outputs
 
-The Content Bundle is materialized after canonical validation and rendering. It contains the canonical source member and the derived members required to reproduce bundle integrity.
+The Content Bundle is materialized only after Canonical Validation PASS, Render Candidate Objects exist, Render Validation PASS, and the Validation Report Candidate Object exists.
+
+Frozen materialization flow:
+
+```text
+Canonical Validation
+-> Render Candidate Objects
+-> Render Validation
+-> Validation Report Candidate Object
+-> Content Bundle Materialization Transaction
+-> Bundle Integrity
+```
+
+Only the Content Bundle Materialization Transaction writes formal `revision_outputs`. Render Validation PASS alone must not create any Phase 3 formal output row.
+
+The Content Bundle contains the canonical source member and the derived members required to reproduce bundle integrity.
 
 Bundle member and `revision_outputs.logical_type` mapping is frozen:
 
@@ -495,6 +552,28 @@ Bundle member and `revision_outputs.logical_type` mapping is frozen:
 `canonical-content.json` is a virtual/source member. Its bytes come from `revisions.content_object_id`. The manifest records its member hash and logical role, but Store does not insert a `revision_outputs` row for it.
 
 `bundle-manifest.json` records hashes for every bundle member except itself. Its own hash can be stored on the `bundle_manifest` output row as `content_hash` and `bundle_manifest_hash`, following the existing bundle pattern.
+
+Formal `revision_outputs` rows for these logical types are inserted together in one DB transaction:
+
+- `shot_prompt_positive_prompts`;
+- `shot_prompt_negative_prompts`;
+- `shot_prompt_asset_requirements`;
+- `shot_prompt_render_provenance`;
+- `shot_prompt_review_markdown`;
+- `shot_prompt_validation_report`;
+- `bundle_manifest`.
+
+Atomicity rules:
+
+- if any formal output row insert fails, the whole transaction rolls back and the current Revision has zero Phase 3 formal `revision_outputs` rows;
+- partial bundles are not allowed;
+- an already complete materialization with matching hashes returns existing complete;
+- existing partial rows fail closed;
+- an existing row with the same logical type and a conflicting hash fails closed;
+- approval forbids overwriting formal outputs;
+- the manifest is built from final candidate bytes;
+- the manifest does not include itself in the member hash list;
+- `qualification-report.json` is outside this transaction and outside the bundle.
 
 The Phase 3 migration must expand the current `revision_outputs.logical_type` CHECK to include:
 
@@ -530,7 +609,7 @@ It validates:
 - formal modality requirement;
 - merge policy validity;
 - continuity and asset membership;
-- dialogue visibility and lip-sync consistency;
+- strict video dialogue coverage and lip-sync consistency;
 - language consistency lint as non-blocking lint.
 
 Canonical Validation does not validate bundle integrity. Canonical Validation does not block because of open review records. Canonical Validation does not verify rendered output coverage.
@@ -558,8 +637,9 @@ Render Validation is where output coverage belongs. It is not pre-render canonic
 Persistence:
 
 - render validation results are stored through `validation_results`;
-- the Validation Orchestrator writes `validation-report.json` and stores it as `shot_prompt_validation_report`;
-- output rows use the frozen logical types in Section 10.
+- the Validation Orchestrator writes `validation-report.json` as a candidate object;
+- no Phase 3 formal `revision_outputs` row is written during Render Validation;
+- `validation-report.json` receives its formal `shot_prompt_validation_report` row only when the Content Bundle Materialization Transaction succeeds.
 
 ### 11.3 Bundle Integrity
 
@@ -587,7 +667,7 @@ Persistence:
 Approval Qualification runs after:
 
 1. Canonical Validation PASS;
-2. Rendering PASS;
+2. Render Validation PASS;
 3. Content Bundle Materialization complete;
 4. Bundle Integrity PASS;
 5. Human Review status has no unresolved blocking review records.
@@ -616,7 +696,7 @@ Lifecycle:
 | --- | --- | --- | --- |
 | Draft | `revisions.approval_status` not approved/rejected/superseded/revoked | Revision exists; canonical content may be shared-only | formal canonical validation requested |
 | Formal-valid | `validation_results` | Canonical Validation PASS | rendering requested |
-| Rendered | `revision_outputs` | Render Validation PASS | bundle materialization requested |
+| Rendered | Render Validation PASS plus explicit render result/candidate object set | Render Validation PASS | bundle materialization requested |
 | Bundle-ready | `revision_outputs` plus bundle integrity result | Bundle Integrity PASS | human review requested |
 | Reviewable | review records | bundle-ready and review surface exists | all blocking review records resolved |
 | Approved | `revisions.approval_status = 'approved'` plus approval record | Approval Qualification PASS and approval transaction commits | superseded or revoked |
@@ -685,6 +765,8 @@ Review status is computed from events:
 - latest event `resolved` means resolved;
 - latest event `reopened` means open;
 - latest event `voided` removes the record from blocking calculations but preserves history.
+
+Review event ordering is stable. Current status calculation orders events by `created_at ASC, event_id ASC`. Latest event lookup uses `ORDER BY created_at DESC, event_id DESC LIMIT 1`. No sequence column is added in v1; `(created_at, event_id)` is the stable sorting key, including when multiple events share the same timestamp.
 
 Review body is immutable. Status changes are append-only events.
 
@@ -770,9 +852,10 @@ Review table migration:
 - enforce `scope = shot` with `shot_id IS NOT NULL`;
 - add index `review_records_revision_shot_idx` on `(revision_id, shot_id)`;
 - add index `review_records_artifact_revision_idx` on `(artifact_id, revision_id)`;
-- add index `review_record_events_review_id_created_idx` on `(review_id, created_at)`;
+- add index `review_record_events_review_id_created_event_idx` on `(review_id, created_at, event_id)`;
 - enforce event types `opened`, `resolved`, `reopened`, `voided`;
-- compute status from events rather than storing mutable status on `review_records`.
+- compute status from events rather than storing mutable status on `review_records`;
+- use `(created_at, event_id)` as the stable event ordering key.
 
 Transaction requirements:
 
@@ -792,8 +875,9 @@ Required service responsibilities:
 - create a new Revision from canonical content;
 - run Draft Canonical Validation;
 - run Formal Canonical Validation;
-- render deterministic outputs;
-- materialize the Content Bundle;
+- render deterministic candidate outputs without formal output rows;
+- run Render Validation and create the validation report candidate object;
+- materialize the Content Bundle in one transaction;
 - check Bundle Integrity;
 - create immutable review surface output;
 - create and update review records through append-only events;
@@ -807,7 +891,7 @@ Required CLI shape:
 - commands must not accept v1 partial set selectors;
 - Draft validation command may accept shared-only content;
 - formal validation command must enforce modality requirements;
-- bundle command must run only after render validation passes;
+- bundle command must run only after render validation passes and must insert all formal output rows atomically;
 - approval command must run only after Approval Qualification passes;
 - revoke command must use `shot_prompt_approval_revoked`.
 
@@ -828,27 +912,34 @@ Acceptance criteria must be executable and must cover:
 9. source binding: invalid `shot_id`, continuity `source_shot_id`, `source_dialogue_ref`, or asset slot `entity_id` fails canonical validation;
 10. shot identity: shot item does not store both `shot_id` and `source_shot_id`;
 11. asset slots: no empty slots are required for unused Storyboard entities;
-12. asset slots: each shot has at most one slot per entity and each slot may contain multiple purposes;
-13. `slot_id`: derived only in `asset-requirements.json`, excludes purpose from the derivation tuple, and is rejected in authored canonical content;
-14. purpose enum: only the coarse v1 asset purposes are valid;
-15. continuity: continuity source scope is limited to `set_baseline`, `previous_occurrence`, and `specific_shot`;
-16. dialogue: `source_dialogue_ref`, `relative_timing`, and `post_dialogue_hold` rules are validated, and speaker identity is derived from Storyboard dialogue;
-17. merge: only `replace`, `append_dedup`, and `invariant` exist;
-18. append_dedup: NFC, trim, case-sensitive, first occurrence, default-before-shot order, object identity key, and no locale sorting are covered;
-19. negative rendering: explicit constraints plus renderer fact invariants are present;
-20. language lint: language consistency warning does not block formal validation, rendering, bundle integrity, or approval by itself;
-21. render provenance: does not contain its own hash, Bundle Manifest hash, or Qualification Report hash;
-22. validation report: `validation-report.json` is generated by the Validation Orchestrator, not the Prompt Renderer;
-23. output mapping: every Phase 3 output uses the exact logical type in Section 10;
-24. canonical source member: `canonical-content.json` has no `revision_outputs` row;
-25. qualification report: no `revision_outputs` row, no bundle member, no manifest member;
-26. four layers: Canonical Validation, Render Validation, Bundle Integrity, and Approval Qualification fail independently;
-27. review records: set-level and shot-level reviews are supported; open blocking review blocks Approval Qualification but not Canonical Validation or Bundle Integrity;
-28. supersession: approving a new Revision supersedes the old approved Revision in one transaction;
-29. revocation: revoking an approval sets `revoked` and records `shot_prompt_approval_revoked`;
-30. approval evidence: approval record binds qualification report evidence;
-31. authoring/stored schema: Runtime does not inject undefined canonical business fields;
-32. Phase 4 Eligibility: live computation fails when source freshness or bundle integrity changes after approval.
+12. asset slots: slot objects do not contain `shot_id`;
+13. asset slots: each shot has at most one slot per entity and each slot may contain multiple purposes;
+14. asset purposes: `identity`, `costume`, `scene_layout`, `prop_identity`, `prop_state`, `keyframe_reference`, and `other` are the only slot purpose values, and `other` requires `usage_note`;
+15. `slot_id`: derived only in `asset-requirements.json`, excludes purpose, requirement, modality usage, notes, and concrete asset binding data from the derivation tuple, and is rejected in authored canonical content;
+16. continuity: continuity `requirement` is `required` or `optional`, source scope is limited to `set_baseline`, `previous_occurrence`, and `specific_shot`, and `modality_usage` is required;
+17. continuity: continuity purposes use asset purpose values rather than output or modality names, and `specific_shot` cannot target the current or a future shot;
+18. dialogue: `source_dialogue_ref`, `relative_timing`, `post_dialogue_hold`, and `lip_sync_required` rules are validated, and speaker identity is derived from Storyboard dialogue;
+19. dialogue: video shots strictly cover source dialogue one-to-one and image-only shots cannot contain dialogue intents;
+20. merge: only `replace`, `append_dedup`, and `invariant` exist;
+21. append_dedup: NFC, trim, case-sensitive, first occurrence, default-before-shot order, object identity key, and no locale sorting are covered;
+22. negative rendering: explicit constraints plus renderer fact invariants are present;
+23. language lint: language consistency warning does not block formal validation, rendering, bundle integrity, or approval by itself;
+24. render provenance: does not contain its own hash, Bundle Manifest hash, or Qualification Report hash;
+25. validation report: `validation-report.json` is generated by the Validation Orchestrator, not the Prompt Renderer;
+26. render validation: Render Validation PASS does not create any Phase 3 formal `revision_outputs` row;
+27. content bundle atomicity: any Content Bundle Materialization failure leaves zero Phase 3 formal `revision_outputs` rows for that Revision;
+28. content bundle conflicts: partial rows and same logical type with conflicting hash fail closed;
+29. output mapping: every Phase 3 output uses the exact logical type in Section 10;
+30. canonical source member: `canonical-content.json` has no `revision_outputs` row;
+31. qualification report: no `revision_outputs` row, no bundle member, no manifest member;
+32. four layers: Canonical Validation, Render Validation, Bundle Integrity, and Approval Qualification fail independently;
+33. review records: set-level and shot-level reviews are supported; open blocking review blocks Approval Qualification but not Canonical Validation or Bundle Integrity;
+34. review events: equal `created_at` values are resolved deterministically by `event_id`;
+35. supersession: approving a new Revision supersedes the old approved Revision in one transaction;
+36. revocation: revoking an approval sets `revoked` and records `shot_prompt_approval_revoked`;
+37. approval evidence: approval record binds qualification report evidence;
+38. authoring/stored schema: Runtime does not inject undefined canonical business fields;
+39. Phase 4 Eligibility: live computation fails when source freshness or bundle integrity changes after approval.
 
 Verification commands for the later implementation must include repository tests and a Phase 3 verification tool modeled after `tools/verify_phase2_minimal_bundle_foundation.py`.
 
@@ -865,7 +956,11 @@ The following are explicitly deferred and are not Phase 3 v1 capabilities:
 - platform upload flows;
 - external asset binding by `asset_id`;
 - external URL, filesystem path, or upload ID persistence for generated assets;
+- Hard/Soft Rule Registry;
 - waiver mechanics;
+- Phase 4 Asset Binding;
+- Phase 5 Execution Plan;
+- Phase 6 Platform Adapter;
 - timecode-level video segmentation;
 - dependency DAG visualization beyond existing revision dependency records;
 - rule tiers beyond blocking validation and non-blocking lint;
@@ -889,6 +984,11 @@ Deferred terms may appear in validator diagnostics, boundary documentation, and 
 - B11 fixed: continuity scope is limited to `set_baseline`, `previous_occurrence`, and `specific_shot`.
 - B12 fixed: dialogue intent uses `source_dialogue_ref`, relative timing, and post-dialogue hold while deriving speaker facts from Storyboard dialogue.
 - B13 fixed: authoring schema and stored canonical schema are one contract; Runtime may normalize and reject but not inject undefined canonical business fields.
+- B14 fixed: the undefined per-shot language field and canonical review-behavior field are removed; `render_language` is the only formal language authority, and `renderer` is a required closed object with exact `profile_id` and `version`.
+- B15 fixed: asset reference slots are nested under shot items without child `shot_id`, one slot per shot/entity, one or more purpose objects per slot, frozen v1 purpose enum, `other` requires `usage_note`, and `slot_id` is derived output only.
+- B16 fixed: continuity has required `requirement`, required `modality_usage`, frozen continuity scope rules, asset-purpose values for `purposes`, no future-shot references, and fail-closed duplicate identity behavior.
+- B17 fixed: dialogue uses `lip_sync_required`, strict video dialogue coverage, Storyboard-derived speaker facts, empty arrays for video shots without dialogue, image-only dialogue rejection, and no set-default dialogue inheritance.
+- B18 fixed: Render and Render Validation produce candidate objects only; formal `revision_outputs` rows are inserted atomically during Content Bundle Materialization, with failure leaving zero formal rows and partial/conflicting rows failing closed.
 - H01 fixed: asset entities must belong to current Shot membership; upstream canon cannot expand current-shot membership.
 - H02 fixed: `utterance_mode` and `speaker_visibility` are split and lip-sync consistency rules are explicit.
 - H03 fixed: Canonical locked constraints and Renderer Fact Invariants are distinct.
@@ -896,6 +996,8 @@ Deferred terms may appear in validator diagnostics, boundary documentation, and 
 - H05 fixed: Artifact Identity is normative with `artifact_type = shot_prompt_set`, `business_key = source_storyboard_revision_id`, generated internal ID, and DB unique key.
 - H06 fixed: Review Records support both `scope = set` with `shot_id IS NULL` and `scope = shot` with required `shot_id`.
 - H07 fixed: `validation-report.json` is generated by the Validation Orchestrator, and render provenance excludes self, manifest, and qualification hashes.
+- H08 fixed: Review Event current status uses `(created_at, event_id)` as the stable ordering key.
+- H09 fixed: document metadata distinguishes the initial design baseline commit from the latest reviewed design input commit without self-referencing this revision commit.
 - No code, schema, migration, skill, or test changes are authorized by this document.
 - No implementation planning is authorized by this document.
 - Acceptance criteria are testable.
