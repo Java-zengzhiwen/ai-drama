@@ -26,6 +26,7 @@ Allowed implementation files:
 - `tests/test_shot_prompt_store_migration.py`
 - `tests/test_shot_prompt_review_records.py`
 - `tests/shot_prompt_store_support.py`
+- `tests/test_storyboard_legacy_migration.py`
 
 Forbidden implementation files:
 
@@ -60,6 +61,7 @@ Forbidden implementation files:
 - `ai_drama_runtime/store.py:RuntimeStore.validation_results(self, revision_id)`
 - `tests/test_storyboard_legacy_migration.py:_create_planning_baseline_legacy_db(db_path)`
 - `tests/test_storyboard_legacy_migration.py:test_phase2_migration_replay_is_idempotent(tmp_path)`
+- `tests/test_storyboard_legacy_migration.py:test_revision_outputs_schema_matches_frozen_ddl(tmp_path)` currently freezes Phase 2 output DDL and must be compatibility-updated when Phase 3A expands `revision_outputs.logical_type`.
 
 ## Frozen Phase 3A Store Contract
 
@@ -111,14 +113,26 @@ REVISION_OUTPUT_LOGICAL_TYPES = (
 REVIEW_EVENT_TYPES = ("opened", "resolved", "reopened", "voided")
 ```
 
-All table rebuild helpers in Phase 3A are connection-local helpers. They use `conn.execute(...)` statements only and never open, commit, roll back, close, toggle foreign keys, or run script execution. The only transaction owner is `apply_phase3_store_migration(db_path)`.
+These constants are defined once in `ai_drama_runtime/shot_prompt_migration.py` in Task 2. Production code and tests import them from that module. They are not duplicated in test support, and later tasks do not redefine them.
+
+All table rebuild helpers in Phase 3A are connection-local helpers. They use `conn.execute(...)` statements only and never open, commit, roll back, close, toggle foreign keys, or run script execution. The only legacy migration transaction owner is `apply_phase3_store_migration(db_path)`.
+
+Phase 3A uses one migration model:
+
+- Fresh DB path: `RuntimeStore._init_schema()` creates the complete Phase 3A schema directly.
+- Legacy DB path: `RuntimeStore.__init__()` checks whether an existing DB needs Phase 3A migration before opening the normal Store connection. If migration is needed, it calls `apply_phase3_store_migration(db_path)`, then opens the normal connection after the orchestrator succeeds.
+- `RuntimeStore._ensure_columns()` remains limited to pre-existing Phase 0-2 additive compatibility work. It must not call Phase 3 destructive rebuild helpers and must not own Phase 3 migration transactions.
+- `apply_phase3_store_migration(db_path)` is the only Phase 3 legacy migration transaction owner. It toggles foreign keys, begins, commits, rolls back, checks transient tables, and closes its migration connection.
+- If `apply_phase3_store_migration(db_path)` fails during `RuntimeStore.__init__()`, RuntimeStore construction raises and does not leave a half-initialized Store connection.
+
+Production tasks require red-green TDD. Acceptance-only tasks may begin green when previous tasks own all implementation; they must not modify production files.
 
 ## Task Dependency Map
 
 | Task | Depends on | First symbols produced |
 | --- | --- | --- |
 | 1 | repository baseline | Store test support and schema snapshots |
-| 2 | Task 1 | deterministic Phase 3A preview |
+| 2 | Task 1 | shared Phase 3A constants and deterministic Phase 3A preview |
 | 3 | Tasks 1-2 | artifact business key schema and Store APIs |
 | 4 | Tasks 1-3 | expanded `revision_outputs` rebuild |
 | 5 | Tasks 1-4 | `revisions.approval_status` rebuild |
@@ -128,7 +142,7 @@ All table rebuild helpers in Phase 3A are connection-local helpers. They use `co
 | 9 | Tasks 1-8 | atomic review creation and event APIs |
 | 10 | Tasks 1-9 | latest validation query APIs |
 | 11 | Tasks 1-10 | atomic Phase 3 output insertion primitive |
-| 12 | Tasks 1-11 | migration orchestrator |
+| 12 | Tasks 1-11 | migration orchestrator and RuntimeStore legacy open path |
 | 13 | Tasks 1-12 | fresh-vs-migrated schema parity |
 | 14 | Tasks 1-13 | Phase 3A acceptance |
 
@@ -377,6 +391,51 @@ import sqlite3
 from pathlib import Path
 
 
+REVISION_APPROVAL_STATUSES = ("pending", "approved", "rejected", "superseded", "revoked")
+APPROVAL_ACTIONS = (
+    "script_approved",
+    "script_rejected",
+    "storyboard_approved",
+    "storyboard_rejected",
+    "shot_prompt_approved",
+    "shot_prompt_rejected",
+    "shot_prompt_approval_revoked",
+)
+APPROVAL_EVIDENCE_COLUMNS = (
+    "source_storyboard_revision_id",
+    "canonical_content_hash",
+    "bundle_manifest_hash",
+    "qualification_report_hash",
+    "qualification_report_object_id",
+    "renderer_profile_id",
+    "renderer_profile_version",
+    "qualification_profile_id",
+    "qualification_profile_version",
+)
+PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES = (
+    "shot_prompt_positive_prompts",
+    "shot_prompt_negative_prompts",
+    "shot_prompt_asset_requirements",
+    "shot_prompt_render_provenance",
+    "shot_prompt_review_markdown",
+    "shot_prompt_validation_report",
+    "bundle_manifest",
+)
+REVISION_OUTPUT_LOGICAL_TYPES = (
+    "rendered_positive_prompt",
+    "rendered_negative_prompt",
+    "rendered_markdown",
+    "shot_prompt_positive_prompts",
+    "shot_prompt_negative_prompts",
+    "shot_prompt_asset_requirements",
+    "shot_prompt_render_provenance",
+    "shot_prompt_review_markdown",
+    "shot_prompt_validation_report",
+    "bundle_manifest",
+)
+REVIEW_EVENT_TYPES = ("opened", "resolved", "reopened", "voided")
+
+
 REVIEW_INDEX_SQL = {
     "review_records_revision_shot_idx": "CREATE INDEX review_records_revision_shot_idx ON review_records(revision_id, shot_id)",
     "review_records_artifact_revision_idx": "CREATE INDEX review_records_artifact_revision_idx ON review_records(artifact_id, revision_id)",
@@ -596,7 +655,7 @@ def ensure_shot_prompt_artifact(self, *, project_id, chapter_id, source_storyboa
     return self.artifact_by_business_key("shot_prompt_set", "source_storyboard_revision_id", source_storyboard_revision_id)
 ```
 
-Wire `_ensure_artifact_business_key_columns_for_conn(self.conn)` into `RuntimeStore._ensure_columns(self)`. Use the same artifact columns and partial unique index in `RuntimeStore._init_schema(self)`.
+Use the same artifact columns and partial unique index in `RuntimeStore._init_schema(self)` for fresh databases. Do not call `_ensure_artifact_business_key_columns_for_conn()` from `RuntimeStore._ensure_columns()`. Legacy databases receive this helper only through `apply_phase3_store_migration(db_path)`.
 
 - [ ] **Step 4: Run the focused test**
 
@@ -637,6 +696,7 @@ git commit -m "feat: add shot prompt artifact business keys"
 - Modify: `ai_drama_runtime/store.py`
 - Modify: `ai_drama_runtime/shot_prompt_migration.py`
 - Test: `tests/test_shot_prompt_store_migration.py`
+- Test: `tests/test_storyboard_legacy_migration.py`
 - Verify: `python3 -m pytest tests/test_shot_prompt_store_migration.py::test_revision_outputs_accept_exact_logical_types_and_preserve_schema -q`
 
 - [ ] **Step 1: Write the failing test**
@@ -646,6 +706,7 @@ import sqlite3
 
 import pytest
 
+from ai_drama_runtime.shot_prompt_migration import PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES, REVISION_OUTPUT_LOGICAL_TYPES
 from ai_drama_runtime.store import RuntimeStore
 from tests.shot_prompt_store_support import create_phase2_legacy_db, index_sql, table_sql
 
@@ -680,6 +741,63 @@ def test_revision_outputs_accept_exact_logical_types_and_preserve_schema(tmp_pat
         indexes = index_sql(store.conn, "revision_outputs")
         assert "revision_outputs_content_hash_idx" in indexes
         assert "revision_outputs_object_id_idx" in indexes
+```
+
+Also update `tests/test_storyboard_legacy_migration.py::test_revision_outputs_schema_matches_frozen_ddl` so it remains a Phase 2 compatibility test instead of freezing the global enum to Phase 2 only:
+
+```python
+from ai_drama_runtime.shot_prompt_migration import REVISION_OUTPUT_LOGICAL_TYPES
+
+
+def test_revision_outputs_schema_matches_frozen_ddl(tmp_path):
+    with RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects") as store:
+        columns = _revision_output_columns(store)
+        assert list(columns) == [
+            "revision_output_id",
+            "revision_id",
+            "logical_type",
+            "object_id",
+            "content_hash",
+            "media_type",
+            "generator",
+            "generator_version",
+            "created_at",
+        ]
+        assert columns["revision_output_id"]["pk"] == 1
+        assert columns["revision_id"]["notnull"] == 1
+        assert columns["logical_type"]["notnull"] == 1
+        assert columns["object_id"]["notnull"] == 1
+        assert columns["content_hash"]["notnull"] == 1
+
+        table_sql = store.conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'revision_outputs'"
+        ).fetchone()["sql"]
+        for logical_type in ("rendered_positive_prompt", "rendered_negative_prompt", "rendered_markdown", "bundle_manifest"):
+            assert logical_type in table_sql
+        for logical_type in REVISION_OUTPUT_LOGICAL_TYPES:
+            assert logical_type in table_sql
+
+        index_names = {
+            row["name"]
+            for row in store.conn.execute("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'revision_outputs'")
+        }
+        assert "sqlite_autoindex_revision_outputs_1" in index_names
+        assert "sqlite_autoindex_revision_outputs_2" in index_names
+        assert "revision_outputs_content_hash_idx" in index_names
+        assert "revision_outputs_object_id_idx" in index_names
+        foreign_keys = [dict(row) for row in store.conn.execute("PRAGMA foreign_key_list(revision_outputs)").fetchall()]
+        assert foreign_keys == [
+            {
+                "id": 0,
+                "seq": 0,
+                "table": "revisions",
+                "from": "revision_id",
+                "to": "revision_id",
+                "on_update": "NO ACTION",
+                "on_delete": "RESTRICT",
+                "match": "NONE",
+            }
+        ]
 ```
 
 - [ ] **Step 2: Run the focused test and verify failure**
@@ -745,7 +863,7 @@ def _rebuild_revision_outputs_for_phase3(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS revision_outputs_object_id_idx ON revision_outputs(object_id)")
 ```
 
-Use `_create_revision_outputs_table(self.conn)` in `RuntimeStore._init_schema(self)` and `_rebuild_revision_outputs_for_phase3(self.conn)` in `_ensure_columns(self)`.
+Use `_create_revision_outputs_table(self.conn)` in `RuntimeStore._init_schema(self)` for fresh databases. Do not call `_rebuild_revision_outputs_for_phase3()` from `RuntimeStore._ensure_columns()`. Legacy databases receive this rebuild only through `apply_phase3_store_migration(db_path)`.
 
 - [ ] **Step 4: Run the focused test**
 
@@ -762,19 +880,19 @@ Expected:
 - [ ] **Step 5: Run related regressions**
 
 ```bash
-python3 -m pytest tests/test_storyboard_legacy_migration.py::test_revision_outputs_public_api_is_append_only -q
+python3 -m pytest tests/test_storyboard_legacy_migration.py::test_revision_outputs_schema_matches_frozen_ddl tests/test_storyboard_legacy_migration.py::test_revision_outputs_public_api_is_append_only tests/test_validators_approval_export.py::test_bundle_integrity_reports_invalid_output_combination -q
 ```
 
 Expected:
 
 ```text
-1 passed
+all selected tests passed
 ```
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tests/test_shot_prompt_store_migration.py ai_drama_runtime/store.py ai_drama_runtime/shot_prompt_migration.py
+git add tests/test_shot_prompt_store_migration.py tests/test_storyboard_legacy_migration.py ai_drama_runtime/store.py ai_drama_runtime/shot_prompt_migration.py
 git commit -m "feat: extend revision output logical types"
 ```
 
@@ -795,6 +913,7 @@ import sqlite3
 
 import pytest
 
+from ai_drama_runtime.shot_prompt_migration import REVISION_APPROVAL_STATUSES
 from ai_drama_runtime.store import RuntimeStore
 from tests.shot_prompt_store_support import create_phase2_legacy_db, index_sql, table_sql
 
@@ -949,6 +1068,7 @@ import sqlite3
 
 import pytest
 
+from ai_drama_runtime.shot_prompt_migration import APPROVAL_ACTIONS
 from ai_drama_runtime.store import RuntimeStore
 from tests.shot_prompt_store_support import create_phase2_legacy_db, table_sql
 
@@ -1044,7 +1164,7 @@ def _rebuild_approval_records_for_phase3(conn):
     conn.execute("DROP TABLE approval_records_old")
 ```
 
-Use `_create_approval_records_table(self.conn)` in `RuntimeStore._init_schema(self)` and `_rebuild_approval_records_for_phase3(self.conn)` in `_ensure_columns(self)`.
+Use `_create_approval_records_table(self.conn)` in `RuntimeStore._init_schema(self)` for fresh databases. Do not call `_rebuild_approval_records_for_phase3()` from `RuntimeStore._ensure_columns()`. Legacy databases receive this rebuild only through `apply_phase3_store_migration(db_path)`.
 
 - [ ] **Step 4: Run the focused test**
 
@@ -1089,6 +1209,7 @@ git commit -m "feat: extend approval action storage"
 - [ ] **Step 1: Write the failing test**
 
 ```python
+from ai_drama_runtime.shot_prompt_migration import APPROVAL_EVIDENCE_COLUMNS
 from ai_drama_runtime.store import RuntimeStore
 from tests.shot_prompt_store_support import create_phase2_legacy_db, table_columns
 
@@ -1243,6 +1364,7 @@ import sqlite3
 
 import pytest
 
+from ai_drama_runtime.shot_prompt_migration import REVIEW_EVENT_TYPES
 from ai_drama_runtime.store import RuntimeStore
 from tests.shot_prompt_store_support import create_phase2_legacy_db, index_sql, table_sql
 
@@ -1392,7 +1514,7 @@ def _ensure_review_tables_for_conn(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS review_record_events_review_id_created_event_idx ON review_record_events(review_id, created_at, event_id)")
 ```
 
-Call `_ensure_review_tables_for_conn(self.conn)` from both `RuntimeStore._init_schema(self)` and `_ensure_columns(self)`.
+Call `_ensure_review_tables_for_conn(self.conn)` from `RuntimeStore._init_schema(self)` for fresh databases. Do not call it from `RuntimeStore._ensure_columns()`. Legacy databases receive review tables only through `apply_phase3_store_migration(db_path)`.
 
 - [ ] **Step 4: Run the focused test**
 
@@ -1851,6 +1973,7 @@ git commit -m "feat: add latest validation store queries"
 ```python
 import pytest
 
+from ai_drama_runtime.shot_prompt_migration import PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
 from ai_drama_runtime.store import RuntimeStore
 from tests.shot_prompt_store_support import create_phase2_legacy_db
 
@@ -2065,12 +2188,64 @@ def test_apply_phase3_store_migration_rolls_back_to_logical_snapshot(tmp_path, m
         assert bool(store.conn.execute("PRAGMA foreign_keys").fetchone()[0])
         assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
         assert snapshot_database(store.conn)["transient_tables"] == []
+
+
+def test_runtime_store_open_runs_phase3_migration_orchestrator(tmp_path, monkeypatch):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+    calls = []
+    original = shot_prompt_migration.apply_phase3_store_migration
+
+    def wrapped(db_path_arg):
+        calls.append(str(db_path_arg))
+        return original(db_path_arg)
+
+    monkeypatch.setattr(shot_prompt_migration, "apply_phase3_store_migration", wrapped)
+
+    with RuntimeStore(db_path, objects_root) as store:
+        assert calls == [str(db_path)]
+        assert preview_phase3_store_migration(db_path)["status"] == "CURRENT"
+        assert store.get_revision("legacy-revision").revision_id == "legacy-revision"
+
+
+def test_runtime_store_open_does_not_half_initialize_when_migration_fails(tmp_path, monkeypatch):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    before = snapshot_database(conn)
+    conn.close()
+
+    original = shot_prompt_migration._rebuild_approval_records_for_phase3
+
+    def fail_after_approval_actions(conn):
+        original(conn)
+        raise RuntimeError("injected migration failure")
+
+    monkeypatch.setattr(
+        shot_prompt_migration,
+        "_rebuild_approval_records_for_phase3",
+        fail_after_approval_actions,
+    )
+
+    with pytest.raises(Phase3StoreMigrationError):
+        RuntimeStore(db_path, objects_root)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        assert snapshot_database(conn) == before
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        conn.close()
 ```
 
 - [ ] **Step 2: Run the focused test and verify failure**
 
 ```bash
-python3 -m pytest tests/test_shot_prompt_store_migration.py::test_apply_phase3_store_migration_is_idempotent_and_transactional tests/test_shot_prompt_store_migration.py::test_apply_phase3_store_migration_rolls_back_to_logical_snapshot -q
+python3 -m pytest tests/test_shot_prompt_store_migration.py::test_apply_phase3_store_migration_is_idempotent_and_transactional tests/test_shot_prompt_store_migration.py::test_apply_phase3_store_migration_rolls_back_to_logical_snapshot tests/test_shot_prompt_store_migration.py::test_runtime_store_open_runs_phase3_migration_orchestrator tests/test_shot_prompt_store_migration.py::test_runtime_store_open_does_not_half_initialize_when_migration_fails -q
 ```
 
 Expected:
@@ -2103,7 +2278,6 @@ def apply_phase3_store_migration(db_path):
             _rebuild_revisions_for_phase3(conn)
             _rebuild_revision_outputs_for_phase3(conn)
             _rebuild_approval_records_for_phase3(conn)
-            _ensure_approval_evidence_columns_for_conn(conn)
             _ensure_review_tables_for_conn(conn)
             failures = conn.execute("PRAGMA foreign_key_check").fetchall()
             if failures:
@@ -2132,23 +2306,41 @@ MIGRATION_STEPS = (
     "artifact_business_key",
     "revision_status",
     "revision_outputs",
-    "approval_actions",
-    "approval_evidence",
+    "approval_records",
     "review_tables",
     "foreign_key_check",
 )
 ```
 
+Update `RuntimeStore.__init__(self, db_path, objects_root)` for Model A:
+
+```python
+def __init__(self, db_path, objects_root):
+    self.db_path = Path(db_path)
+    self.objects_root = Path(objects_root)
+    self.db_path.parent.mkdir(parents=True, exist_ok=True)
+    self.objects_root.mkdir(parents=True, exist_ok=True)
+    if self.db_path.exists() and self.db_path.stat().st_size > 0:
+        from ai_drama_runtime import shot_prompt_migration
+
+        if shot_prompt_migration.preview_phase3_store_migration(self.db_path)["status"] == "NEEDS_MIGRATION":
+            shot_prompt_migration.apply_phase3_store_migration(self.db_path)
+    self.conn = sqlite3.connect(str(self.db_path))
+    self.conn.row_factory = sqlite3.Row
+    self.conn.execute("PRAGMA foreign_keys = ON")
+    self._init_schema()
+```
+
 - [ ] **Step 4: Run the focused test**
 
 ```bash
-python3 -m pytest tests/test_shot_prompt_store_migration.py::test_apply_phase3_store_migration_is_idempotent_and_transactional tests/test_shot_prompt_store_migration.py::test_apply_phase3_store_migration_rolls_back_to_logical_snapshot -q
+python3 -m pytest tests/test_shot_prompt_store_migration.py::test_apply_phase3_store_migration_is_idempotent_and_transactional tests/test_shot_prompt_store_migration.py::test_apply_phase3_store_migration_rolls_back_to_logical_snapshot tests/test_shot_prompt_store_migration.py::test_runtime_store_open_runs_phase3_migration_orchestrator tests/test_shot_prompt_store_migration.py::test_runtime_store_open_does_not_half_initialize_when_migration_fails -q
 ```
 
 Expected:
 
 ```text
-2 passed
+4 passed
 ```
 
 - [ ] **Step 5: Run related regressions**
@@ -2174,11 +2366,13 @@ git commit -m "feat: add replay-safe phase 3 store migration"
 
 **Depends on:** Tasks 1-12
 
+Acceptance-only task. Tasks 1-12 own all production implementation. This task may begin green and must not modify production files.
+
 **Files:**
 - Test: `tests/test_shot_prompt_store_migration.py`
 - Verify: `python3 -m pytest tests/test_shot_prompt_store_migration.py::test_fresh_runtime_store_schema_matches_migrated_legacy_schema -q`
 
-- [ ] **Step 1: Write the failing parity test**
+- [ ] **Step 1: Add the parity acceptance test**
 
 ```python
 import sqlite3
@@ -2207,7 +2401,7 @@ def test_fresh_runtime_store_schema_matches_migrated_legacy_schema(tmp_path):
     assert fresh_schema == migrated_legacy_schema
 ```
 
-- [ ] **Step 2: Run the focused test and verify failure**
+- [ ] **Step 2: Run the focused acceptance test**
 
 ```bash
 python3 -m pytest tests/test_shot_prompt_store_migration.py::test_fresh_runtime_store_schema_matches_migrated_legacy_schema -q
@@ -2271,6 +2465,7 @@ git commit -m "test: verify fresh and migrated phase 3a schema parity"
 **Files:**
 - Test: `tests/test_shot_prompt_store_migration.py`
 - Test: `tests/test_shot_prompt_review_records.py`
+- Test: `tests/test_storyboard_legacy_migration.py`
 - Verify: `python3 -m pytest tests/test_shot_prompt_store_migration.py tests/test_shot_prompt_review_records.py -q`
 
 - [ ] **Step 1: Write the scope guard test**
