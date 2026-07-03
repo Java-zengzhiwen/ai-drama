@@ -1,5 +1,9 @@
 # Phase 3 Shot Prompt Canonical Foundation Implementation Plan
 
+> **Superseded:** This monolithic plan is retained as audit history and is not executable.
+> Authoritative planning continues through:
+> `docs/superpowers/plans/2026-07-03-phase3-shot-prompt-canonical-program.md`
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the Phase 3 Shot Prompt Canonical Foundation from an approved and fresh Storyboard Revision through deterministic prompt rendering, bundle integrity, review, qualification, approval, and live Phase 4 eligibility checks.
@@ -10,9 +14,11 @@
 
 ---
 
-Plan Status: IMPLEMENTATION_PLAN_PENDING_USER_REVIEW
+Plan Status: SUPERSEDED_BY_SPLIT_PLAN_PROGRAM
 Implementation: IMPLEMENTATION_NOT_AUTHORIZED
 Phase 4: PHASE4_NOT_AUTHORIZED
+
+This document is preserved as the mechanical-audit history for the superseded monolithic Phase 3 plan. It is not an execution plan. Do not patch individual tasks in this file and do not use it to authorize implementation. The split program index is the planning authority for Phase 3 child-plan review.
 
 ## Source Baseline
 
