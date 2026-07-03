@@ -2113,9 +2113,12 @@ git commit -m "feat: add atomic shot prompt output insertion"
 **Depends on:** Tasks 1-11
 
 **Files:**
+- Modify: `ai_drama_runtime/store.py`
 - Modify: `ai_drama_runtime/shot_prompt_migration.py`
 - Test: `tests/test_shot_prompt_store_migration.py`
 - Verify: `python3 -m pytest tests/test_shot_prompt_store_migration.py::test_apply_phase3_store_migration_is_idempotent_and_transactional -q`
+
+**File ownership:** Task 12 owns both the migration orchestrator in `ai_drama_runtime/shot_prompt_migration.py` and the legacy-open call site in `RuntimeStore.__init__` inside `ai_drama_runtime/store.py`. Do not move the `RuntimeStore.__init__` change to another task without also moving the RuntimeStore-open tests and dependency contract.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2358,9 +2361,14 @@ all selected tests passed
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ai_drama_runtime/shot_prompt_migration.py tests/test_shot_prompt_store_migration.py
+git add \
+  ai_drama_runtime/store.py \
+  ai_drama_runtime/shot_prompt_migration.py \
+  tests/test_shot_prompt_store_migration.py
 git commit -m "feat: add replay-safe phase 3 store migration"
 ```
+
+Task 12 commit scope includes `ai_drama_runtime/store.py`, `ai_drama_runtime/shot_prompt_migration.py`, and `tests/test_shot_prompt_store_migration.py`.
 
 ### Task 13: Fresh-Vs-Migrated Schema Parity
 
@@ -2558,6 +2566,7 @@ git commit -m "test: cover phase 3a store migration acceptance"
 - A13: Task 5 preserves revisions columns, run FK, and approved partial unique index.
 - A14: Task 11 freezes the Store primitive boundary and leaves bundle outcome classification to Phase 3C.
 - A15: The audit gate includes semantic contract checks in addition to symbol checks.
+- A16: Task 12 declares, implements, and stages every production file modified by its Step 3 snippets.
 
 ## Mechanical And Semantic Audit Gate
 
@@ -2574,9 +2583,11 @@ task_local_failures = 0
 schema_drift = 0
 migration_contract_failures = 0
 semantic_contract_failures = 0
+implementation_preflight_failures = 0
+task_file_ownership_failures = 0
 ```
 
-The audit must classify Python builtins, imported library symbols, attribute methods, `pytest` APIs, SQLite cursor APIs, and string methods as non-plan symbols. It must also check exact approval evidence fields, review event enum, approval action enum, absence of script execution in migration helpers, semantic test assertions, and fresh-vs-migrated schema parity coverage.
+The audit must classify Python builtins, imported library symbols, attribute methods, `pytest` APIs, SQLite cursor APIs, and string methods as non-plan symbols. It must also check exact approval evidence fields, review event enum, approval action enum, absence of script execution in migration helpers, semantic test assertions, fresh-vs-migrated schema parity coverage, implementation preflight blockers, and Step 3 production file ownership against Task `Files` and Step 6 staging.
 
 ## Verification
 
