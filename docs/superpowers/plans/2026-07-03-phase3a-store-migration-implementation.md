@@ -123,7 +123,7 @@ All table rebuild helpers in Phase 3A are connection-local helpers. They use `co
 | 4 | Tasks 1-3 | expanded `revision_outputs` rebuild |
 | 5 | Tasks 1-4 | `revisions.approval_status` rebuild |
 | 6 | Tasks 1-5 | `approval_records.action` rebuild |
-| 7 | Tasks 1-6 | approval evidence columns and dataclass mapping |
+| 7 | Tasks 1-6 | approval record dataclass and row mapping |
 | 8 | Tasks 1-7 | review table schema |
 | 9 | Tasks 1-8 | atomic review creation and event APIs |
 | 10 | Tasks 1-9 | latest validation query APIs |
@@ -147,16 +147,21 @@ All table rebuild helpers in Phase 3A are connection-local helpers. They use `co
 import sqlite3
 
 from ai_drama_runtime.store import RuntimeStore
-from tests.shot_prompt_store_support import create_phase2_legacy_db, snapshot_database, table_columns
+from tests.shot_prompt_store_support import create_phase2_legacy_db, normalized_schema_snapshot, snapshot_database, table_columns
+from tests.test_storyboard_legacy_migration import _create_planning_baseline_legacy_db as create_real_phase2_legacy_db
 
 
 def test_phase3a_support_creates_phase2_legacy_database(tmp_path):
     db_path = tmp_path / "runtime.db"
+    real_db_path = tmp_path / "real-runtime.db"
     objects_root = tmp_path / "objects"
     create_phase2_legacy_db(db_path)
+    create_real_phase2_legacy_db(real_db_path)
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
+    real_conn = sqlite3.connect(real_db_path)
+    real_conn.row_factory = sqlite3.Row
     try:
         artifact_columns = set(table_columns(conn, "artifacts"))
         assert {
@@ -172,8 +177,10 @@ def test_phase3a_support_creates_phase2_legacy_database(tmp_path):
         assert snapshot["tables"]["artifacts"]["row_count"] == 1
         assert snapshot["foreign_key_check"] == []
         assert snapshot["transient_tables"] == []
+        assert normalized_schema_snapshot(conn) == normalized_schema_snapshot(real_conn)
     finally:
         conn.close()
+        real_conn.close()
 
     with RuntimeStore(db_path, objects_root) as store:
         assert store.get_revision("legacy-revision").revision_id == "legacy-revision"
@@ -194,9 +201,6 @@ FAIL because tests.shot_prompt_store_support is not defined
 - [ ] **Step 3: Implement the minimal test support**
 
 ```python
-import sqlite3
-
-
 def table_columns(conn, table_name):
     return {row["name"]: dict(row) for row in conn.execute("PRAGMA table_info(%s)" % table_name).fetchall()}
 
@@ -219,6 +223,37 @@ def table_sql(conn, table_name):
     return "" if row is None else row["sql"]
 
 
+def _normalized_sql_tokens(sql):
+    return sorted(set(sql.replace("\n", " ").replace("(", " ( ").replace(")", " ) ").replace(",", " , ").split()))
+
+
+def normalized_schema_snapshot(conn):
+    table_names = [
+        row["name"]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+    ]
+    result = {}
+    for name in table_names:
+        result[name] = {
+            "columns": [
+                {
+                    "name": row["name"],
+                    "type": row["type"].upper(),
+                    "notnull": row["notnull"],
+                    "default": row["dflt_value"],
+                    "pk": row["pk"],
+                }
+                for row in conn.execute("PRAGMA table_info(%s)" % name).fetchall()
+            ],
+            "foreign_keys": [dict(row) for row in conn.execute("PRAGMA foreign_key_list(%s)" % name).fetchall()],
+            "indexes": index_sql(conn, name),
+            "check_tokens": _normalized_sql_tokens(table_sql(conn, name)),
+        }
+    return result
+
+
 def snapshot_database(conn):
     table_names = [
         row["name"]
@@ -229,8 +264,8 @@ def snapshot_database(conn):
     tables = {}
     for name in table_names:
         tables[name] = {
-            "sql": table_sql(conn, name),
             "columns": list(table_columns(conn, name)),
+            "schema": normalized_schema_snapshot(conn).get(name, {}),
             "indexes": index_sql(conn, name),
             "row_count": conn.execute("SELECT COUNT(*) AS count FROM %s" % name).fetchone()["count"],
         }
@@ -243,173 +278,9 @@ def snapshot_database(conn):
 
 
 def create_phase2_legacy_db(db_path):
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    statements = [
-        """PRAGMA foreign_keys = ON""",
-        """CREATE TABLE artifacts (
-          artifact_id TEXT PRIMARY KEY,
-          artifact_type TEXT NOT NULL,
-          project_id TEXT NOT NULL,
-          chapter_id TEXT NOT NULL,
-          created_at TEXT NOT NULL
-        )""",
-        """CREATE TABLE runs (
-          run_id TEXT PRIMARY KEY,
-          artifact_id TEXT NOT NULL,
-          project_id TEXT NOT NULL,
-          chapter_id TEXT NOT NULL,
-          skill_id TEXT NOT NULL,
-          skill_version TEXT NOT NULL,
-          skill_hash TEXT NOT NULL,
-          runtime TEXT NOT NULL,
-          provider TEXT NOT NULL,
-          model TEXT NOT NULL,
-          status TEXT NOT NULL,
-          request_object_id TEXT NOT NULL,
-          response_object_id TEXT NOT NULL,
-          input_hash TEXT NOT NULL,
-          request_hash TEXT NOT NULL,
-          usage_status TEXT NOT NULL,
-          prompt_tokens INTEGER NOT NULL,
-          completion_tokens INTEGER NOT NULL,
-          total_tokens INTEGER NOT NULL,
-          usage_raw_object_id TEXT NOT NULL,
-          error_code TEXT NOT NULL,
-          error_message TEXT NOT NULL,
-          started_at TEXT NOT NULL,
-          completed_at TEXT NOT NULL,
-          duration_ms INTEGER NOT NULL,
-          created_at TEXT NOT NULL
-        )""",
-        """CREATE TABLE revisions (
-          revision_id TEXT PRIMARY KEY,
-          artifact_id TEXT NOT NULL,
-          artifact_type TEXT NOT NULL,
-          project_id TEXT NOT NULL,
-          chapter_id TEXT NOT NULL,
-          run_id TEXT NOT NULL,
-          skill_id TEXT NOT NULL,
-          skill_version TEXT NOT NULL,
-          skill_package_hash TEXT NOT NULL,
-          runtime_provider TEXT NOT NULL,
-          runtime_model TEXT NOT NULL,
-          number INTEGER NOT NULL,
-          content_object_id TEXT NOT NULL,
-          content_hash TEXT NOT NULL,
-          raw_response_object_id TEXT NOT NULL,
-          parser_version TEXT NOT NULL,
-          content_profile TEXT NOT NULL DEFAULT '',
-          derivation_type TEXT NOT NULL DEFAULT 'model_generation',
-          supersedes_revision_id TEXT NOT NULL,
-          approval_status TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          FOREIGN KEY(run_id) REFERENCES runs(run_id)
-        )""",
-        """CREATE TABLE validation_results (
-          validation_id TEXT PRIMARY KEY,
-          revision_id TEXT NOT NULL,
-          validator_id TEXT NOT NULL,
-          validator_name TEXT NOT NULL,
-          status TEXT NOT NULL,
-          required INTEGER NOT NULL,
-          exit_code INTEGER NOT NULL,
-          error_code TEXT NOT NULL,
-          duration_ms INTEGER NOT NULL,
-          stdout_object_id TEXT NOT NULL,
-          stderr_object_id TEXT NOT NULL,
-          report_object_id TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          FOREIGN KEY(revision_id) REFERENCES revisions(revision_id)
-        )""",
-        """CREATE TABLE approval_records (
-          sequence INTEGER PRIMARY KEY AUTOINCREMENT,
-          record_id TEXT NOT NULL UNIQUE,
-          revision_id TEXT NOT NULL,
-          artifact_id TEXT NOT NULL,
-          action TEXT NOT NULL,
-          reviewer TEXT NOT NULL,
-          note TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          FOREIGN KEY(revision_id) REFERENCES revisions(revision_id)
-        )""",
-        """CREATE TABLE revision_outputs (
-          revision_output_id TEXT PRIMARY KEY,
-          revision_id TEXT NOT NULL REFERENCES revisions(revision_id) ON DELETE RESTRICT,
-          logical_type TEXT NOT NULL CHECK (logical_type IN ('rendered_positive_prompt', 'rendered_negative_prompt', 'rendered_markdown', 'bundle_manifest')),
-          object_id TEXT NOT NULL,
-          content_hash TEXT NOT NULL,
-          media_type TEXT NOT NULL,
-          generator TEXT NOT NULL,
-          generator_version TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          UNIQUE(revision_id, logical_type)
-        )""",
-        """CREATE INDEX revision_outputs_content_hash_idx ON revision_outputs(content_hash)""",
-        """CREATE INDEX revision_outputs_object_id_idx ON revision_outputs(object_id)""",
-        """CREATE TABLE revision_dependencies (
-          child_revision_id TEXT NOT NULL,
-          parent_revision_id TEXT NOT NULL,
-          relation_type TEXT NOT NULL,
-          parent_content_hash TEXT NOT NULL,
-          parent_approval_record_id TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY(child_revision_id, parent_revision_id, relation_type),
-          FOREIGN KEY(child_revision_id) REFERENCES revisions(revision_id),
-          FOREIGN KEY(parent_revision_id) REFERENCES revisions(revision_id)
-        )""",
-        """CREATE TABLE workflow_gate_records (
-          gate_id TEXT PRIMARY KEY,
-          run_id TEXT NOT NULL,
-          target_skill_id TEXT NOT NULL,
-          target_skill_version TEXT NOT NULL,
-          target_artifact_id TEXT NOT NULL,
-          source_revision_id TEXT NOT NULL,
-          request_reference TEXT NOT NULL,
-          error_code TEXT NOT NULL,
-          error_message TEXT NOT NULL,
-          created_at TEXT NOT NULL
-        )""",
-        """CREATE TABLE export_records (
-          export_id TEXT PRIMARY KEY,
-          artifact_id TEXT NOT NULL,
-          revision_id TEXT NOT NULL,
-          run_id TEXT NOT NULL,
-          content_hash TEXT NOT NULL,
-          destination TEXT NOT NULL,
-          provenance_object_id TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          export_kind TEXT NOT NULL DEFAULT 'legacy_single' CHECK (export_kind IN ('legacy_single','formal_review','diagnostic','execution')),
-          freshness_status TEXT NOT NULL DEFAULT '' CHECK (freshness_status IN ('','FRESH','STALE')),
-          diagnostic_only INTEGER NOT NULL DEFAULT 0 CHECK (diagnostic_only IN (0,1)),
-          not_an_execution_package INTEGER NOT NULL DEFAULT 1 CHECK (not_an_execution_package IN (0,1)),
-          execution_ready INTEGER NOT NULL DEFAULT 0 CHECK (execution_ready IN (0,1)),
-          bundle_manifest_hash TEXT NOT NULL DEFAULT '',
-          error_code TEXT NOT NULL DEFAULT '',
-          FOREIGN KEY(revision_id) REFERENCES revisions(revision_id)
-        )""",
-        """CREATE UNIQUE INDEX one_current_approved_revision
-          ON revisions(artifact_id)
-          WHERE approval_status = 'approved'""",
-        """INSERT INTO artifacts VALUES ('artifact-1', 'storyboard', 'project-1', 'chapter-1', '2026-06-30T00:00:00Z')""",
-        """INSERT INTO runs VALUES (
-          'run-1', 'artifact-1', 'project-1', 'chapter-1', 'skill', 'v1', 'hash',
-          'test-runtime', 'mock', 'mock', 'SUCCEEDED', 'request-object', 'response-object',
-          'input-hash', 'request-hash', 'NOT_PROVIDED', 0, 0, 0, '', '', '',
-          '2026-06-30T00:00:00Z', '2026-06-30T00:00:00Z', 0, '2026-06-30T00:00:00Z'
-        )""",
-        """INSERT INTO revisions VALUES (
-          'legacy-revision', 'artifact-1', 'storyboard', 'project-1', 'chapter-1',
-          'run-1', 'skill', 'v1', 'hash', 'mock', 'mock', 1,
-          'content-object', 'legacy-content-hash', 'response-object',
-          'storyboard-canonical-json-v1', 'storyboard-canonical-v1',
-          'model_generation', '', 'pending', '2026-06-30T00:00:00Z'
-        )""",
-    ]
-    for statement in statements:
-        conn.execute(statement)
-    conn.commit()
-    conn.close()
+    from tests.test_storyboard_legacy_migration import _create_planning_baseline_legacy_db
+
+    _create_planning_baseline_legacy_db(db_path)
 ```
 
 - [ ] **Step 4: Run the focused test**
@@ -1206,14 +1077,14 @@ git add ai_drama_runtime/store.py ai_drama_runtime/shot_prompt_migration.py test
 git commit -m "feat: extend approval action storage"
 ```
 
-### Task 7: Approval Evidence Columns
+### Task 7: ApprovalRecord Mapping APIs
 
 **Depends on:** Tasks 1-6
 
 **Files:**
 - Modify: `ai_drama_runtime/store.py`
 - Test: `tests/test_shot_prompt_store_migration.py`
-- Verify: `python3 -m pytest tests/test_shot_prompt_store_migration.py::test_approval_records_gain_exact_evidence_columns_with_legacy_defaults -q`
+- Verify: `python3 -m pytest tests/test_shot_prompt_store_migration.py::test_approval_records_map_exact_evidence_columns_with_defaults -q`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1222,7 +1093,7 @@ from ai_drama_runtime.store import RuntimeStore
 from tests.shot_prompt_store_support import create_phase2_legacy_db, table_columns
 
 
-def test_approval_records_gain_exact_evidence_columns_with_legacy_defaults(tmp_path):
+def test_approval_records_map_exact_evidence_columns_with_defaults(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
     create_phase2_legacy_db(db_path)
@@ -1248,18 +1119,52 @@ def test_approval_records_gain_exact_evidence_columns_with_legacy_defaults(tmp_p
         assert approval.canonical_content_hash == ""
         assert approval.renderer_profile_id == ""
         assert approval.qualification_profile_version == ""
+        store.conn.execute(
+            """
+            INSERT INTO approval_records
+            (record_id, revision_id, artifact_id, action, reviewer, note, created_at,
+             source_storyboard_revision_id, canonical_content_hash, bundle_manifest_hash,
+             qualification_report_hash, qualification_report_object_id, renderer_profile_id,
+             renderer_profile_version, qualification_profile_id, qualification_profile_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "shot-prompt-record",
+                "legacy-revision",
+                "artifact-1",
+                "shot_prompt_approved",
+                "reviewer",
+                "",
+                "2026-07-03T00:00:00Z",
+                "storyboard-revision",
+                "canonical-hash",
+                "bundle-hash",
+                "qualification-hash",
+                "qualification-object",
+                "shot_prompt_standard",
+                "1.0.0",
+                "shot_prompt_approval_qualification",
+                "1.0.0",
+            ),
+        )
+        mapped = store.approval_record("shot-prompt-record")
+        assert mapped.action == "shot_prompt_approved"
+        assert mapped.source_storyboard_revision_id == "storyboard-revision"
+        assert mapped.canonical_content_hash == "canonical-hash"
+        assert mapped.renderer_profile_id == "shot_prompt_standard"
+        assert store.latest_approval("legacy-revision").record_id == "shot-prompt-record"
 ```
 
 - [ ] **Step 2: Run the focused test and verify failure**
 
 ```bash
-python3 -m pytest tests/test_shot_prompt_store_migration.py::test_approval_records_gain_exact_evidence_columns_with_legacy_defaults -q
+python3 -m pytest tests/test_shot_prompt_store_migration.py::test_approval_records_map_exact_evidence_columns_with_defaults -q
 ```
 
 Expected:
 
 ```text
-FAIL because ApprovalRecord lacks the exact Phase 3 approval evidence fields
+FAIL because ApprovalRecord row mapping lacks the exact Phase 3 approval evidence fields
 ```
 
 - [ ] **Step 3: Implement the minimal production change**
@@ -1285,20 +1190,16 @@ class ApprovalRecord:
     qualification_profile_id: str
     qualification_profile_version: str
 
-
-def _ensure_approval_evidence_columns_for_conn(conn):
-    columns = {row["name"] for row in conn.execute("PRAGMA table_info(approval_records)").fetchall()}
-    for name in APPROVAL_EVIDENCE_COLUMNS:
-        if name not in columns:
-            conn.execute("ALTER TABLE approval_records ADD COLUMN %s TEXT NOT NULL DEFAULT ''" % name)
+def _approval_from_row(self, row):
+    return None if row is None else ApprovalRecord(**dict(row))
 ```
 
-Call `_ensure_approval_evidence_columns_for_conn(self.conn)` from `RuntimeStore._ensure_columns(self)` after approval action rebuild. Keep existing script/storyboard approval methods relying on empty-string defaults.
+Task 6 owns approval table schema for both fresh and legacy databases. Task 7 only updates `ApprovalRecord` and `_approval_from_row(self, row)` so `approval_record()`, `latest_approval()`, and existing script/storyboard approval flows can read the nine evidence fields with empty-string defaults.
 
 - [ ] **Step 4: Run the focused test**
 
 ```bash
-python3 -m pytest tests/test_shot_prompt_store_migration.py::test_approval_records_gain_exact_evidence_columns_with_legacy_defaults -q
+python3 -m pytest tests/test_shot_prompt_store_migration.py::test_approval_records_map_exact_evidence_columns_with_defaults -q
 ```
 
 Expected:
@@ -1323,7 +1224,7 @@ all selected tests passed
 
 ```bash
 git add ai_drama_runtime/store.py tests/test_shot_prompt_store_migration.py
-git commit -m "feat: store shot prompt approval evidence"
+git commit -m "feat: map shot prompt approval evidence"
 ```
 
 ### Task 8: Review Table Schema
@@ -1575,7 +1476,12 @@ def test_review_record_creation_rolls_back_when_opened_event_fails(tmp_path):
     create_phase2_legacy_db(db_path)
 
     with RuntimeStore(db_path, objects_root) as store:
-        with pytest.raises(ValueError):
+        def fail_event_insert(**_values):
+            raise RuntimeError("forced opened event insert failure")
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(store, "_insert_review_event_row", fail_event_insert)
+        with pytest.raises(RuntimeError):
             store.insert_review_record_with_opened_event(
                 artifact_id="artifact-1",
                 revision_id="legacy-revision",
@@ -1585,16 +1491,53 @@ def test_review_record_creation_rolls_back_when_opened_event_fails(tmp_path):
                 blocking=True,
                 created_by="reviewer-a",
                 note="opened",
-                fail_after_review_insert=True,
             )
+        monkeypatch.undo()
         assert store.conn.execute("SELECT COUNT(*) AS count FROM review_records").fetchone()["count"] == 0
         assert store.conn.execute("SELECT COUNT(*) AS count FROM review_record_events").fetchone()["count"] == 0
+
+
+def test_review_status_uses_event_id_as_same_timestamp_tie_breaker(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+
+    with RuntimeStore(db_path, objects_root) as store:
+        review = store.insert_review_record_with_opened_event(
+            artifact_id="artifact-1",
+            revision_id="legacy-revision",
+            scope="shot",
+            shot_id="SHOT_001",
+            body="Shot-level issue",
+            blocking=True,
+            created_by="reviewer-a",
+            note="opened",
+        )
+        with store.conn:
+            store._insert_review_event_row(
+                review_id=review.review_id,
+                event_type="resolved",
+                actor="reviewer-a",
+                note="",
+                event_id="event-a",
+                created_at="2026-07-03T00:00:00.000000Z",
+            )
+            store._insert_review_event_row(
+                review_id=review.review_id,
+                event_type="reopened",
+                actor="reviewer-b",
+                note="",
+                event_id="event-b",
+                created_at="2026-07-03T00:00:00.000000Z",
+            )
+        assert store.review_status(review.review_id) == "reopened"
+        assert store.open_blocking_review_count("legacy-revision") == 1
 ```
 
 - [ ] **Step 2: Run the focused test and verify failure**
 
 ```bash
-python3 -m pytest tests/test_shot_prompt_review_records.py::test_review_record_creation_always_creates_opened_event_atomically tests/test_shot_prompt_review_records.py::test_review_record_creation_rolls_back_when_opened_event_fails -q
+python3 -m pytest tests/test_shot_prompt_review_records.py::test_review_record_creation_always_creates_opened_event_atomically tests/test_shot_prompt_review_records.py::test_review_record_creation_rolls_back_when_opened_event_fails tests/test_shot_prompt_review_records.py::test_review_status_uses_event_id_as_same_timestamp_tie_breaker -q
 ```
 
 Expected:
@@ -1638,18 +1581,35 @@ def review_events(self, review_id):
     return [self._review_event_from_row(row) for row in rows]
 
 
-def insert_review_event(self, *, review_id, event_type, actor, note=""):
-    event_id = uuid.uuid4().hex
+def _insert_review_event_row(self, *, review_id, event_type, actor, note="", event_id=None, created_at=None):
+    event_id = event_id or uuid.uuid4().hex
+    created_at = created_at or now_iso()
     self.conn.execute(
         """
         INSERT INTO review_record_events
         (event_id, review_id, event_type, actor, note, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (event_id, review_id, event_type, actor, note, now_iso()),
+        (event_id, review_id, event_type, actor, note, created_at),
     )
-    self.conn.commit()
     return self.review_event(event_id)
+
+
+def insert_review_event(self, *, review_id, event_type, actor, note=""):
+    with self.conn:
+        return self._insert_review_event_row(review_id=review_id, event_type=event_type, actor=actor, note=note)
+
+
+def _insert_review_record_row(self, *, review_id, artifact_id, revision_id, scope, shot_id, body, body_hash, blocking, created_by, created_at):
+    self.conn.execute(
+        """
+        INSERT INTO review_records
+        (review_id, artifact_id, revision_id, scope, shot_id, body, body_hash, blocking, created_by, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (review_id, artifact_id, revision_id, scope, shot_id, body, body_hash, int(blocking), created_by, created_at),
+    )
+    return self.review_record(review_id)
 
 
 def insert_review_record_with_opened_event(
@@ -1663,29 +1623,29 @@ def insert_review_record_with_opened_event(
     blocking,
     created_by,
     note="",
-    fail_after_review_insert=False,
 ):
     review_id = uuid.uuid4().hex
     body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
-    event_id = uuid.uuid4().hex
     with self.conn:
-        self.conn.execute(
-            """
-            INSERT INTO review_records
-            (review_id, artifact_id, revision_id, scope, shot_id, body, body_hash, blocking, created_by, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (review_id, artifact_id, revision_id, scope, shot_id, body, body_hash, int(blocking), created_by, now_iso()),
+        created_at = now_iso()
+        self._insert_review_record_row(
+            review_id=review_id,
+            artifact_id=artifact_id,
+            revision_id=revision_id,
+            scope=scope,
+            shot_id=shot_id,
+            body=body,
+            body_hash=body_hash,
+            blocking=blocking,
+            created_by=created_by,
+            created_at=created_at,
         )
-        if fail_after_review_insert:
-            raise ValueError("injected failure after review insert")
-        self.conn.execute(
-            """
-            INSERT INTO review_record_events
-            (event_id, review_id, event_type, actor, note, created_at)
-            VALUES (?, ?, 'opened', ?, ?, ?)
-            """,
-            (event_id, review_id, created_by, note, now_iso()),
+        self._insert_review_event_row(
+            review_id=review_id,
+            event_type="opened",
+            actor=created_by,
+            note=note,
+            created_at=created_at,
         )
     return self.review_record(review_id)
 
@@ -1718,13 +1678,13 @@ def open_blocking_review_count(self, revision_id):
 - [ ] **Step 4: Run the focused test**
 
 ```bash
-python3 -m pytest tests/test_shot_prompt_review_records.py::test_review_record_creation_always_creates_opened_event_atomically tests/test_shot_prompt_review_records.py::test_review_record_creation_rolls_back_when_opened_event_fails -q
+python3 -m pytest tests/test_shot_prompt_review_records.py::test_review_record_creation_always_creates_opened_event_atomically tests/test_shot_prompt_review_records.py::test_review_record_creation_rolls_back_when_opened_event_fails tests/test_shot_prompt_review_records.py::test_review_status_uses_event_id_as_same_timestamp_tie_breaker -q
 ```
 
 Expected:
 
 ```text
-2 passed
+3 passed
 ```
 
 - [ ] **Step 5: Run related regressions**
@@ -1918,6 +1878,7 @@ def test_phase3_output_insert_validates_inputs_and_rolls_back_new_rows(tmp_path)
 
     with RuntimeStore(db_path, objects_root) as store:
         rows = _phase3_rows(store, "legacy-revision")
+        unordered_rows = [rows[3], rows[0], rows[6], rows[2], rows[4], rows[1], rows[5]]
         with pytest.raises(ValueError):
             store.insert_phase3_revision_outputs_atomically("legacy-revision", rows[:-1])
         with pytest.raises(ValueError):
@@ -1927,17 +1888,38 @@ def test_phase3_output_insert_validates_inputs_and_rolls_back_new_rows(tmp_path)
         with pytest.raises(Exception):
             store.insert_phase3_revision_outputs_atomically("legacy-revision", bad_rows)
         assert store.revision_outputs("legacy-revision") == []
-        inserted = store.insert_phase3_revision_outputs_atomically("legacy-revision", rows)
+        inserted = store.insert_phase3_revision_outputs_atomically("legacy-revision", unordered_rows)
         assert [item.logical_type for item in inserted] == list(PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES)
         with pytest.raises(Exception):
             store.insert_phase3_revision_outputs_atomically("legacy-revision", rows)
         assert len(store.revision_outputs("legacy-revision")) == 7
+
+
+def test_phase3_output_insert_rolls_back_when_row_helper_fails(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+
+    with RuntimeStore(db_path, objects_root) as store:
+        rows = _phase3_rows(store, "legacy-revision")
+        original = store._insert_revision_output_rows_no_commit
+
+        def fail_after_one_row(items):
+            original(items[:1])
+            raise RuntimeError("forced row insert failure")
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(store, "_insert_revision_output_rows_no_commit", fail_after_one_row)
+        with pytest.raises(RuntimeError):
+            store.insert_phase3_revision_outputs_atomically("legacy-revision", rows)
+        monkeypatch.undo()
+        assert store.revision_outputs("legacy-revision") == []
 ```
 
 - [ ] **Step 2: Run the focused test and verify failure**
 
 ```bash
-python3 -m pytest tests/test_shot_prompt_store_migration.py::test_phase3_output_insert_validates_inputs_and_rolls_back_new_rows -q
+python3 -m pytest tests/test_shot_prompt_store_migration.py::test_phase3_output_insert_validates_inputs_and_rolls_back_new_rows tests/test_shot_prompt_store_migration.py::test_phase3_output_insert_rolls_back_when_row_helper_fails -q
 ```
 
 Expected:
@@ -1954,29 +1936,34 @@ def insert_phase3_revision_outputs_atomically(self, revision_id, rows):
         raise ValueError("revision does not exist")
     rows = [dict(row) for row in rows]
     logical_types = [row.get("logical_type") for row in rows]
-    if logical_types != list(PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES):
-        raise ValueError("phase3 outputs must match required logical type order")
     if len(set(logical_types)) != len(logical_types):
         raise ValueError("phase3 output logical types must be unique")
+    if set(logical_types) != set(PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES):
+        raise ValueError("phase3 outputs must match required logical type set")
     for row in rows:
         if row.get("revision_id") != revision_id:
             raise ValueError("phase3 output revision_id mismatch")
+    ordered_rows = sorted(rows, key=lambda row: PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES.index(row["logical_type"]))
     with self.conn:
-        return self.insert_revision_outputs_transaction(rows)
+        return self._insert_revision_output_rows_no_commit(ordered_rows)
+
+
+def _insert_revision_output_rows_no_commit(self, rows):
+    return self.insert_revision_outputs_transaction(rows)
 ```
 
-Phase 3A does not classify existing complete, partial, or conflicting bundles. Phase 3C owns those higher-level materialization outcomes. This primitive only validates one complete ordered row set and inserts it atomically without deleting or overwriting existing rows.
+`RuntimeStore.insert_revision_outputs_transaction(self, rows)` in the current repository inserts rows and returns records without calling `commit()` and without opening a transaction context. Phase 3A keeps that method as a no-commit row helper and makes `insert_phase3_revision_outputs_atomically()` the only transaction owner for this primitive. It accepts unordered input, validates exact set/no duplicates/same revision/revision exists, sorts rows internally by `PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES`, and never deletes or overwrites existing rows.
 
 - [ ] **Step 4: Run the focused test**
 
 ```bash
-python3 -m pytest tests/test_shot_prompt_store_migration.py::test_phase3_output_insert_validates_inputs_and_rolls_back_new_rows -q
+python3 -m pytest tests/test_shot_prompt_store_migration.py::test_phase3_output_insert_validates_inputs_and_rolls_back_new_rows tests/test_shot_prompt_store_migration.py::test_phase3_output_insert_rolls_back_when_row_helper_fails -q
 ```
 
 Expected:
 
 ```text
-1 passed
+2 passed
 ```
 
 - [ ] **Step 5: Run related regressions**
@@ -2014,9 +2001,22 @@ import sqlite3
 
 import pytest
 
+import ai_drama_runtime.shot_prompt_migration as shot_prompt_migration
 from ai_drama_runtime.shot_prompt_migration import Phase3StoreMigrationError, apply_phase3_store_migration, preview_phase3_store_migration
 from ai_drama_runtime.store import RuntimeStore
 from tests.shot_prompt_store_support import create_phase2_legacy_db, snapshot_database
+
+
+class ConnectionProbe:
+    def __init__(self, conn):
+        self.conn = conn
+        self.close_called = False
+
+    def __getattr__(self, name):
+        return getattr(self.conn, name)
+
+    def close(self):
+        self.close_called = True
 
 
 def test_apply_phase3_store_migration_is_idempotent_and_transactional(tmp_path):
@@ -2033,7 +2033,8 @@ def test_apply_phase3_store_migration_is_idempotent_and_transactional(tmp_path):
     assert preview["status"] == "CURRENT"
 
     with RuntimeStore(db_path, objects_root) as store:
-        assert store.conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        runtime_store_fk_enabled = bool(store.conn.execute("PRAGMA foreign_keys").fetchone()[0])
+        assert runtime_store_fk_enabled
         assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
         snapshot = snapshot_database(store.conn)
         assert snapshot["transient_tables"] == []
@@ -2048,14 +2049,24 @@ def test_apply_phase3_store_migration_rolls_back_to_logical_snapshot(tmp_path):
     before = snapshot_database(conn)
     conn.close()
 
+    probe_conn = sqlite3.connect(db_path)
+    probe_conn.row_factory = sqlite3.Row
+    probe = ConnectionProbe(probe_conn)
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(shot_prompt_migration, "_connect", lambda _db_path: probe)
     with pytest.raises(Phase3StoreMigrationError):
         apply_phase3_store_migration(db_path, fail_after_step="approval_actions")
+    monkeypatch.undo()
+    assert probe.close_called is True
+    probe_fk_enabled = bool(probe_conn.execute("PRAGMA foreign_keys").fetchone()[0])
+    assert probe_fk_enabled
+    probe_conn.close()
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     try:
         after = snapshot_database(conn)
-        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         conn.close()
     assert after == before
@@ -2082,14 +2093,6 @@ class Phase3StoreMigrationError(RuntimeError):
 
 def _migration_is_current(db_path):
     return preview_phase3_store_migration(db_path)["status"] == "CURRENT"
-
-
-def _drop_transient_tables(conn):
-    rows = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND (name LIKE '%_old' OR name LIKE '%_new')"
-    ).fetchall()
-    for row in rows:
-        conn.execute("DROP TABLE IF EXISTS %s" % row["name"])
 
 
 def apply_phase3_store_migration(db_path, *, fail_after_step=""):
@@ -2121,7 +2124,11 @@ def apply_phase3_store_migration(db_path, *, fail_after_step=""):
             conn.commit()
         except Exception as exc:
             conn.rollback()
-            _drop_transient_tables(conn)
+            transient = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND (name LIKE '%_old' OR name LIKE '%_new')"
+            ).fetchall()
+            if transient:
+                raise Phase3StoreMigrationError("rollback left transient migration tables")
             if isinstance(exc, Phase3StoreMigrationError):
                 raise
             raise Phase3StoreMigrationError(str(exc)) from exc
@@ -2191,18 +2198,7 @@ import sqlite3
 
 from ai_drama_runtime.shot_prompt_migration import apply_phase3_store_migration
 from ai_drama_runtime.store import RuntimeStore
-from tests.shot_prompt_store_support import create_phase2_legacy_db, snapshot_database
-
-
-def _schema_only(snapshot):
-    return {
-        table: {
-            "sql": data["sql"],
-            "columns": data["columns"],
-            "indexes": data["indexes"],
-        }
-        for table, data in snapshot["tables"].items()
-    }
+from tests.shot_prompt_store_support import create_phase2_legacy_db, normalized_schema_snapshot
 
 
 def test_fresh_runtime_store_schema_matches_migrated_legacy_schema(tmp_path):
@@ -2211,18 +2207,16 @@ def test_fresh_runtime_store_schema_matches_migrated_legacy_schema(tmp_path):
     create_phase2_legacy_db(legacy_db)
 
     with RuntimeStore(fresh_db, tmp_path / "fresh-objects") as fresh_store:
-        fresh_snapshot = snapshot_database(fresh_store.conn)
+        fresh_schema = normalized_schema_snapshot(fresh_store.conn)
 
     apply_phase3_store_migration(legacy_db)
     conn = sqlite3.connect(legacy_db)
     conn.row_factory = sqlite3.Row
     try:
-        migrated_snapshot = snapshot_database(conn)
+        migrated_legacy_schema = normalized_schema_snapshot(conn)
     finally:
         conn.close()
 
-    fresh_schema = _schema_only(fresh_snapshot)
-    migrated_legacy_schema = _schema_only(migrated_snapshot)
     assert fresh_schema == migrated_legacy_schema
 ```
 
@@ -2235,17 +2229,19 @@ python3 -m pytest tests/test_shot_prompt_store_migration.py::test_fresh_runtime_
 Expected:
 
 ```text
-FAIL until fresh schema and migrated legacy schema are equivalent
+PASS because Tasks 3-8 already wire the same schema helpers into fresh DB creation and legacy migration
 ```
 
-- [ ] **Step 3: Implement the minimal production change**
+- [ ] **Step 3: Confirm no production change is required**
 
-```python
-# Reuse the same helper functions from Tasks 3-8 in both RuntimeStore._init_schema(self)
-# and RuntimeStore._ensure_columns(self). Do not duplicate DDL strings.
-#
-# RuntimeStore._init_schema(self) creates fresh Phase 3A schema directly.
-# RuntimeStore._ensure_columns(self) upgrades legacy Phase 0-2 databases through the same helpers.
+```bash
+git diff --name-only -- ai_drama_runtime/store.py ai_drama_runtime/shot_prompt_migration.py
+```
+
+Expected:
+
+```text
+no output
 ```
 
 - [ ] **Step 4: Run the focused test**
