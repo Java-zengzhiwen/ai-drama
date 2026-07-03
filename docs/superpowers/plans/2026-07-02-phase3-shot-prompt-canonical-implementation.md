@@ -37,6 +37,43 @@ The Design Approval Commit, this Implementation Plan Commit, and the future Impl
 - Existing tests: `tests/test_manifest.py`, `tests/test_validator_inventory.py`, `tests/test_storyboard_canonical_serialization.py`, `tests/test_storyboard_canonical_workflow.py`, `tests/test_storyboard_legacy_migration.py`, `tests/test_storyboard_renderer.py`, `tests/test_storyboard_workflow.py`, `tests/test_validators_approval_export.py`, `tests/test_runtime_lifecycle.py`, `tests/test_cli.py`, `tests/test_phase1_verifier.py`, `tests/test_phase2_verifier.py`, `tests/acceptance/test_storyboard_workflow_acceptance.py`
 - Protected upstream skill: `skills/ai-drama-storyboard-design-skill/v0.2.1/skill.json`
 
+## Normative Phase 3 Constants And Field Names
+
+All tasks, tests, fixtures, golden files, Skill metadata, CLI output, verifier checks, and migration constants use these values exactly.
+
+```text
+artifact_type = shot_prompt_set
+schema_version = shot-prompt-canonical-v1
+content_profile = shot-prompt-canonical-v1
+canonical_parser_version = shot-prompt-canonical-json-v1
+renderer.profile_id = shot_prompt_standard
+renderer.version = 1.0.0
+renderer_id = shot-prompt-renderer
+renderer_version = 1.0.0
+qualification_profile_id = shot_prompt_approval_qualification
+qualification_profile_version = 1.0.0
+```
+
+Canonical root is closed and has no `source` wrapper, no canonical `revision_id`, no root `negative_constraints`, and no root `asset_requirements`:
+
+```json
+{
+  "schema_version": "shot-prompt-canonical-v1",
+  "content_profile": "shot-prompt-canonical-v1",
+  "scope": "set",
+  "source_storyboard_revision_id": "REV_STORYBOARD_001",
+  "render_language": "zh-Hans",
+  "renderer": {
+    "profile_id": "shot_prompt_standard",
+    "version": "1.0.0"
+  },
+  "set_defaults": {},
+  "shots": []
+}
+```
+
+Dialogue is stored only at `shots[].video_intent.dialogue_intents`. Continuity items use `scope` and plural `purposes`; forbidden examples include `source_scope` and singular `purpose`. Artifact IDs are generated internal IDs, while `(artifact_type, business_key_type, business_key_value)` is the business uniqueness authority.
+
 ## File Map
 
 Create:
@@ -112,6 +149,34 @@ Verifier allowlist controlled prefixes:
 
 No allowlist entry permits the full repository.
 
+## Symbol Definition Index
+
+| Symbol | First definition Task | File | Later caller Tasks |
+| --- | --- | --- | --- |
+| `parse_shot_prompt_json` | Task 8 | `ai_drama_runtime/shot_prompt_canonical.py` | Tasks 9-18, 30, 33 |
+| `serialize_shot_prompt_json` | Task 8 | `ai_drama_runtime/shot_prompt_canonical.py` | Tasks 9, 15, 30, 34 |
+| `shot_prompt_content_hash` | Task 8 | `ai_drama_runtime/shot_prompt_canonical.py` | Tasks 22, 24, 28, 30, 34 |
+| `validate_shot_prompt_canonical` | Task 9 | `ai_drama_runtime/shot_prompt_canonical.py` | Tasks 10-18, 20-24, 30 |
+| `append_dedup` | Task 14 | `ai_drama_runtime/shot_prompt_canonical.py` | Tasks 19-22 |
+| `derive_slot_id` | Task 13 | `ai_drama_runtime/shot_prompt_canonical.py` | Task 22 |
+| `merge_effective_intent` | Task 19 | `ai_drama_runtime/shot_prompt_renderer.py` | Tasks 20-22 |
+| `render_image_positive_prompts` | Task 20 | `ai_drama_runtime/shot_prompt_renderer.py` | Tasks 23-24 |
+| `render_video_positive_prompts` | Task 20 | `ai_drama_runtime/shot_prompt_renderer.py` | Tasks 23-24 |
+| `render_dialogue_intents` | Task 20 | `ai_drama_runtime/shot_prompt_renderer.py` | Tasks 23-24 |
+| `render_negative_prompts` | Task 21 | `ai_drama_runtime/shot_prompt_renderer.py` | Tasks 23-24 |
+| `render_asset_requirements` | Task 22 | `ai_drama_runtime/shot_prompt_renderer.py` | Tasks 23-26 |
+| `render_provenance` | Task 22 | `ai_drama_runtime/shot_prompt_renderer.py` | Tasks 23-26, 28 |
+| `render_review_markdown` | Task 22 | `ai_drama_runtime/shot_prompt_renderer.py` | Tasks 23-26, 27 |
+| `build_candidate_object_set` | Task 23 | `ai_drama_runtime/shot_prompt_bundle.py` | Tasks 24-26, 30 |
+| `validate_render_candidates` | Task 24 | `ai_drama_runtime/shot_prompt_bundle.py` | Tasks 25-26, 30 |
+| `build_bundle_manifest` | Task 25 | `ai_drama_runtime/shot_prompt_bundle.py` | Tasks 26, 28, 30 |
+| `verify_bundle_integrity` | Task 26 | `ai_drama_runtime/shot_prompt_bundle.py` | Tasks 28, 30, 34 |
+| `qualify_shot_prompt_revision` | Task 28 | `ai_drama_runtime/services.py` | Tasks 29, 31, 33 |
+| `approve_shot_prompt_revision` | Task 29 | `ai_drama_runtime/services.py` | Tasks 31, 33 |
+| `reject_shot_prompt_revision` | Task 29 | `ai_drama_runtime/services.py` | Tasks 31, 33 |
+| `revoke_shot_prompt_approval` | Task 29 | `ai_drama_runtime/services.py` | Tasks 31, 33 |
+| `shot_prompt_phase4_eligibility` | Task 29 | `ai_drama_runtime/services.py` | Tasks 31, 33, 34 |
+
 ## Frozen Contracts
 
 ### Dependency Direction
@@ -129,6 +194,29 @@ cli.py
 ```
 
 `validators.py` must not import `RuntimeService`. Bundle Integrity logic lives in `shot_prompt_bundle.py` and is called by both validators and services.
+
+## Task-Local Executability Rules
+
+Every implementation task must pass these checks before its commit:
+
+1. Every public symbol used by a test is defined in that task or a listed dependency task.
+2. Step 3 implements the public API directly exercised by Step 1.
+3. Step 3 includes internal helpers used by that public API.
+4. No task imports files planned only by a future task.
+5. The focused test can pass at task end without waiting for a later task.
+6. The task title, test, implementation, regression, and commit message describe the same behavior.
+
+Known ordering corrections:
+
+- `merge_effective_intent` is defined in Task 19 before positive rendering calls it.
+- `_prompt_text` and dialogue rendering helpers are defined in Task 20 before golden positive rendering asserts their output.
+- `_negative_item` is defined in Task 21 before negative rendering tests assert invariant coverage.
+- Candidate rendering in Task 23 is pure object-set construction; Service orchestration waits until Task 30.
+- Task 24 returns a concrete render validation report candidate object, not a loose dict.
+- Task 25 owns the atomic formal `revision_outputs` materialization transaction.
+- Task 27 implements Store and Service review APIs before CLI tests call them.
+- Approval, reject, revoke, supersession, and eligibility are implemented as separate service/store branches in Task 29.
+- Task 31 creates parser arguments and handlers for every command it tests.
 
 ### Verifier Modes
 
@@ -268,9 +356,9 @@ flowchart TD
   T27["Task 27: review records"]
   T28["Task 28: qualification report"]
   T29["Task 29: approval lifecycle"]
+  T32["Task 32: skill package"]
   T30["Task 30: services"]
   T31["Task 31: CLI"]
-  T32["Task 32: skill package"]
   T33["Task 33: end to end"]
   T34["Task 34: final verifier reports"]
 
@@ -280,11 +368,11 @@ flowchart TD
   T14 --> T19 --> T20 --> T21 --> T22
   T22 --> T23 --> T24 --> T25 --> T26
   T6 --> T27 --> T28 --> T29
-  T18 --> T30
   T26 --> T30
   T29 --> T30
-  T30 --> T31
   T18 --> T32
+  T32 --> T30
+  T30 --> T31
   T31 --> T33 --> T34
 ```
 
@@ -296,6 +384,7 @@ Parallel rules:
 - Tasks 19-22 are renderer tasks and must run in numeric order because they modify `shot_prompt_renderer.py`.
 - Task 27 can run after Task 6 without waiting for renderer work.
 - Task 32 can run after Task 18 because Skill declarations depend on validator IDs.
+- Task 30 waits for Task 32 because Runtime Service creation records and verifies the real Skill package hash.
 - No two tasks that modify the same file run in parallel.
 
 ## Commit Strategy
@@ -330,9 +419,9 @@ Parallel rules:
 - Task 27: `feat: add shot prompt review records`
 - Task 28: `feat: write shot prompt qualification reports`
 - Task 29: `feat: add shot prompt approval lifecycle`
+- Task 32: `feat: add shot prompt canonical skill package`
 - Task 30: `feat: orchestrate shot prompt runtime services`
 - Task 31: `feat: add shot prompt cli commands`
-- Task 32: `feat: add shot prompt canonical skill package`
 - Task 33: `test: add shot prompt end to end coverage`
 - Task 34: `test: add shot prompt final verification`
 
@@ -717,10 +806,8 @@ REVISION_OUTPUT_LOGICAL_TYPES = (
 
 def _rebuild_revision_outputs(conn):
     allowed = ",".join("'%s'" % item for item in REVISION_OUTPUT_LOGICAL_TYPES)
-    conn.executescript(
+    conn.execute(
         f"""
-        PRAGMA foreign_keys=OFF;
-        BEGIN IMMEDIATE;
         CREATE TABLE revision_outputs_new (
           revision_output_id TEXT PRIMARY KEY,
           revision_id TEXT NOT NULL REFERENCES revisions(revision_id) ON DELETE RESTRICT,
@@ -732,19 +819,20 @@ def _rebuild_revision_outputs(conn):
           generator_version TEXT NOT NULL,
           created_at TEXT NOT NULL,
           UNIQUE(revision_id, logical_type)
-        );
-        INSERT INTO revision_outputs_new
-        SELECT revision_output_id, revision_id, logical_type, object_id, content_hash, media_type, generator, generator_version, created_at
-        FROM revision_outputs;
-        DROP TABLE revision_outputs;
-        ALTER TABLE revision_outputs_new RENAME TO revision_outputs;
-        CREATE INDEX revision_outputs_content_hash_idx ON revision_outputs(content_hash);
-        CREATE INDEX revision_outputs_object_id_idx ON revision_outputs(object_id);
-        PRAGMA foreign_key_check;
-        COMMIT;
-        PRAGMA foreign_keys=ON;
+        )
         """
     )
+    conn.execute("""
+        INSERT INTO revision_outputs_new
+        (revision_output_id, revision_id, logical_type, object_id, content_hash, media_type, generator, generator_version, created_at)
+        SELECT
+          revision_output_id, revision_id, logical_type, object_id, content_hash, media_type, generator, generator_version, created_at
+        FROM revision_outputs;
+    """)
+    conn.execute("DROP TABLE revision_outputs")
+    conn.execute("ALTER TABLE revision_outputs_new RENAME TO revision_outputs")
+    conn.execute("CREATE INDEX revision_outputs_content_hash_idx ON revision_outputs(content_hash)")
+    conn.execute("CREATE INDEX revision_outputs_object_id_idx ON revision_outputs(object_id)")
 ```
 
 - [ ] **Step 4: Run the focused test**
@@ -802,6 +890,8 @@ git commit -m "feat: rebuild revision outputs for shot prompt types"
 def test_revisions_rebuild_adds_revoked_status_and_preserves_current_approved_index(tmp_path):
     db_path = tmp_path / "runtime.db"
     _create_phase2_legacy_db(db_path)
+    preview = inspect_phase3_store_migration(db_path)
+    assert preview.single_transaction_owner == "apply_phase3_store_migration"
     apply_phase3_store_migration(db_path)
     with RuntimeStore(db_path, tmp_path / "objects") as store:
         sql = store.conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='revisions'").fetchone()["sql"]
@@ -831,10 +921,8 @@ APPROVAL_STATUSES = ("pending", "approved", "rejected", "superseded", "revoked")
 
 def _rebuild_revisions(conn):
     allowed = ",".join("'%s'" % item for item in APPROVAL_STATUSES)
-    conn.executescript(
+    conn.execute(
         f"""
-        PRAGMA foreign_keys=OFF;
-        BEGIN IMMEDIATE;
         CREATE TABLE revisions_new (
           revision_id TEXT PRIMARY KEY,
           artifact_id TEXT NOT NULL,
@@ -858,16 +946,26 @@ def _rebuild_revisions(conn):
           approval_status TEXT NOT NULL CHECK (approval_status IN ({allowed})),
           created_at TEXT NOT NULL,
           FOREIGN KEY(run_id) REFERENCES runs(run_id)
-        );
-        INSERT INTO revisions_new SELECT * FROM revisions;
-        DROP TABLE revisions;
-        ALTER TABLE revisions_new RENAME TO revisions;
-        CREATE UNIQUE INDEX one_current_approved_revision ON revisions(artifact_id) WHERE approval_status = 'approved';
-        PRAGMA foreign_key_check;
-        COMMIT;
-        PRAGMA foreign_keys=ON;
+        )
         """
     )
+    conn.execute("""
+        INSERT INTO revisions_new (
+          revision_id, artifact_id, artifact_type, project_id, chapter_id, run_id,
+          skill_id, skill_version, skill_package_hash, runtime_provider, runtime_model,
+          number, content_object_id, content_hash, raw_response_object_id, parser_version,
+          content_profile, derivation_type, supersedes_revision_id, approval_status, created_at
+        )
+        SELECT
+          revision_id, artifact_id, artifact_type, project_id, chapter_id, run_id,
+          skill_id, skill_version, skill_package_hash, runtime_provider, runtime_model,
+          number, content_object_id, content_hash, raw_response_object_id, parser_version,
+          content_profile, derivation_type, supersedes_revision_id, approval_status, created_at
+        FROM revisions
+    """)
+    conn.execute("DROP TABLE revisions")
+    conn.execute("ALTER TABLE revisions_new RENAME TO revisions")
+    conn.execute("CREATE UNIQUE INDEX one_current_approved_revision ON revisions(artifact_id) WHERE approval_status = 'approved'")
 ```
 
 - [ ] **Step 4: Run the focused test**
@@ -961,7 +1059,6 @@ APPROVAL_EVIDENCE_COLUMNS = {
     "renderer_profile_version": "TEXT NOT NULL DEFAULT ''",
     "qualification_profile_id": "TEXT NOT NULL DEFAULT ''",
     "qualification_profile_version": "TEXT NOT NULL DEFAULT ''",
-    "revoked_approval_record_id": "TEXT NOT NULL DEFAULT ''",
 }
 ```
 
@@ -1236,10 +1333,10 @@ git commit -m "test: cover shot prompt migration replay rollback"
 ```python
 def test_shot_prompt_parse_rejects_duplicate_keys_and_hashes_exact_bytes():
     with pytest.raises(ShotPromptCanonicalError, match="duplicate JSON key"):
-        parse_shot_prompt_json('{"schema_version":"shot-prompt-set-v1","schema_version":"shot-prompt-set-v1"}')
-    value = {"schema_version": "shot-prompt-set-v1", "render_language": "zh-Hans"}
+        parse_shot_prompt_json('{"schema_version":"shot-prompt-canonical-v1","schema_version":"shot-prompt-canonical-v1"}')
+    value = {"schema_version": "shot-prompt-canonical-v1", "render_language": "zh-Hans"}
     data = serialize_shot_prompt_json(value)
-    assert data == b'{"render_language":"zh-Hans","schema_version":"shot-prompt-set-v1"}'
+    assert data == b'{"render_language":"zh-Hans","schema_version":"shot-prompt-canonical-v1"}'
     assert shot_prompt_content_hash(value) == hashlib.sha256(data).hexdigest()
 ```
 
@@ -1260,8 +1357,8 @@ FAIL with ImportError for ai_drama_runtime.shot_prompt_canonical
 - [ ] **Step 3: Implement the minimal production change**
 
 ```python
-SCHEMA_VERSION = "shot-prompt-set-v1"
-CONTENT_PROFILE = "shot-prompt-set-v1"
+SCHEMA_VERSION = "shot-prompt-canonical-v1"
+CONTENT_PROFILE = "shot-prompt-canonical-v1"
 SERIALIZATION_VERSION = "canonical-json-v1"
 CANONICAL_PARSER_VERSION = "shot-prompt-canonical-json-v1"
 
@@ -1342,7 +1439,7 @@ def test_root_renderer_lock_and_profile_validation():
         validate_shot_prompt_canonical(draft, profile="formal")
     formal = _fixture("valid_formal_mixed_modalities.json")
     validate_shot_prompt_canonical(formal, profile="formal")
-    assert formal["renderer"] == {"profile_id": "shot-prompt-renderer-v1", "version": "1.0.0"}
+    assert formal["renderer"] == {"profile_id": "shot_prompt_standard", "version": "1.0.0"}
 ```
 
 - [ ] **Step 2: Run the focused test and verify failure**
@@ -1362,19 +1459,23 @@ FAIL because validate_shot_prompt_canonical is not defined
 - [ ] **Step 3: Implement the minimal production change**
 
 ```python
-REQUIRED_ROOT_KEYS = ["schema_version", "render_language", "renderer", "source", "set_defaults", "shots"]
+REQUIRED_ROOT_KEYS = ["schema_version", "content_profile", "scope", "source_storyboard_revision_id", "render_language", "renderer", "set_defaults", "shots"]
 
 def validate_shot_prompt_canonical(data, *, profile):
     _require_object(data, "shot_prompt_set")
     _require_required_keys(data, REQUIRED_ROOT_KEYS, "shot_prompt_set")
     if data["schema_version"] != SCHEMA_VERSION:
         raise ShotPromptCanonicalError("CANONICAL_SCHEMA_INVALID", "schema_version must be %s" % SCHEMA_VERSION)
+    if data["content_profile"] != CONTENT_PROFILE:
+        raise ShotPromptCanonicalError("CANONICAL_SCHEMA_INVALID", "content_profile must be %s" % CONTENT_PROFILE)
+    if data["scope"] != "set":
+        raise ShotPromptCanonicalError("CANONICAL_SCOPE_INVALID", "scope must be set")
+    _require_string(data["source_storyboard_revision_id"], "source_storyboard_revision_id")
     if data["render_language"] not in {"zh-Hans", "en"}:
         raise ShotPromptCanonicalError("RENDER_LANGUAGE_INVALID", "render_language is invalid")
     _require_required_keys(data["renderer"], ["profile_id", "version"], "renderer")
-    if data["renderer"] != {"profile_id": "shot-prompt-renderer-v1", "version": "1.0.0"}:
+    if data["renderer"] != {"profile_id": "shot_prompt_standard", "version": "1.0.0"}:
         raise ShotPromptCanonicalError("RENDERER_PROFILE_INVALID", "renderer profile/version is invalid")
-    _validate_source(data["source"])
     _validate_shots(data["shots"], profile=profile)
 ```
 
@@ -1536,7 +1637,7 @@ git commit -m "feat: validate shot prompt intent schemas"
 def test_dialogue_schema_requires_video_and_strict_fields():
     data = _fixture("valid_formal_mixed_modalities.json")
     image_shot = data["shots"][0]
-    image_shot["dialogue"] = [{"source_dialogue_ref": "D1", "relative_timing": "during", "post_dialogue_hold": "short", "lip_sync_required": True}]
+    image_shot["dialogue_intents"] = [{"source_dialogue_ref": "D1", "relative_timing": "after_brief_pause", "post_dialogue_hold": "brief", "lip_sync_required": True}]
     with pytest.raises(ShotPromptCanonicalError, match="IMAGE_DIALOGUE_FORBIDDEN"):
         validate_shot_prompt_canonical(data, profile="formal")
 ```
@@ -1558,11 +1659,13 @@ FAIL because image-only shots accept dialogue
 - [ ] **Step 3: Implement the minimal production change**
 
 ```python
-DIALOGUE_KEYS = {"source_dialogue_ref", "relative_timing", "post_dialogue_hold", "lip_sync_required"}
-RELATIVE_TIMING = {"before", "during", "after"}
+DIALOGUE_KEYS = {"source_dialogue_ref", "utterance_mode", "speaker_visibility", "lip_sync_required", "relative_timing", "post_dialogue_hold", "delivery"}
+RELATIVE_TIMING = {"immediate", "after_brief_pause", "after_action_cue", "after_reaction_cue", "after_previous_complete", "interrupt_previous", "overlap_previous"}
+POST_DIALOGUE_HOLD = {"none", "brief", "sustained"}
 
 def _validate_dialogue_items(shot, path):
-    items = shot.get("dialogue", [])
+    video = shot.get("video_intent", {})
+    items = video.get("dialogue_intents", [])
     _require_array(items, path)
     if items and "video_intent" not in shot:
         raise ShotPromptCanonicalError("IMAGE_DIALOGUE_FORBIDDEN", "image-only shot cannot contain dialogue")
@@ -1572,7 +1675,8 @@ def _validate_dialogue_items(shot, path):
         _require_string(item["source_dialogue_ref"], item_path + ".source_dialogue_ref")
         if item["relative_timing"] not in RELATIVE_TIMING:
             raise ShotPromptCanonicalError("DIALOGUE_TIMING_INVALID", item_path)
-        _require_string(item["post_dialogue_hold"], item_path + ".post_dialogue_hold")
+        if item["post_dialogue_hold"] not in POST_DIALOGUE_HOLD:
+            raise ShotPromptCanonicalError("DIALOGUE_HOLD_INVALID", item_path)
         if not isinstance(item["lip_sync_required"], bool):
             raise ShotPromptCanonicalError("DIALOGUE_LIP_SYNC_INVALID", item_path)
 ```
@@ -1631,7 +1735,7 @@ git commit -m "feat: validate shot prompt dialogue contract"
 ```python
 def test_continuity_scope_and_specific_shot_direction():
     data = _fixture("valid_formal_mixed_modalities.json")
-    data["shots"][0]["continuity"] = [{"entity_id": "CHAR_A", "purpose": "identity", "requirement": "required", "source_scope": "specific_shot", "source_shot_id": data["shots"][0]["shot_id"], "modality_usage": ["video"]}]
+    data["shots"][0]["continuity"] = [{"entity_type": "character", "entity_id": "CHAR_A", "purposes": ["identity"], "requirement": "required", "scope": "specific_shot", "source_shot_id": data["shots"][0]["shot_id"], "modality_usage": ["video"]}]
     with pytest.raises(ShotPromptCanonicalError, match="CONTINUITY_SOURCE_SHOT_INVALID"):
         validate_shot_prompt_canonical(data, profile="formal")
 ```
@@ -1653,7 +1757,7 @@ FAIL because continuity source direction is not validated
 - [ ] **Step 3: Implement the minimal production change**
 
 ```python
-CONTINUITY_SOURCE_SCOPES = {"set_baseline", "previous_occurrence", "specific_shot"}
+CONTINUITY_SCOPES = {"set_baseline", "previous_occurrence", "specific_shot"}
 CONTINUITY_REQUIREMENTS = {"required", "optional"}
 
 def _validate_continuity_items(shots):
@@ -1662,9 +1766,9 @@ def _validate_continuity_items(shots):
         for item in shot.get("continuity", []):
             if item["requirement"] not in CONTINUITY_REQUIREMENTS:
                 raise ShotPromptCanonicalError("CONTINUITY_REQUIREMENT_INVALID", shot["shot_id"])
-            if item["source_scope"] not in CONTINUITY_SOURCE_SCOPES:
+            if item["scope"] not in CONTINUITY_SCOPES:
                 raise ShotPromptCanonicalError("CONTINUITY_SOURCE_SCOPE_INVALID", shot["shot_id"])
-            if item["source_scope"] == "specific_shot":
+            if item["scope"] == "specific_shot":
                 source_id = item.get("source_shot_id")
                 if not source_id or order[source_id] >= order[shot["shot_id"]]:
                     raise ShotPromptCanonicalError("CONTINUITY_SOURCE_SHOT_INVALID", shot["shot_id"])
@@ -1727,7 +1831,7 @@ def test_asset_slot_schema_and_derived_slot_id():
     data = _fixture("valid_formal_mixed_modalities.json")
     slot = data["shots"][0]["asset_reference_slots"][0]
     assert "slot_id" not in slot
-    assert derive_slot_id(data["source"]["storyboard_revision_id"], data["shots"][0]["shot_id"], slot["entity_type"], slot["entity_id"]).startswith("slot_")
+    assert derive_slot_id(data["source_storyboard_revision_id"], data["shots"][0]["shot_id"], slot["entity_type"], slot["entity_id"]).startswith("slot_")
     slot["slot_id"] = "slot_authored"
     with pytest.raises(ShotPromptCanonicalError, match="slot_id"):
         validate_shot_prompt_canonical(data, profile="formal")
@@ -1958,7 +2062,7 @@ FAIL because shot_prompt_source_eligibility is not dispatched
 
 ```python
 def _run_native_shot_prompt_validator(store, revision, validator):
-    if _revision_content_profile(revision) != "shot-prompt-set-v1":
+    if _revision_content_profile(revision) != "shot-prompt-canonical-v1":
         return None
     handlers = {
         "shot_prompt_source_eligibility": _validate_shot_prompt_source_eligibility,
@@ -2294,8 +2398,8 @@ def test_renderer_registry_requires_exact_profile_and_merge_is_deterministic():
     renderer = resolve_renderer(canonical["renderer"]["profile_id"], canonical["renderer"]["version"])
     assert renderer.renderer_id == "shot-prompt-renderer"
     with pytest.raises(ShotPromptRenderError, match="RENDERER_PROFILE_UNAVAILABLE"):
-        resolve_renderer("shot-prompt-renderer-v1", "9.9.9")
-    merged = effective_intent(canonical["set_defaults"], canonical["shots"][0], "image")
+        resolve_renderer("shot_prompt_standard", "9.9.9")
+    merged = merge_effective_intent(canonical["set_defaults"], canonical["shots"][0], "image")
     assert merged["modality"] == "image"
 ```
 
@@ -2318,7 +2422,7 @@ FAIL with ImportError for shot_prompt_renderer
 ```python
 RENDERER_ID = "shot-prompt-renderer"
 RENDERER_VERSION = "1.0.0"
-RENDERER_PROFILE_ID = "shot-prompt-renderer-v1"
+RENDERER_PROFILE_ID = "shot_prompt_standard"
 RENDERER_PROFILE_VERSION = "1.0.0"
 
 @dataclass(frozen=True)
@@ -2423,8 +2527,15 @@ def render_positive_prompts(canonical):
     return {"schema_version": "shot-prompt-positive-prompts-v1", "items": items}
 
 def _positive_item(canonical, shot, modality):
-    intent = effective_intent(canonical["set_defaults"], shot, modality)
+    intent = merge_effective_intent(canonical["set_defaults"], shot, modality)
     return {"shot_id": shot["shot_id"], "modality": modality, "prompt": _prompt_text(intent, shot, modality)}
+
+def _prompt_text(intent, shot, modality):
+    pieces = [shot["shared_intent"]["subject_emphasis"]]
+    pieces.extend(intent.get("style_tags", []))
+    if modality == "video":
+        pieces.extend(render_dialogue_intents(shot["video_intent"]["dialogue_intents"]))
+    return "；".join(pieces)
 ```
 
 - [ ] **Step 4: Run the focused test**
@@ -2520,6 +2631,13 @@ def render_negative_prompts(canonical):
         "invariant_set": {"id": INVARIANT_SET_ID, "version": INVARIANT_SET_VERSION},
         "items": [_negative_item(canonical, shot, modality) for shot in canonical["shots"] for modality in sorted(output_modalities_for_shot(shot))],
     }
+
+def _negative_item(canonical, shot, modality):
+    return {
+        "shot_id": shot["shot_id"],
+        "modality": modality,
+        "constraints": _explicit_negative_constraints(canonical, shot, modality) + FACT_INVARIANTS,
+    }
 ```
 
 - [ ] **Step 4: Run the focused test**
@@ -2581,7 +2699,13 @@ git commit -m "feat: render shot prompt negative outputs"
 def test_asset_requirements_provenance_and_review_golden_outputs():
     canonical = _fixture("valid_formal_mixed_modalities.json")
     assert render_asset_requirements(canonical) == _golden_json("asset-requirements.json")
-    provenance = render_provenance(canonical, _candidate_hashes())
+    provenance = render_provenance(
+        canonical=canonical,
+        source_storyboard=_source_storyboard(),
+        shot_prompt_revision_id="REV_SHOT_PROMPT_001",
+        canonical_content_hash=shot_prompt_content_hash(canonical),
+        rendered_output_hashes=_candidate_hashes(),
+    )
     assert provenance == _golden_json("render-provenance.json")
     assert "bundle_manifest_hash" not in provenance
     assert render_review_markdown(canonical) == _golden_text("review.md")
@@ -2610,21 +2734,21 @@ def render_asset_requirements(canonical):
         for slot in shot.get("asset_reference_slots", []):
             items.append({
                 "shot_id": shot["shot_id"],
-                "slot_id": derive_slot_id(canonical["source"]["storyboard_revision_id"], shot["shot_id"], slot["entity_type"], slot["entity_id"]),
+                "slot_id": derive_slot_id(canonical["source_storyboard_revision_id"], shot["shot_id"], slot["entity_type"], slot["entity_id"]),
                 "entity_type": slot["entity_type"],
                 "entity_id": slot["entity_id"],
                 "purposes": slot["purposes"],
             })
     return {"schema_version": "shot-prompt-asset-requirements-v1", "items": items}
 
-def render_provenance(canonical, rendered_output_hashes):
+def render_provenance(*, canonical, source_storyboard, shot_prompt_revision_id, canonical_content_hash, rendered_output_hashes):
     return {
         "schema_version": "shot-prompt-render-provenance-v1",
         "renderer_id": RENDERER_ID,
         "renderer_version": RENDERER_VERSION,
-        "source_storyboard_revision_id": canonical["source"]["storyboard_revision_id"],
-        "shot_prompt_revision_id": canonical.get("revision_id", ""),
-        "canonical_content_hash": shot_prompt_content_hash(canonical),
+        "source_storyboard_revision_id": canonical["source_storyboard_revision_id"],
+        "shot_prompt_revision_id": shot_prompt_revision_id,
+        "canonical_content_hash": canonical_content_hash,
         "renderer_profile_id": RENDERER_PROFILE_ID,
         "renderer_profile_version": RENDERER_PROFILE_VERSION,
         "invariant_set_id": INVARIANT_SET_ID,
@@ -2686,14 +2810,18 @@ git commit -m "feat: render shot prompt assets provenance review"
 
 ```python
 def test_render_writes_candidate_objects_without_revision_outputs(tmp_path):
-    with _shot_prompt_service(tmp_path) as service:
-        revision = _insert_formal_shot_prompt_revision(service)
-        candidate_set = service.render_shot_prompt_candidates(revision.revision_id)
-        assert {item.filename for item in candidate_set.objects} == REQUIRED_RENDER_CANDIDATE_FILENAMES
-        assert service.store.revision_outputs(revision.revision_id) == []
-        for item in candidate_set.objects:
-            assert item.object_id == item.content_hash
-            assert item.canonical_content_hash == revision.content_hash
+    store, revision, canonical = _candidate_fixture(tmp_path)
+    candidate_set = build_candidate_object_set(
+        store=store,
+        revision=revision,
+        canonical=canonical,
+        source_storyboard=_source_storyboard(),
+    )
+    assert {item.filename for item in candidate_set.objects} == REQUIRED_RENDER_CANDIDATE_FILENAMES
+    assert store.revision_outputs(revision.revision_id) == []
+    for item in candidate_set.objects:
+        assert item.object_id == item.content_hash
+        assert item.canonical_content_hash == revision.content_hash
 ```
 
 - [ ] **Step 2: Run the focused test and verify failure**
@@ -2707,7 +2835,7 @@ python3 -m pytest tests/test_shot_prompt_bundle.py::test_render_writes_candidate
 Expected:
 
 ```text
-FAIL because render_shot_prompt_candidates is not defined
+FAIL because build_candidate_object_set is not defined
 ```
 
 - [ ] **Step 3: Implement the minimal production change**
@@ -2726,6 +2854,26 @@ class ShotPromptCandidateSet:
     revision_id: str
     canonical_content_hash: str
     objects: tuple[ShotPromptCandidateObject, ...]
+
+def build_candidate_object_set(*, store, revision, canonical, source_storyboard):
+    rendered = {
+        "rendered-positive-prompts.json": render_positive_prompts(canonical),
+        "rendered-negative-prompts.json": render_negative_prompts(canonical),
+        "asset-requirements.json": render_asset_requirements(canonical),
+        "render-provenance.json": render_provenance(
+            canonical=canonical,
+            source_storyboard=source_storyboard,
+            shot_prompt_revision_id=revision.revision_id,
+            canonical_content_hash=revision.content_hash,
+            rendered_output_hashes={},
+        ),
+        "review.md": render_review_markdown(canonical),
+    }
+    return ShotPromptCandidateSet(
+        revision_id=revision.revision_id,
+        canonical_content_hash=revision.content_hash,
+        objects=tuple(_candidate_object(store, name, value, revision.content_hash) for name, value in rendered.items()),
+    )
 ```
 
 - [ ] **Step 4: Run the focused test**
@@ -2782,15 +2930,14 @@ git commit -m "feat: define shot prompt candidate objects"
 
 ```python
 def test_render_validation_checks_members_hashes_and_report_candidate(tmp_path):
-    with _shot_prompt_service(tmp_path) as service:
-        revision = _insert_formal_shot_prompt_revision(service)
-        candidates = service.render_shot_prompt_candidates(revision.revision_id)
-        report_candidate = service.validate_shot_prompt_render(revision.revision_id, candidates)
-        assert report_candidate.filename == "validation-report.json"
-        assert service.store.revision_outputs(revision.revision_id) == []
-        tampered = _replace_candidate_hash(candidates, "rendered-positive-prompts.json", "0" * 64)
-        with pytest.raises(BundleError, match="CANDIDATE_HASH_MISMATCH"):
-            service.validate_shot_prompt_render(revision.revision_id, tampered)
+    store, revision, canonical = _candidate_fixture(tmp_path)
+    candidates = build_candidate_object_set(store=store, revision=revision, canonical=canonical, source_storyboard=_source_storyboard())
+    report_candidate = validate_render_candidates(store, revision, candidates)
+    assert report_candidate.filename == "validation-report.json"
+    assert store.revision_outputs(revision.revision_id) == []
+    tampered = _replace_candidate_hash(candidates, "rendered-positive-prompts.json", "0" * 64)
+    with pytest.raises(BundleError, match="CANDIDATE_HASH_MISMATCH"):
+        validate_render_candidates(store, revision, tampered)
 ```
 
 - [ ] **Step 2: Run the focused test and verify failure**
@@ -2804,7 +2951,7 @@ python3 -m pytest tests/test_shot_prompt_bundle.py::test_render_validation_check
 Expected:
 
 ```text
-FAIL because validate_shot_prompt_render is not defined
+FAIL because validate_render_candidates is not defined
 ```
 
 - [ ] **Step 3: Implement the minimal production change**
@@ -2823,7 +2970,7 @@ def validate_render_candidates(store, revision, candidate_set):
         if item.canonical_content_hash != revision.content_hash:
             raise BundleError("CANDIDATE_CANONICAL_HASH_MISMATCH", item.filename)
     report = {"schema_version": "shot-prompt-validation-report-v1", "status": "PASS", "candidate_count": len(candidate_set.objects)}
-    return report
+    return _candidate_object(store, "validation-report.json", report, revision.content_hash)
 ```
 
 - [ ] **Step 4: Run the focused test**
@@ -2880,14 +3027,13 @@ git commit -m "feat: validate shot prompt render candidates"
 
 ```python
 def test_bundle_materialization_inserts_all_rows_atomically(tmp_path, monkeypatch):
-    with _shot_prompt_service(tmp_path) as service:
-        revision = _insert_formal_shot_prompt_revision(service)
-        candidates = service.render_shot_prompt_candidates(revision.revision_id)
-        report = service.validate_shot_prompt_render(revision.revision_id, candidates)
-        result = service.materialize_shot_prompt_bundle(revision.revision_id, candidates, report)
-        assert result["status"] == "MATERIALIZED"
-        assert {row.logical_type for row in service.store.revision_outputs(revision.revision_id)} == PHASE3_REVISION_OUTPUT_TYPES
-        assert service.store.get_revision_output(revision.revision_id, "shot_prompt_validation_report")
+    store, revision, canonical = _candidate_fixture(tmp_path)
+    candidates = build_candidate_object_set(store=store, revision=revision, canonical=canonical, source_storyboard=_source_storyboard())
+    report = validate_render_candidates(store, revision, candidates)
+    result = materialize_shot_prompt_bundle(store, revision, candidates, report)
+    assert result["status"] == "MATERIALIZED"
+    assert {row.logical_type for row in store.revision_outputs(revision.revision_id)} == PHASE3_REVISION_OUTPUT_TYPES
+    assert store.get_revision_output(revision.revision_id, "shot_prompt_validation_report")
 ```
 
 - [ ] **Step 2: Run the focused test and verify failure**
@@ -3186,7 +3332,7 @@ FAIL because qualify_shot_prompt_revision is not defined
 - [ ] **Step 3: Implement the minimal production change**
 
 ```python
-QUALIFICATION_PROFILE_ID = "shot-prompt-approval-qualification-v1"
+QUALIFICATION_PROFILE_ID = "shot_prompt_approval_qualification"
 QUALIFICATION_PROFILE_VERSION = "1.0.0"
 
 def qualify_shot_prompt_revision(self, revision_id):
@@ -3272,7 +3418,7 @@ def test_approval_revoke_and_live_eligibility_lifecycle(tmp_path):
         latest = service.store.latest_approval(revision.revision_id)
         assert latest.action == "shot_prompt_approval_revoked"
         assert latest.qualification_report_hash == ""
-        assert latest.revoked_approval_record_id
+        assert service.shot_prompt_phase4_eligibility(revision.revision_id)["eligible"] is False
 ```
 
 - [ ] **Step 2: Run the focused test and verify failure**
@@ -3302,10 +3448,26 @@ def approve_shot_prompt_in_transaction(self, revision, reviewer, note, evidence)
             (record_id, revision_id, artifact_id, action, reviewer, note, created_at,
              source_storyboard_revision_id, canonical_content_hash, bundle_manifest_hash,
              qualification_report_hash, qualification_report_object_id, renderer_profile_id,
-             renderer_profile_version, qualification_profile_id, qualification_profile_version, revoked_approval_record_id)
-            VALUES (?, ?, ?, 'shot_prompt_approved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')
+             renderer_profile_version, qualification_profile_id, qualification_profile_version)
+            VALUES (?, ?, ?, 'shot_prompt_approved', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (uuid.uuid4().hex, revision.revision_id, revision.artifact_id, reviewer, note or "", now_iso(), *evidence),
+            (
+                uuid.uuid4().hex,
+                revision.revision_id,
+                revision.artifact_id,
+                reviewer,
+                note or "",
+                now_iso(),
+                evidence["source_storyboard_revision_id"],
+                evidence["canonical_content_hash"],
+                evidence["bundle_manifest_hash"],
+                evidence["qualification_report_hash"],
+                evidence["qualification_report_object_id"],
+                evidence["renderer_profile_id"],
+                evidence["renderer_profile_version"],
+                evidence["qualification_profile_id"],
+                evidence["qualification_profile_version"],
+            ),
         )
 ```
 
@@ -3346,7 +3508,7 @@ git commit -m "feat: add shot prompt approval lifecycle"
 
 ### Task 30: Runtime Service Orchestration
 
-**Depends on:** Task 18, Task 26, Task 29
+**Depends on:** Task 26, Task 29, Task 32
 
 **Files:**
 - Modify: `ai_drama_runtime/services.py`
@@ -3582,7 +3744,7 @@ git commit -m "feat: add shot prompt cli commands"
 def test_shot_prompt_skill_package_matches_loader_and_declares_all_runtime_validators():
     package = load_skill_package(SHOT_PROMPT_SKILL_ROOT)
     assert package.skill_id == "ai-drama-shot-prompt-canonical-skill"
-    assert package.execution_profiles[0]["profile_id"] == "shot-prompt-set-v1"
+    assert package.execution_profiles[0]["profile_id"] == "shot-prompt-canonical-v1"
     validators = {item.validator_id: item for item in package.validators}
     assert set(SHOT_PROMPT_VALIDATORS) <= set(validators)
     for validator_id in SHOT_PROMPT_VALIDATORS:
@@ -3621,20 +3783,38 @@ FAIL because the Phase 3 skill package does not exist
   "schemas": ["schemas/shot-prompt-canonical.schema.json"],
   "contracts": ["contracts/shot-prompt-canonical-contract-v1.md"],
   "validator_support_files": [],
-  "validators": [],
+  "validators": [
+    {"validator_id": "shot_prompt_source_eligibility", "entrypoint": "validators/runtime_native.py", "required": true, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_canonical_json"], "current_profile_status": "APPLICABLE", "current_profile_reason": "validates approved and fresh source storyboard binding"},
+    {"validator_id": "shot_prompt_dependency_binding", "entrypoint": "validators/runtime_native.py", "required": true, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_canonical_json"], "current_profile_status": "APPLICABLE", "current_profile_reason": "validates revision dependency binding"},
+    {"validator_id": "shot_prompt_full_shot_coverage", "entrypoint": "validators/runtime_native.py", "required": true, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_canonical_json"], "current_profile_status": "APPLICABLE", "current_profile_reason": "validates complete source shot coverage"},
+    {"validator_id": "shot_prompt_storyboard_fact_read_only", "entrypoint": "validators/runtime_native.py", "required": true, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_canonical_json"], "current_profile_status": "APPLICABLE", "current_profile_reason": "validates storyboard facts are read-only"},
+    {"validator_id": "shot_prompt_current_shot_membership", "entrypoint": "validators/runtime_native.py", "required": true, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_canonical_json"], "current_profile_status": "APPLICABLE", "current_profile_reason": "validates current shot entity membership"},
+    {"validator_id": "shot_prompt_modality_completeness", "entrypoint": "validators/runtime_native.py", "required": true, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_canonical_json"], "current_profile_status": "APPLICABLE", "current_profile_reason": "validates draft and formal modality completeness"},
+    {"validator_id": "shot_prompt_dialogue_coverage", "entrypoint": "validators/runtime_native.py", "required": true, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_canonical_json"], "current_profile_status": "APPLICABLE", "current_profile_reason": "validates strict source dialogue coverage"},
+    {"validator_id": "shot_prompt_dialogue_consistency", "entrypoint": "validators/runtime_native.py", "required": true, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_canonical_json"], "current_profile_status": "APPLICABLE", "current_profile_reason": "validates dialogue timing visibility and lip-sync"},
+    {"validator_id": "shot_prompt_continuity", "entrypoint": "validators/runtime_native.py", "required": true, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_canonical_json"], "current_profile_status": "APPLICABLE", "current_profile_reason": "validates continuity references"},
+    {"validator_id": "shot_prompt_asset_slots", "entrypoint": "validators/runtime_native.py", "required": true, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_canonical_json"], "current_profile_status": "APPLICABLE", "current_profile_reason": "validates asset reference slots"},
+    {"validator_id": "shot_prompt_platform_neutrality", "entrypoint": "validators/runtime_native.py", "required": true, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_canonical_json"], "current_profile_status": "APPLICABLE", "current_profile_reason": "rejects platform-specific execution leakage"},
+    {"validator_id": "shot_prompt_forbidden_fields", "entrypoint": "validators/runtime_native.py", "required": true, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_canonical_json"], "current_profile_status": "APPLICABLE", "current_profile_reason": "rejects derived or deferred canonical fields"},
+    {"validator_id": "shot_prompt_language_consistency_lint", "entrypoint": "validators/runtime_native.py", "required": false, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_canonical_json"], "current_profile_status": "APPLICABLE", "current_profile_reason": "reports non-blocking language consistency lint"},
+    {"validator_id": "shot_prompt_high_risk_asset_warning", "entrypoint": "validators/runtime_native.py", "required": false, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_canonical_json"], "current_profile_status": "APPLICABLE", "current_profile_reason": "reports non-blocking asset risk warnings"},
+    {"validator_id": "shot_prompt_render_validation", "entrypoint": "validators/runtime_native.py", "required": true, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_render_candidates"], "current_profile_status": "APPLICABLE", "current_profile_reason": "validates render candidate object set"},
+    {"validator_id": "shot_prompt_bundle_integrity", "entrypoint": "validators/runtime_native.py", "required": true, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_bundle"], "current_profile_status": "APPLICABLE", "current_profile_reason": "validates formal bundle integrity"},
+    {"validator_id": "shot_prompt_approval_qualification", "entrypoint": "validators/runtime_native.py", "required": true, "applies_to": ["shot_prompt_set_revision"], "command": [], "dependencies": [], "timeout_seconds": 10, "expected_exit_behavior": "runtime_native", "validator_origin": "runtime_native", "required_artifacts": ["shot_prompt_bundle"], "current_profile_status": "APPLICABLE", "current_profile_reason": "validates approval qualification readiness"}
+  ],
   "runtime_requirements": {"python": ">=3.9"},
   "dependency_requirements": [],
   "provenance": {"source": "phase_3_shot_prompt_canonical_foundation"},
   "execution_profiles": [
     {
-      "profile_id": "shot-prompt-set-v1",
+      "profile_id": "shot-prompt-canonical-v1",
       "output_artifact_type": "shot_prompt_set_revision",
       "output_format": "json",
       "parser_version": "shot-prompt-canonical-json-v1",
-      "required_schema_version": "shot-prompt-set-v1",
+      "required_schema_version": "shot-prompt-canonical-v1",
       "renderer_id": "shot-prompt-renderer",
       "renderer_version": "1.0.0",
-      "qualification_profile_id": "shot-prompt-approval-qualification-v1",
+      "qualification_profile_id": "shot_prompt_approval_qualification",
       "qualification_profile_version": "1.0.0",
       "phase4_handoff": "PHASE4_NOT_AUTHORIZED"
     }
@@ -3911,8 +4091,8 @@ git commit -m "test: add shot prompt final verification"
 | AC22 negative rendering | Task 21 | `test_negative_prompt_rendering_uses_explicit_constraints_and_invariants` | `shot_prompt_render_validation` | `render_negative_prompts` | `python3 -m pytest tests/test_shot_prompt_renderer.py -q` | explicit constraints plus invariants |
 | AC23 language lint | Task 18 | `test_language_lint_and_high_risk_asset_warning_do_not_block` | `shot_prompt_language_consistency_lint` | `run_declared_validators` | `python3 -m pytest tests/test_shot_prompt_validators.py -q` | warning non-blocking |
 | AC24 provenance | Task 22 | `test_asset_requirements_provenance_and_review_golden_outputs` | `shot_prompt_render_validation` | `render_provenance` | `python3 -m pytest tests/test_shot_prompt_renderer.py -q` | excluded hashes absent |
-| AC25 validation report | Task 24 | `test_render_validation_checks_members_hashes_and_report_candidate` | `shot_prompt_render_validation` | `validate_shot_prompt_render` | `python3 -m pytest tests/test_shot_prompt_bundle.py -q` | report from orchestrator |
-| AC26 no formal rows after render validation | Task 24 | `test_render_validation_checks_members_hashes_and_report_candidate` | `shot_prompt_render_validation` | `validate_shot_prompt_render` | `python3 -m pytest tests/test_shot_prompt_bundle.py -q` | no `revision_outputs` rows |
+| AC25 validation report | Task 24 | `test_render_validation_checks_members_hashes_and_report_candidate` | `shot_prompt_render_validation` | `validate_render_candidates` | `python3 -m pytest tests/test_shot_prompt_bundle.py -q` | report from orchestrator |
+| AC26 no formal rows after render validation | Task 24 | `test_render_validation_checks_members_hashes_and_report_candidate` | `shot_prompt_render_validation` | `validate_render_candidates` | `python3 -m pytest tests/test_shot_prompt_bundle.py -q` | no `revision_outputs` rows |
 | AC27 atomicity | Task 25 | `test_bundle_materialization_inserts_all_rows_atomically` | `shot_prompt_bundle_integrity` | `materialize_shot_prompt_bundle` | `python3 -m pytest tests/test_shot_prompt_bundle.py -q` | failure leaves zero rows |
 | AC28 conflicts | Task 26 | `test_bundle_integrity_detects_missing_extra_tampered_members` | `shot_prompt_bundle_integrity` | `check_shot_prompt_bundle_integrity` | `python3 -m pytest tests/test_shot_prompt_bundle.py -q` | partial/conflicting rows fail |
 | AC29 output mapping | Task 3, Task 25 | `test_revision_outputs_rebuild_preserves_rows_and_adds_phase3_types` | `shot_prompt_bundle_integrity` | `RuntimeStore.revision_outputs` | `python3 -m pytest tests/test_shot_prompt_store_migration.py -q` | exact logical types |
@@ -3927,7 +4107,7 @@ git commit -m "test: add shot prompt final verification"
 | AC38 schema injection | Task 30 | `test_create_revision_stores_exact_canonical_bytes_and_skill_provenance` | `shot_prompt_forbidden_fields` | `create_shot_prompt_revision` | `python3 -m pytest tests/test_shot_prompt_approval_lifecycle.py -q` | stored bytes are exact canonical bytes |
 | AC39 live eligibility | Task 29, Task 33 | `test_end_to_end_happy_path_supersede_revoke_stale_tamper_and_eligibility` | `shot_prompt_bundle_integrity` | `shot_prompt_phase4_eligibility` | `python3 -m pytest tests/test_shot_prompt_end_to_end.py -q` | stale or tamper makes ineligible |
 | Migration legacy replay | Task 7 | `test_phase3_migration_apply_replay_and_rollback` | none | `apply_phase3_store_migration` | `python3 -m pytest tests/test_shot_prompt_store_migration.py -q` | idempotent replay and rollback |
-| Candidate object contract | Task 23 | `test_render_writes_candidate_objects_without_revision_outputs` | `shot_prompt_render_validation` | `render_shot_prompt_candidates` | `python3 -m pytest tests/test_shot_prompt_bundle.py -q` | candidate metadata complete |
+| Candidate object contract | Task 23 | `test_render_writes_candidate_objects_without_revision_outputs` | `shot_prompt_render_validation` | `build_candidate_object_set` | `python3 -m pytest tests/test_shot_prompt_bundle.py -q` | candidate metadata complete |
 | CLI complete surface | Task 31 | `test_shot_prompt_cli_surface_json_exit_codes_and_rejected_options` | multiple | `shot-prompts ...` | `python3 -m pytest tests/test_shot_prompt_cli.py -q` | explicit commands and rejected inputs |
 | Skill package consistency | Task 32 | `test_shot_prompt_skill_package_matches_loader_and_declares_all_runtime_validators` | all Phase 3 validators | `load_skill_package` | `python3 -m pytest tests/test_shot_prompt_skill_package.py -q` | package hash and declarations consistent |
 | Portable/final verifier | Task 34 | `test_final_verifier_runs_required_test_groups_and_writes_reports` | none | verifier script | `python3 -m pytest tests/test_phase3_verifier.py -q` | portable/final reports written |
