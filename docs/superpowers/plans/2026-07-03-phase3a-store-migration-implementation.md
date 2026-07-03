@@ -111,7 +111,7 @@ REVISION_OUTPUT_LOGICAL_TYPES = (
 REVIEW_EVENT_TYPES = ("opened", "resolved", "reopened", "voided")
 ```
 
-All table rebuild helpers in Phase 3A are connection-local helpers. They use `conn.execute(...)` statements only and never open, commit, roll back, close, toggle foreign keys, or run script execution. The only transaction owner is `apply_phase3_store_migration(db_path, *, fail_after_step="")`.
+All table rebuild helpers in Phase 3A are connection-local helpers. They use `conn.execute(...)` statements only and never open, commit, roll back, close, toggle foreign keys, or run script execution. The only transaction owner is `apply_phase3_store_migration(db_path)`.
 
 ## Task Dependency Map
 
@@ -625,7 +625,7 @@ all selected tests passed
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ai_drama_runtime/store.py ai_drama_runtime/shot_prompt_migration.py tests/test_shot_prompt_store_migration.py
+git add tests/test_shot_prompt_store_migration.py ai_drama_runtime/store.py ai_drama_runtime/shot_prompt_migration.py
 git commit -m "feat: add shot prompt artifact business keys"
 ```
 
@@ -774,7 +774,7 @@ Expected:
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ai_drama_runtime/store.py ai_drama_runtime/shot_prompt_migration.py tests/test_shot_prompt_store_migration.py
+git add tests/test_shot_prompt_store_migration.py ai_drama_runtime/store.py ai_drama_runtime/shot_prompt_migration.py
 git commit -m "feat: extend revision output logical types"
 ```
 
@@ -928,7 +928,7 @@ all selected tests passed
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ai_drama_runtime/store.py ai_drama_runtime/shot_prompt_migration.py tests/test_shot_prompt_store_migration.py
+git add tests/test_shot_prompt_store_migration.py ai_drama_runtime/store.py ai_drama_runtime/shot_prompt_migration.py
 git commit -m "feat: add phase 3 revision statuses"
 ```
 
@@ -1073,7 +1073,7 @@ all selected tests passed
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ai_drama_runtime/store.py ai_drama_runtime/shot_prompt_migration.py tests/test_shot_prompt_store_migration.py
+git add tests/test_shot_prompt_store_migration.py ai_drama_runtime/store.py ai_drama_runtime/shot_prompt_migration.py
 git commit -m "feat: extend approval action storage"
 ```
 
@@ -1223,7 +1223,7 @@ all selected tests passed
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ai_drama_runtime/store.py tests/test_shot_prompt_store_migration.py
+git add tests/test_shot_prompt_store_migration.py ai_drama_runtime/store.py
 git commit -m "feat: map shot prompt approval evidence"
 ```
 
@@ -1421,7 +1421,7 @@ all selected tests passed
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ai_drama_runtime/store.py tests/test_shot_prompt_review_records.py
+git add tests/test_shot_prompt_review_records.py ai_drama_runtime/store.py
 git commit -m "feat: add shot prompt review table schema"
 ```
 
@@ -1702,7 +1702,7 @@ Expected:
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ai_drama_runtime/store.py tests/test_shot_prompt_review_records.py
+git add tests/test_shot_prompt_review_records.py ai_drama_runtime/store.py
 git commit -m "feat: add atomic shot prompt review creation"
 ```
 
@@ -1833,7 +1833,7 @@ Expected:
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ai_drama_runtime/store.py tests/test_shot_prompt_store_migration.py
+git add tests/test_shot_prompt_store_migration.py ai_drama_runtime/store.py
 git commit -m "feat: add latest validation store queries"
 ```
 
@@ -1981,7 +1981,7 @@ Expected:
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ai_drama_runtime/store.py tests/test_shot_prompt_store_migration.py
+git add tests/test_shot_prompt_store_migration.py ai_drama_runtime/store.py
 git commit -m "feat: add atomic shot prompt output insertion"
 ```
 
@@ -2007,18 +2007,6 @@ from ai_drama_runtime.store import RuntimeStore
 from tests.shot_prompt_store_support import create_phase2_legacy_db, snapshot_database
 
 
-class ConnectionProbe:
-    def __init__(self, conn):
-        self.conn = conn
-        self.close_called = False
-
-    def __getattr__(self, name):
-        return getattr(self.conn, name)
-
-    def close(self):
-        self.close_called = True
-
-
 def test_apply_phase3_store_migration_is_idempotent_and_transactional(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
@@ -2041,26 +2029,28 @@ def test_apply_phase3_store_migration_is_idempotent_and_transactional(tmp_path):
         assert snapshot["legacy_revision"]["revision_id"] == "legacy-revision"
 
 
-def test_apply_phase3_store_migration_rolls_back_to_logical_snapshot(tmp_path):
+def test_apply_phase3_store_migration_rolls_back_to_logical_snapshot(tmp_path, monkeypatch):
     db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
     create_phase2_legacy_db(db_path)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     before = snapshot_database(conn)
     conn.close()
 
-    probe_conn = sqlite3.connect(db_path)
-    probe_conn.row_factory = sqlite3.Row
-    probe = ConnectionProbe(probe_conn)
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(shot_prompt_migration, "_connect", lambda _db_path: probe)
+    original = shot_prompt_migration._rebuild_approval_records_for_phase3
+
+    def fail_after_approval_actions(conn):
+        original(conn)
+        raise RuntimeError("injected migration failure")
+
+    monkeypatch.setattr(
+        shot_prompt_migration,
+        "_rebuild_approval_records_for_phase3",
+        fail_after_approval_actions,
+    )
     with pytest.raises(Phase3StoreMigrationError):
-        apply_phase3_store_migration(db_path, fail_after_step="approval_actions")
-    monkeypatch.undo()
-    assert probe.close_called is True
-    probe_fk_enabled = bool(probe_conn.execute("PRAGMA foreign_keys").fetchone()[0])
-    assert probe_fk_enabled
-    probe_conn.close()
+        apply_phase3_store_migration(db_path)
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -2070,6 +2060,11 @@ def test_apply_phase3_store_migration_rolls_back_to_logical_snapshot(tmp_path):
     finally:
         conn.close()
     assert after == before
+
+    with RuntimeStore(db_path, objects_root) as store:
+        assert bool(store.conn.execute("PRAGMA foreign_keys").fetchone()[0])
+        assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert snapshot_database(store.conn)["transient_tables"] == []
 ```
 
 - [ ] **Step 2: Run the focused test and verify failure**
@@ -2095,7 +2090,7 @@ def _migration_is_current(db_path):
     return preview_phase3_store_migration(db_path)["status"] == "CURRENT"
 
 
-def apply_phase3_store_migration(db_path, *, fail_after_step=""):
+def apply_phase3_store_migration(db_path):
     db_path = Path(db_path)
     if _migration_is_current(db_path):
         return {"status": "ALREADY_CURRENT", "database_path": str(db_path)}
@@ -2105,17 +2100,9 @@ def apply_phase3_store_migration(db_path, *, fail_after_step=""):
         conn.execute("BEGIN IMMEDIATE")
         try:
             _ensure_artifact_business_key_columns_for_conn(conn)
-            if fail_after_step == "artifact_business_key":
-                raise Phase3StoreMigrationError("injected failure after artifact_business_key")
             _rebuild_revisions_for_phase3(conn)
-            if fail_after_step == "revision_status":
-                raise Phase3StoreMigrationError("injected failure after revision_status")
             _rebuild_revision_outputs_for_phase3(conn)
-            if fail_after_step == "revision_outputs":
-                raise Phase3StoreMigrationError("injected failure after revision_outputs")
             _rebuild_approval_records_for_phase3(conn)
-            if fail_after_step == "approval_actions":
-                raise Phase3StoreMigrationError("injected failure after approval_actions")
             _ensure_approval_evidence_columns_for_conn(conn)
             _ensure_review_tables_for_conn(conn)
             failures = conn.execute("PRAGMA foreign_key_check").fetchall()
@@ -2234,6 +2221,8 @@ PASS because Tasks 3-8 already wire the same schema helpers into fresh DB creati
 
 - [ ] **Step 3: Confirm no production change is required**
 
+No production change. This task is an acceptance-only test task.
+
 ```bash
 git diff --name-only -- ai_drama_runtime/store.py ai_drama_runtime/shot_prompt_migration.py
 ```
@@ -2271,8 +2260,8 @@ all selected tests passed
 - [ ] **Step 6: Commit**
 
 ```bash
-git add ai_drama_runtime/store.py tests/test_shot_prompt_store_migration.py
-git commit -m "test: prove phase 3a schema parity"
+git add tests/test_shot_prompt_store_migration.py
+git commit -m "test: verify fresh and migrated phase 3a schema parity"
 ```
 
 ### Task 14: Phase 3A Acceptance
