@@ -72,8 +72,6 @@ def preview_phase3_store_migration(db_path):
         revision_output_sql = _table_sql(conn, "revision_outputs")
         revisions_sql = _table_sql(conn, "revisions")
         approval_sql = _table_sql(conn, "approval_records")
-        review_sql = _table_sql(conn, "review_records")
-        event_sql = _table_sql(conn, "review_record_events")
         approval_columns = _columns(conn, "approval_records")
         checks = {
             "artifact_business_key": _check(
@@ -93,14 +91,6 @@ def preview_phase3_store_migration(db_path):
             ),
             "approval_evidence_columns": _check(
                 set(APPROVAL_EVIDENCE_COLUMNS) <= approval_columns
-            ),
-            "review_tables": _check(
-                "shot_id TEXT" in review_sql
-                and "scope = 'set' AND shot_id IS NULL" in review_sql
-                and all(value in event_sql for value in REVIEW_EVENT_TYPES)
-            ),
-            "review_indexes": _check(
-                all(_index_sql(conn, name) == sql for name, sql in REVIEW_INDEX_SQL.items())
             ),
             "foreign_key_check": _check(
                 conn.execute("PRAGMA foreign_key_check").fetchall() == []

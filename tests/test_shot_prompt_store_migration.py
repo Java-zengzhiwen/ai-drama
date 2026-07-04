@@ -81,8 +81,28 @@ def test_phase3_preview_reports_each_contract_check_without_mutation(tmp_path):
     assert preview["checks"]["revision_status_check"]["status"] == "MISSING"
     assert preview["checks"]["approval_action_check"]["status"] == "MISSING"
     assert preview["checks"]["approval_evidence_columns"]["status"] == "MISSING"
-    assert preview["checks"]["review_tables"]["status"] == "MISSING"
-    assert preview["checks"]["review_indexes"]["status"] == "MISSING"
+    assert "review_tables" not in preview["checks"]
+    assert "review_indexes" not in preview["checks"]
+
+
+def test_phase3_preview_reports_fresh_a1_store_current(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    with RuntimeStore(db_path, objects_root):
+        pass
+
+    preview = preview_phase3_store_migration(db_path)
+
+    assert preview["status"] == "CURRENT"
+    assert set(preview["checks"]) == {
+        "artifact_business_key",
+        "revision_outputs_check",
+        "revision_status_check",
+        "approval_action_check",
+        "approval_evidence_columns",
+        "foreign_key_check",
+    }
+    assert all(item["status"] == "OK" for item in preview["checks"].values())
 
 
 def test_shot_prompt_artifact_business_key_is_unique_and_internal_id_is_generated(tmp_path):
