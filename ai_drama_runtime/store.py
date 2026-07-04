@@ -963,6 +963,163 @@ class RuntimeStore:
         ).fetchall()
         return [self._validation_from_row(row) for row in rows]
 
+    def review_record(self, review_id):
+        return self._review_from_row(
+            self.conn.execute(
+                "SELECT * FROM review_records WHERE review_id = ?",
+                (review_id,),
+            ).fetchone()
+        )
+
+    def review_event(self, event_id):
+        return self._review_event_from_row(
+            self.conn.execute(
+                "SELECT * FROM review_record_events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+        )
+
+    def review_events(self, review_id):
+        rows = self.conn.execute(
+            """
+            SELECT * FROM review_record_events
+            WHERE review_id = ?
+            ORDER BY created_at, event_id
+            """,
+            (review_id,),
+        ).fetchall()
+        return [self._review_event_from_row(row) for row in rows]
+
+    def _insert_review_event_row(
+        self,
+        *,
+        review_id,
+        event_type,
+        actor,
+        note="",
+        event_id=None,
+        created_at=None,
+    ):
+        event_id = event_id or uuid.uuid4().hex
+        created_at = created_at or now_iso()
+        self.conn.execute(
+            """
+            INSERT INTO review_record_events
+            (event_id, review_id, event_type, actor, note, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (event_id, review_id, event_type, actor, note, created_at),
+        )
+        return self.review_event(event_id)
+
+    def insert_review_event(self, *, review_id, event_type, actor, note=""):
+        with self.conn:
+            return self._insert_review_event_row(
+                review_id=review_id,
+                event_type=event_type,
+                actor=actor,
+                note=note,
+            )
+
+    def _insert_review_record_row(
+        self,
+        *,
+        review_id,
+        artifact_id,
+        revision_id,
+        scope,
+        shot_id,
+        body,
+        body_hash,
+        blocking,
+        created_by,
+        created_at,
+    ):
+        self.conn.execute(
+            """
+            INSERT INTO review_records
+            (review_id, artifact_id, revision_id, scope, shot_id, body, body_hash, blocking, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                review_id,
+                artifact_id,
+                revision_id,
+                scope,
+                shot_id,
+                body,
+                body_hash,
+                int(blocking),
+                created_by,
+                created_at,
+            ),
+        )
+        return self.review_record(review_id)
+
+    def insert_review_record_with_opened_event(
+        self,
+        *,
+        artifact_id,
+        revision_id,
+        scope,
+        shot_id,
+        body,
+        blocking,
+        created_by,
+        note="",
+    ):
+        review_id = uuid.uuid4().hex
+        body_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        with self.conn:
+            created_at = now_iso()
+            self._insert_review_record_row(
+                review_id=review_id,
+                artifact_id=artifact_id,
+                revision_id=revision_id,
+                scope=scope,
+                shot_id=shot_id,
+                body=body,
+                body_hash=body_hash,
+                blocking=blocking,
+                created_by=created_by,
+                created_at=created_at,
+            )
+            self._insert_review_event_row(
+                review_id=review_id,
+                event_type="opened",
+                actor=created_by,
+                note=note,
+                created_at=created_at,
+            )
+        return self.review_record(review_id)
+
+    def review_status(self, review_id):
+        row = self.conn.execute(
+            """
+            SELECT event_type FROM review_record_events
+            WHERE review_id = ?
+            ORDER BY created_at DESC, event_id DESC
+            LIMIT 1
+            """,
+            (review_id,),
+        ).fetchone()
+        return "" if row is None else row["event_type"]
+
+    def open_blocking_review_count(self, revision_id):
+        rows = self.conn.execute(
+            """
+            SELECT review_id FROM review_records
+            WHERE revision_id = ? AND blocking = 1
+            ORDER BY created_at, review_id
+            """,
+            (revision_id,),
+        ).fetchall()
+        return sum(
+            1
+            for row in rows
+            if self.review_status(row["review_id"]) not in {"resolved", "voided"}
+        )
+
     def current_approved(self, artifact_id):
         return self._revision_from_row(
             self.conn.execute(
@@ -989,6 +1146,16 @@ class RuntimeStore:
 
     def _approval_from_row(self, row):
         return None if row is None else ApprovalRecord(**dict(row))
+
+    def _review_from_row(self, row):
+        if row is None:
+            return None
+        data = dict(row)
+        data["blocking"] = bool(data["blocking"])
+        return ReviewRecord(**data)
+
+    def _review_event_from_row(self, row):
+        return None if row is None else ReviewEventRecord(**dict(row))
 
     def _revision_output_from_row(self, row):
         return None if row is None else RevisionOutputRecord(**dict(row))
