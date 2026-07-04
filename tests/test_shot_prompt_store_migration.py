@@ -598,6 +598,43 @@ def test_runtime_store_open_runs_phase3_migration_orchestrator(tmp_path, monkeyp
         assert store.get_revision("legacy-revision").revision_id == "legacy-revision"
 
 
+def test_runtime_store_open_migrates_preview_current_db_missing_review_tables(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+    apply_phase3_store_migration(db_path)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("DROP TABLE review_record_events")
+        conn.execute("DROP TABLE review_records")
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert preview_phase3_store_migration(db_path)["status"] == "CURRENT"
+    assert not migration.phase3_store_migration_is_current(db_path)
+
+    calls = []
+    original = migration.apply_phase3_store_migration
+
+    def wrapped(db_path_arg):
+        calls.append(str(db_path_arg))
+        return original(db_path_arg)
+
+    monkeypatch.setattr(migration, "apply_phase3_store_migration", wrapped)
+
+    with RuntimeStore(db_path, objects_root) as store:
+        assert calls == [str(db_path)]
+        assert "CREATE TABLE" in table_sql(store.conn, "review_records")
+        assert "CREATE TABLE" in table_sql(store.conn, "review_record_events")
+
+    assert preview_phase3_store_migration(db_path)["status"] == "CURRENT"
+    assert migration.phase3_store_migration_is_current(db_path)
+
+
 def test_runtime_store_open_does_not_half_initialize_when_migration_fails(tmp_path, monkeypatch):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"

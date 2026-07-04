@@ -221,8 +221,7 @@ class RuntimeStore:
         if self.db_path.exists() and self.db_path.stat().st_size > 0:
             from ai_drama_runtime import shot_prompt_migration
 
-            preview = shot_prompt_migration.preview_phase3_store_migration(self.db_path)
-            if preview["status"] == "NEEDS_MIGRATION":
+            if not shot_prompt_migration.phase3_store_migration_is_current(self.db_path):
                 shot_prompt_migration.apply_phase3_store_migration(self.db_path)
         self.conn = sqlite3.connect(str(self.db_path))
         self.conn.row_factory = sqlite3.Row

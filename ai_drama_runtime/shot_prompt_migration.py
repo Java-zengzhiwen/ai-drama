@@ -109,6 +109,10 @@ def _migration_is_current(db_path):
         conn.close()
 
 
+def phase3_store_migration_is_current(db_path):
+    return _migration_is_current(db_path)
+
+
 def apply_phase3_store_migration(db_path):
     db_path = Path(db_path)
     if _migration_is_current(db_path):
