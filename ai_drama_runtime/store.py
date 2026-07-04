@@ -12,6 +12,7 @@ from typing import Optional
 from ai_drama_runtime.shot_prompt_migration import (
     APPROVAL_ACTIONS,
     APPROVAL_EVIDENCE_COLUMNS,
+    PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES,
     REVISION_APPROVAL_STATUSES,
     REVISION_OUTPUT_LOGICAL_TYPES,
     SHOT_PROMPT_ARTIFACT_TYPE,
@@ -859,6 +860,28 @@ class RuntimeStore:
             )
             created.append(self.get_revision_output(values["revision_id"], values["logical_type"]))
         return created
+
+    def insert_phase3_revision_outputs_atomically(self, revision_id, rows):
+        if self.get_revision(revision_id) is None:
+            raise ValueError("revision does not exist")
+        rows = [dict(row) for row in rows]
+        logical_types = [row.get("logical_type") for row in rows]
+        if len(set(logical_types)) != len(logical_types):
+            raise ValueError("phase3 output logical types must be unique")
+        if set(logical_types) != set(PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES):
+            raise ValueError("phase3 outputs must match required logical type set")
+        for row in rows:
+            if row.get("revision_id") != revision_id:
+                raise ValueError("phase3 output revision_id mismatch")
+        ordered_rows = sorted(
+            rows,
+            key=lambda row: PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES.index(row["logical_type"]),
+        )
+        with self.conn:
+            return self._insert_revision_output_rows_no_commit(ordered_rows)
+
+    def _insert_revision_output_rows_no_commit(self, rows):
+        return self.insert_revision_outputs_transaction(rows)
 
     def insert_export_record_in_transaction(self, **values):
         values.setdefault("export_id", uuid.uuid4().hex)

@@ -435,3 +435,64 @@ def test_latest_validation_queries_are_deterministic(tmp_path):
         )
         assert store.latest_validation_result("legacy-revision", "shot_prompt_schema").status == "PASS"
         assert store.latest_validation_results("legacy-revision")["shot_prompt_schema"].status == "PASS"
+
+
+def _phase3_rows(store, revision_id):
+    object_id = store.write_text_object("{}")
+    return [
+        {
+            "revision_id": revision_id,
+            "logical_type": logical_type,
+            "object_id": object_id,
+            "content_hash": object_id,
+            "media_type": "application/json",
+            "generator": "shot-prompt-test",
+            "generator_version": "1.0.0",
+        }
+        for logical_type in migration.PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
+    ]
+
+
+def test_phase3_output_insert_validates_inputs_and_rolls_back_new_rows(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
+        rows = _phase3_rows(store, "legacy-revision")
+        unordered_rows = [rows[3], rows[0], rows[6], rows[2], rows[4], rows[1], rows[5]]
+        with pytest.raises(ValueError):
+            store.insert_phase3_revision_outputs_atomically("legacy-revision", rows[:-1])
+        with pytest.raises(ValueError):
+            store.insert_phase3_revision_outputs_atomically("missing-revision", rows)
+        bad_rows = list(rows)
+        bad_rows[3] = dict(bad_rows[3], logical_type="unknown")
+        with pytest.raises(Exception):
+            store.insert_phase3_revision_outputs_atomically("legacy-revision", bad_rows)
+        assert store.revision_outputs("legacy-revision") == []
+        inserted = store.insert_phase3_revision_outputs_atomically("legacy-revision", unordered_rows)
+        assert [item.logical_type for item in inserted] == list(
+            migration.PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
+        )
+        with pytest.raises(Exception):
+            store.insert_phase3_revision_outputs_atomically("legacy-revision", rows)
+        assert len(store.revision_outputs("legacy-revision")) == 7
+
+
+def test_phase3_output_insert_rolls_back_when_row_helper_fails(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
+        rows = _phase3_rows(store, "legacy-revision")
+        original = store._insert_revision_output_rows_no_commit
+
+        def fail_after_one_row(items):
+            original(items[:1])
+            raise RuntimeError("forced row insert failure")
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(store, "_insert_revision_output_rows_no_commit", fail_after_one_row)
+        with pytest.raises(RuntimeError):
+            store.insert_phase3_revision_outputs_atomically("legacy-revision", rows)
+        monkeypatch.undo()
+        assert store.revision_outputs("legacy-revision") == []
