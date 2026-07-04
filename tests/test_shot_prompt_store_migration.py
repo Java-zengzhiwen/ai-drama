@@ -2,11 +2,10 @@ import sqlite3
 
 import pytest
 
+import ai_drama_runtime.shot_prompt_migration as migration
 from ai_drama_runtime.shot_prompt_migration import (
     APPROVAL_ACTIONS,
-    PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES,
     REVISION_APPROVAL_STATUSES,
-    REVISION_OUTPUT_LOGICAL_TYPES,
     preview_phase3_store_migration,
 )
 from ai_drama_runtime.store import RuntimeStore
@@ -22,6 +21,42 @@ from tests.shot_prompt_store_support import (
 from tests.test_storyboard_legacy_migration import (
     _create_planning_baseline_legacy_db as create_real_phase2_legacy_db,
 )
+
+
+EXPECTED_PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES = (
+    "shot_prompt_positive_prompts",
+    "shot_prompt_negative_prompts",
+    "shot_prompt_asset_requirements",
+    "shot_prompt_render_provenance",
+    "shot_prompt_review_markdown",
+    "shot_prompt_validation_report",
+    "bundle_manifest",
+)
+EXPECTED_REVISION_OUTPUT_LOGICAL_TYPES = (
+    "rendered_positive_prompt",
+    "rendered_negative_prompt",
+    "rendered_markdown",
+    "shot_prompt_positive_prompts",
+    "shot_prompt_negative_prompts",
+    "shot_prompt_asset_requirements",
+    "shot_prompt_render_provenance",
+    "shot_prompt_review_markdown",
+    "shot_prompt_validation_report",
+    "bundle_manifest",
+)
+
+
+def test_phase3a_migration_exports_only_owned_schema_constants():
+    assert (
+        migration.PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
+        == EXPECTED_PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
+    )
+    assert (
+        migration.REVISION_OUTPUT_LOGICAL_TYPES
+        == EXPECTED_REVISION_OUTPUT_LOGICAL_TYPES
+    )
+    review_exports = [name for name in vars(migration) if name.startswith("REVIEW_")]
+    assert review_exports == []
 
 
 def test_phase3a_support_creates_phase2_legacy_database(tmp_path):
@@ -183,16 +218,16 @@ def test_revision_outputs_accept_exact_logical_types_and_preserve_schema(tmp_pat
                 "generator": "test",
                 "generator_version": "1.0.0",
             }
-            for logical_type in PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
+            for logical_type in EXPECTED_PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
         ]
         inserted = store.insert_revision_outputs_transaction(rows)
         assert [item.logical_type for item in inserted] == list(
-            PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
+            EXPECTED_PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
         )
         with pytest.raises(sqlite3.IntegrityError):
             store.insert_revision_outputs_transaction([dict(rows[0], logical_type="unknown")])
         sql = table_sql(store.conn, "revision_outputs")
-        for logical_type in REVISION_OUTPUT_LOGICAL_TYPES:
+        for logical_type in EXPECTED_REVISION_OUTPUT_LOGICAL_TYPES:
             assert logical_type in sql
         indexes = index_sql(store.conn, "revision_outputs")
         assert "revision_outputs_content_hash_idx" in indexes

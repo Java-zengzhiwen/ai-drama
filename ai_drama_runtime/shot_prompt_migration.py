@@ -46,23 +46,6 @@ REVISION_OUTPUT_LOGICAL_TYPES = (
     "shot_prompt_validation_report",
     "bundle_manifest",
 )
-REVIEW_EVENT_TYPES = ("opened", "resolved", "reopened", "voided")
-
-
-REVIEW_INDEX_SQL = {
-    "review_records_revision_shot_idx": (
-        "CREATE INDEX review_records_revision_shot_idx "
-        "ON review_records(revision_id, shot_id)"
-    ),
-    "review_records_artifact_revision_idx": (
-        "CREATE INDEX review_records_artifact_revision_idx "
-        "ON review_records(artifact_id, revision_id)"
-    ),
-    "review_record_events_review_id_created_event_idx": (
-        "CREATE INDEX review_record_events_review_id_created_event_idx "
-        "ON review_record_events(review_id, created_at, event_id)"
-    ),
-}
 
 
 def preview_phase3_store_migration(db_path):
