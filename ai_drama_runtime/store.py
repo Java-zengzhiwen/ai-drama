@@ -142,6 +142,15 @@ class ApprovalRecord:
     reviewer: str
     note: str
     created_at: str
+    source_storyboard_revision_id: str
+    canonical_content_hash: str
+    bundle_manifest_hash: str
+    qualification_report_hash: str
+    qualification_report_object_id: str
+    renderer_profile_id: str
+    renderer_profile_version: str
+    qualification_profile_id: str
+    qualification_profile_version: str
 
 
 @dataclass(frozen=True)
@@ -952,19 +961,7 @@ class RuntimeStore:
         return ValidationRecord(**data)
 
     def _approval_from_row(self, row):
-        if row is None:
-            return None
-        data = dict(row)
-        return ApprovalRecord(
-            sequence=data["sequence"],
-            record_id=data["record_id"],
-            revision_id=data["revision_id"],
-            artifact_id=data["artifact_id"],
-            action=data["action"],
-            reviewer=data["reviewer"],
-            note=data["note"],
-            created_at=data["created_at"],
-        )
+        return None if row is None else ApprovalRecord(**dict(row))
 
     def _revision_output_from_row(self, row):
         return None if row is None else RevisionOutputRecord(**dict(row))

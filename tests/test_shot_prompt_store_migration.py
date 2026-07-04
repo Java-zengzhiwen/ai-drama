@@ -5,6 +5,7 @@ import pytest
 import ai_drama_runtime.shot_prompt_migration as migration
 from ai_drama_runtime.shot_prompt_migration import (
     APPROVAL_ACTIONS,
+    APPROVAL_EVIDENCE_COLUMNS,
     REVISION_APPROVAL_STATUSES,
     preview_phase3_store_migration,
 )
@@ -291,3 +292,64 @@ def test_approval_actions_accept_old_and_phase3_values_only(tmp_path):
                 """
             )
         assert "shot_prompt_approval_revoked" in table_sql(store.conn, "approval_records")
+
+
+def test_approval_records_map_exact_evidence_columns_with_defaults(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
+        columns = table_columns(store.conn, "approval_records")
+        for name in APPROVAL_EVIDENCE_COLUMNS:
+            assert columns[name]["dflt_value"] == "''"
+        assert set(APPROVAL_EVIDENCE_COLUMNS) == {
+            "source_storyboard_revision_id",
+            "canonical_content_hash",
+            "bundle_manifest_hash",
+            "qualification_report_hash",
+            "qualification_report_object_id",
+            "renderer_profile_id",
+            "renderer_profile_version",
+            "qualification_profile_id",
+            "qualification_profile_version",
+        }
+        revision = store.get_revision("legacy-revision")
+        approval = store.approve_in_transaction(revision, "tester", "legacy approval")
+        assert approval.source_storyboard_revision_id == ""
+        assert approval.canonical_content_hash == ""
+        assert approval.renderer_profile_id == ""
+        assert approval.qualification_profile_version == ""
+        store.conn.execute(
+            """
+            INSERT INTO approval_records
+            (record_id, revision_id, artifact_id, action, reviewer, note, created_at,
+             source_storyboard_revision_id, canonical_content_hash, bundle_manifest_hash,
+             qualification_report_hash, qualification_report_object_id, renderer_profile_id,
+             renderer_profile_version, qualification_profile_id, qualification_profile_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "shot-prompt-record",
+                "legacy-revision",
+                "artifact-1",
+                "shot_prompt_approved",
+                "reviewer",
+                "",
+                "2026-07-03T00:00:00Z",
+                "storyboard-revision",
+                "canonical-hash",
+                "bundle-hash",
+                "qualification-hash",
+                "qualification-object",
+                "shot_prompt_standard",
+                "1.0.0",
+                "shot_prompt_approval_qualification",
+                "1.0.0",
+            ),
+        )
+        mapped = store.approval_record("shot-prompt-record")
+        assert mapped.action == "shot_prompt_approved"
+        assert mapped.source_storyboard_revision_id == "storyboard-revision"
+        assert mapped.canonical_content_hash == "canonical-hash"
+        assert mapped.renderer_profile_id == "shot_prompt_standard"
+        assert store.latest_approval("legacy-revision").record_id == "shot-prompt-record"
