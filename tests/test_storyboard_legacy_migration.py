@@ -6,6 +6,7 @@ import pytest
 
 from ai_drama_runtime.manifest import load_skill_package
 from ai_drama_runtime.services import RuntimeService, WorkflowGateError
+from ai_drama_runtime.shot_prompt_migration import REVISION_OUTPUT_LOGICAL_TYPES
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_runtime.storyboard_canonical import CONTENT_PROFILE, parse_canonical_json
 
@@ -152,7 +153,15 @@ def test_revision_outputs_schema_matches_frozen_ddl(tmp_path):
         table_sql = store.conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'revision_outputs'"
         ).fetchone()["sql"]
-        assert "logical_type IN ('rendered_positive_prompt', 'rendered_negative_prompt', 'rendered_markdown', 'bundle_manifest')" in table_sql
+        for logical_type in (
+            "rendered_positive_prompt",
+            "rendered_negative_prompt",
+            "rendered_markdown",
+            "bundle_manifest",
+        ):
+            assert logical_type in table_sql
+        for logical_type in REVISION_OUTPUT_LOGICAL_TYPES:
+            assert logical_type in table_sql
 
         index_names = {
             row["name"]

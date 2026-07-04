@@ -8,9 +8,22 @@ import time
 import uuid
 from datetime import datetime, timezone
 
+from ai_drama_runtime.shot_prompt_migration import (
+    APPROVAL_ACTIONS,
+    APPROVAL_EVIDENCE_COLUMNS,
+    REVISION_APPROVAL_STATUSES,
+    REVISION_OUTPUT_LOGICAL_TYPES,
+    SHOT_PROMPT_ARTIFACT_TYPE,
+    SHOT_PROMPT_BUSINESS_KEY_TYPE,
+)
+
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def _quoted_sql_values(values):
+    return ", ".join("'%s'" % value for value in values)
 
 
 @dataclass(frozen=True)
@@ -191,6 +204,12 @@ class RuntimeStore:
             pass
 
     def _init_schema(self):
+        revision_output_logical_types = _quoted_sql_values(REVISION_OUTPUT_LOGICAL_TYPES)
+        revision_approval_statuses = _quoted_sql_values(REVISION_APPROVAL_STATUSES)
+        approval_actions = _quoted_sql_values(APPROVAL_ACTIONS)
+        approval_evidence_columns = ", ".join(
+            "%s TEXT NOT NULL DEFAULT ''" % name for name in APPROVAL_EVIDENCE_COLUMNS
+        )
         self.conn.executescript(
             """
             PRAGMA foreign_keys = ON;
@@ -199,6 +218,8 @@ class RuntimeStore:
               artifact_type TEXT NOT NULL,
               project_id TEXT NOT NULL,
               chapter_id TEXT NOT NULL,
+              business_key_type TEXT NOT NULL DEFAULT '',
+              business_key_value TEXT NOT NULL DEFAULT '',
               created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS runs (
@@ -259,7 +280,7 @@ class RuntimeStore:
               content_profile TEXT NOT NULL DEFAULT '',
               derivation_type TEXT NOT NULL DEFAULT 'model_generation',
               supersedes_revision_id TEXT NOT NULL,
-              approval_status TEXT NOT NULL,
+              approval_status TEXT NOT NULL CHECK (approval_status IN (%s)),
               created_at TEXT NOT NULL,
               FOREIGN KEY(run_id) REFERENCES runs(run_id)
             );
@@ -284,10 +305,11 @@ class RuntimeStore:
               record_id TEXT NOT NULL UNIQUE,
               revision_id TEXT NOT NULL,
               artifact_id TEXT NOT NULL,
-              action TEXT NOT NULL,
+              action TEXT NOT NULL CHECK (action IN (%s)),
               reviewer TEXT NOT NULL,
               note TEXT NOT NULL,
               created_at TEXT NOT NULL,
+              %s,
               FOREIGN KEY(revision_id) REFERENCES revisions(revision_id)
             );
             CREATE TABLE IF NOT EXISTS export_records (
@@ -311,7 +333,7 @@ class RuntimeStore:
             CREATE TABLE IF NOT EXISTS revision_outputs (
               revision_output_id TEXT PRIMARY KEY,
               revision_id TEXT NOT NULL REFERENCES revisions(revision_id) ON DELETE RESTRICT,
-              logical_type TEXT NOT NULL CHECK (logical_type IN ('rendered_positive_prompt', 'rendered_negative_prompt', 'rendered_markdown', 'bundle_manifest')),
+              logical_type TEXT NOT NULL CHECK (logical_type IN (%s)),
               object_id TEXT NOT NULL,
               content_hash TEXT NOT NULL,
               media_type TEXT NOT NULL,
@@ -349,8 +371,26 @@ class RuntimeStore:
               ON revisions(artifact_id)
               WHERE approval_status = 'approved';
             """
+            % (
+                revision_approval_statuses,
+                approval_actions,
+                approval_evidence_columns,
+                revision_output_logical_types,
+            )
         )
         self._ensure_columns()
+        artifact_columns = {
+            row["name"] for row in self.conn.execute("PRAGMA table_info(artifacts)").fetchall()
+        }
+        if {"business_key_type", "business_key_value"} <= artifact_columns:
+            self.conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS one_shot_prompt_set_per_source_storyboard_revision
+                  ON artifacts(artifact_type, business_key_type, business_key_value)
+                  WHERE artifact_type = 'shot_prompt_set'
+                    AND business_key_type = 'source_storyboard_revision_id'
+                """
+            )
         self.conn.commit()
 
     def _ensure_columns(self):
@@ -522,6 +562,54 @@ class RuntimeStore:
             (artifact_id, artifact_type, project_id, chapter_id, now_iso()),
         )
         self.conn.commit()
+
+    def artifact_by_business_key(self, artifact_type, business_key_type, business_key_value):
+        row = self.conn.execute(
+            """
+            SELECT * FROM artifacts
+            WHERE artifact_type = ? AND business_key_type = ? AND business_key_value = ?
+            ORDER BY created_at, artifact_id
+            LIMIT 1
+            """,
+            (artifact_type, business_key_type, business_key_value),
+        ).fetchone()
+        return None if row is None else dict(row)
+
+    def ensure_shot_prompt_artifact(self, *, project_id, chapter_id, source_storyboard_revision_id):
+        existing = self.artifact_by_business_key(
+            SHOT_PROMPT_ARTIFACT_TYPE,
+            SHOT_PROMPT_BUSINESS_KEY_TYPE,
+            source_storyboard_revision_id,
+        )
+        if existing is not None:
+            return existing
+        artifact_id = uuid.uuid4().hex
+        try:
+            self.conn.execute(
+                """
+                INSERT INTO artifacts
+                (artifact_id, artifact_type, project_id, chapter_id,
+                 business_key_type, business_key_value, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    artifact_id,
+                    SHOT_PROMPT_ARTIFACT_TYPE,
+                    project_id,
+                    chapter_id,
+                    SHOT_PROMPT_BUSINESS_KEY_TYPE,
+                    source_storyboard_revision_id,
+                    now_iso(),
+                ),
+            )
+            self.conn.commit()
+        except sqlite3.IntegrityError:
+            self.conn.rollback()
+        return self.artifact_by_business_key(
+            SHOT_PROMPT_ARTIFACT_TYPE,
+            SHOT_PROMPT_BUSINESS_KEY_TYPE,
+            source_storyboard_revision_id,
+        )
 
     def create_run(self, **values):
         values.setdefault("run_id", uuid.uuid4().hex)
@@ -864,7 +952,19 @@ class RuntimeStore:
         return ValidationRecord(**data)
 
     def _approval_from_row(self, row):
-        return None if row is None else ApprovalRecord(**dict(row))
+        if row is None:
+            return None
+        data = dict(row)
+        return ApprovalRecord(
+            sequence=data["sequence"],
+            record_id=data["record_id"],
+            revision_id=data["revision_id"],
+            artifact_id=data["artifact_id"],
+            action=data["action"],
+            reviewer=data["reviewer"],
+            note=data["note"],
+            created_at=data["created_at"],
+        )
 
     def _revision_output_from_row(self, row):
         return None if row is None else RevisionOutputRecord(**dict(row))
