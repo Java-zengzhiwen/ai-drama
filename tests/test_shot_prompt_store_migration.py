@@ -1,4 +1,7 @@
+import os
 import sqlite3
+import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -645,3 +648,46 @@ def test_fresh_runtime_store_schema_matches_migrated_legacy_schema(tmp_path):
         conn.close()
 
     assert fresh_schema == migrated_legacy_schema
+
+
+def test_phase3a_scope_does_not_create_later_phase_files():
+    repo_root = Path(__file__).resolve().parents[1]
+    forbidden = [
+        "ai_drama_runtime/shot_prompt_canonical.py",
+        "ai_drama_runtime/shot_prompt_renderer.py",
+        "ai_drama_runtime/shot_prompt_bundle.py",
+        "skills/ai-drama-shot-prompt-canonical-skill/v0.1.0/skill.json",
+        "tools/verify_phase3_shot_prompt_canonical_foundation.py",
+    ]
+    assert [path for path in forbidden if (repo_root / path).exists()] == []
+
+
+def test_phase3a_changed_files_stay_in_allowlist_and_protect_upstream_contracts():
+    repo_root = Path(__file__).resolve().parents[1]
+    base = os.environ.get("PHASE3_IMPLEMENTATION_START_COMMIT")
+    if not base:
+        pytest.skip("PHASE3_IMPLEMENTATION_START_COMMIT is required for changed-file scope verification")
+    changed = set(
+        subprocess.check_output(
+            ["git", "diff", "--name-only", "%s...HEAD" % base],
+            cwd=repo_root,
+            text=True,
+        ).splitlines()
+    )
+    allowed = {
+        "ai_drama_runtime/store.py",
+        "ai_drama_runtime/shot_prompt_migration.py",
+        "docs/superpowers/plans/2026-07-03-phase3a-store-migration-implementation.md",
+        "tests/test_shot_prompt_store_migration.py",
+        "tests/test_shot_prompt_review_records.py",
+        "tests/shot_prompt_store_support.py",
+        "tests/test_storyboard_legacy_migration.py",
+    }
+    protected = {
+        "docs/superpowers/specs/2026-07-01-phase3-shot-prompt-canonical-design.md",
+        "docs/superpowers/specs/2026-07-04-phase-3-agent-execution-acceptance-contract.md",
+        "docs/superpowers/plans/2026-07-03-phase3-shot-prompt-canonical-program.md",
+        "skills/ai-drama-storyboard-design-skill/v0.2.1/skill.json",
+    }
+    assert changed <= allowed
+    assert changed.isdisjoint(protected)
