@@ -626,3 +626,22 @@ def test_runtime_store_open_does_not_half_initialize_when_migration_fails(tmp_pa
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         conn.close()
+
+
+def test_fresh_runtime_store_schema_matches_migrated_legacy_schema(tmp_path):
+    fresh_db = tmp_path / "fresh.db"
+    legacy_db = tmp_path / "legacy.db"
+    create_phase2_legacy_db(legacy_db)
+
+    with RuntimeStore(fresh_db, tmp_path / "fresh-objects") as fresh_store:
+        fresh_schema = normalized_schema_snapshot(fresh_store.conn)
+
+    apply_phase3_store_migration(legacy_db)
+    conn = sqlite3.connect(legacy_db)
+    conn.row_factory = sqlite3.Row
+    try:
+        migrated_legacy_schema = normalized_schema_snapshot(conn)
+    finally:
+        conn.close()
+
+    assert fresh_schema == migrated_legacy_schema
