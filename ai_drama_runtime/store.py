@@ -239,6 +239,13 @@ class RuntimeStore:
             pass
 
     def _init_schema(self):
+        fresh_database = not self.conn.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+            LIMIT 1
+            """
+        ).fetchone()
         revision_output_logical_types = _quoted_sql_values(REVISION_OUTPUT_LOGICAL_TYPES)
         revision_approval_statuses = _quoted_sql_values(REVISION_APPROVAL_STATUSES)
         approval_actions = _quoted_sql_values(APPROVAL_ACTIONS)
@@ -413,7 +420,8 @@ class RuntimeStore:
                 revision_output_logical_types,
             )
         )
-        _ensure_review_tables_for_conn(self.conn)
+        if fresh_database:
+            _ensure_review_tables_for_conn(self.conn)
         self._ensure_columns()
         artifact_columns = {
             row["name"] for row in self.conn.execute("PRAGMA table_info(artifacts)").fetchall()
@@ -466,6 +474,14 @@ class RuntimeStore:
                 DROP TABLE approval_records_old;
                 """
             )
+            approval_columns = {
+                row["name"] for row in self.conn.execute("PRAGMA table_info(approval_records)").fetchall()
+            }
+        for name in APPROVAL_EVIDENCE_COLUMNS:
+            if approval_columns and name not in approval_columns:
+                self.conn.execute(
+                    "ALTER TABLE approval_records ADD COLUMN %s TEXT NOT NULL DEFAULT ''" % name
+                )
         dependency_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(revision_dependencies)").fetchall()}
         if dependency_columns and "parent_approval_record_id" not in dependency_columns:
             self.conn.executescript(

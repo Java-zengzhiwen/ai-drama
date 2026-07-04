@@ -95,6 +95,17 @@ def test_phase3a_support_creates_phase2_legacy_database(tmp_path):
         assert store.get_revision("legacy-revision").revision_id == "legacy-revision"
 
 
+def test_runtime_store_reopen_phase2_legacy_db_does_not_create_review_tables(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+
+    with RuntimeStore(db_path, objects_root) as store:
+        assert store.get_revision("legacy-revision").revision_id == "legacy-revision"
+        assert table_sql(store.conn, "review_records") == ""
+        assert table_sql(store.conn, "review_record_events") == ""
+
+
 def test_phase3_preview_reports_each_contract_check_without_mutation(tmp_path):
     db_path = tmp_path / "runtime.db"
     create_phase2_legacy_db(db_path)
@@ -353,6 +364,38 @@ def test_approval_records_map_exact_evidence_columns_with_defaults(tmp_path):
         assert mapped.canonical_content_hash == "canonical-hash"
         assert mapped.renderer_profile_id == "shot_prompt_standard"
         assert store.latest_approval("legacy-revision").record_id == "shot-prompt-record"
+
+
+def test_legacy_approval_records_reopen_with_empty_evidence_defaults(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO approval_records
+            (record_id, revision_id, artifact_id, action, reviewer, note, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-approval",
+                "legacy-revision",
+                "artifact-1",
+                "storyboard_approved",
+                "legacy-reviewer",
+                "",
+                "2026-07-03T00:00:00Z",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with RuntimeStore(db_path, objects_root) as store:
+        approval = store.approval_record("legacy-approval")
+        for name in APPROVAL_EVIDENCE_COLUMNS:
+            assert getattr(approval, name) == ""
 
 
 def test_latest_validation_queries_are_deterministic(tmp_path):
