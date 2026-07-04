@@ -963,6 +963,33 @@ class RuntimeStore:
         ).fetchall()
         return [self._validation_from_row(row) for row in rows]
 
+    def latest_validation_result(self, revision_id, validator_id):
+        row = self.conn.execute(
+            """
+            SELECT * FROM validation_results
+            WHERE revision_id = ? AND validator_id = ?
+            ORDER BY created_at DESC, validation_id DESC
+            LIMIT 1
+            """,
+            (revision_id, validator_id),
+        ).fetchone()
+        return self._validation_from_row(row)
+
+    def latest_validation_results(self, revision_id):
+        rows = self.conn.execute(
+            """
+            SELECT * FROM validation_results
+            WHERE revision_id = ?
+            ORDER BY created_at ASC, validation_id ASC
+            """,
+            (revision_id,),
+        ).fetchall()
+        latest = {}
+        for row in rows:
+            record = self._validation_from_row(row)
+            latest[record.validator_id] = record
+        return latest
+
     def review_record(self, review_id):
         return self._review_from_row(
             self.conn.execute(

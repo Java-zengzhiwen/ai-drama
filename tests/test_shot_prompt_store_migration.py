@@ -353,3 +353,42 @@ def test_approval_records_map_exact_evidence_columns_with_defaults(tmp_path):
         assert mapped.canonical_content_hash == "canonical-hash"
         assert mapped.renderer_profile_id == "shot_prompt_standard"
         assert store.latest_approval("legacy-revision").record_id == "shot-prompt-record"
+
+
+def test_latest_validation_queries_are_deterministic(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
+        empty = store.write_text_object("")
+        report = store.write_text_object("{}")
+        store.insert_validation(
+            revision_id="legacy-revision",
+            validator_id="shot_prompt_schema",
+            validator_name="schema",
+            status="FAIL",
+            required=1,
+            exit_code=1,
+            error_code="ERR",
+            duration_ms=1,
+            stdout_object_id=empty,
+            stderr_object_id=empty,
+            report_object_id=report,
+            created_at="2026-07-03T00:00:00.000000Z",
+        )
+        store.insert_validation(
+            revision_id="legacy-revision",
+            validator_id="shot_prompt_schema",
+            validator_name="schema",
+            status="PASS",
+            required=1,
+            exit_code=0,
+            error_code="",
+            duration_ms=1,
+            stdout_object_id=empty,
+            stderr_object_id=empty,
+            report_object_id=report,
+            created_at="2026-07-03T00:00:01.000000Z",
+        )
+        assert store.latest_validation_result("legacy-revision", "shot_prompt_schema").status == "PASS"
+        assert store.latest_validation_results("legacy-revision")["shot_prompt_schema"].status == "PASS"
