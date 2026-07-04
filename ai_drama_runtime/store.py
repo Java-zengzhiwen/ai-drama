@@ -484,11 +484,6 @@ class RuntimeStore:
             approval_columns = {
                 row["name"] for row in self.conn.execute("PRAGMA table_info(approval_records)").fetchall()
             }
-        for name in APPROVAL_EVIDENCE_COLUMNS:
-            if approval_columns and name not in approval_columns:
-                self.conn.execute(
-                    "ALTER TABLE approval_records ADD COLUMN %s TEXT NOT NULL DEFAULT ''" % name
-                )
         dependency_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(revision_dependencies)").fetchall()}
         if dependency_columns and "parent_approval_record_id" not in dependency_columns:
             self.conn.executescript(

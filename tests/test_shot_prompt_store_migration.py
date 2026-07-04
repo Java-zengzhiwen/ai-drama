@@ -134,8 +134,8 @@ def test_phase3_preview_reports_each_contract_check_without_mutation(tmp_path):
     assert preview["checks"]["revision_status_check"]["status"] == "MISSING"
     assert preview["checks"]["approval_action_check"]["status"] == "MISSING"
     assert preview["checks"]["approval_evidence_columns"]["status"] == "MISSING"
-    assert "review_tables" not in preview["checks"]
-    assert "review_indexes" not in preview["checks"]
+    assert preview["checks"]["review_tables"]["status"] == "MISSING"
+    assert preview["checks"]["review_indexes"]["status"] == "MISSING"
 
 
 def test_phase3_preview_reports_fresh_a1_store_current(tmp_path):
@@ -153,6 +153,8 @@ def test_phase3_preview_reports_fresh_a1_store_current(tmp_path):
         "revision_status_check",
         "approval_action_check",
         "approval_evidence_columns",
+        "review_tables",
+        "review_indexes",
         "foreign_key_check",
     }
     assert all(item["status"] == "OK" for item in preview["checks"].values())
@@ -404,6 +406,28 @@ def test_legacy_approval_records_reopen_with_empty_evidence_defaults(tmp_path):
             assert getattr(approval, name) == ""
 
 
+def test_runtime_store_ensure_columns_does_not_add_phase3_approval_evidence_columns(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+
+    monkeypatch.setattr(migration, "phase3_store_migration_is_current", lambda _: True)
+
+    def fail_if_called(_):
+        raise AssertionError("phase3 migration orchestrator should be skipped")
+
+    monkeypatch.setattr(migration, "apply_phase3_store_migration", fail_if_called)
+
+    with RuntimeStore(db_path, objects_root) as store:
+        approval_columns = table_columns(store.conn, "approval_records")
+
+    assert "sequence" in approval_columns
+    for name in APPROVAL_EVIDENCE_COLUMNS:
+        assert name not in approval_columns
+
+
 def test_latest_validation_queries_are_deterministic(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
@@ -598,7 +622,7 @@ def test_runtime_store_open_runs_phase3_migration_orchestrator(tmp_path, monkeyp
         assert store.get_revision("legacy-revision").revision_id == "legacy-revision"
 
 
-def test_runtime_store_open_migrates_preview_current_db_missing_review_tables(
+def test_runtime_store_open_migrates_db_missing_review_tables(
     tmp_path, monkeypatch
 ):
     db_path = tmp_path / "runtime.db"
@@ -614,7 +638,10 @@ def test_runtime_store_open_migrates_preview_current_db_missing_review_tables(
     finally:
         conn.close()
 
-    assert preview_phase3_store_migration(db_path)["status"] == "CURRENT"
+    preview = preview_phase3_store_migration(db_path)
+    assert preview["status"] == "NEEDS_MIGRATION"
+    assert preview["checks"]["review_tables"]["status"] == "MISSING"
+    assert preview["checks"]["review_indexes"]["status"] == "MISSING"
     assert not migration.phase3_store_migration_is_current(db_path)
 
     calls = []

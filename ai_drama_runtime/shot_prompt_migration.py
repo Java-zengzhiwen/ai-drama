@@ -80,6 +80,8 @@ def preview_phase3_store_migration(db_path):
             "approval_evidence_columns": _check(
                 set(APPROVAL_EVIDENCE_COLUMNS) <= approval_columns
             ),
+            "review_tables": _check(_review_tables_ddl_is_current(conn)),
+            "review_indexes": _check(_review_indexes_are_current(conn)),
             "foreign_key_check": _check(
                 conn.execute("PRAGMA foreign_key_check").fetchall() == []
             ),
@@ -564,15 +566,38 @@ def _review_event_check_sql():
 
 
 def _review_tables_schema_is_current(conn):
+    return _review_tables_ddl_is_current(conn) and _review_indexes_are_current(conn)
+
+
+def _review_tables_ddl_is_current(conn):
+    review_records_sql = _table_sql(conn, "review_records")
+    review_record_events_sql = _table_sql(conn, "review_record_events")
     return (
-        "scope = 'set' AND shot_id IS NULL" in _table_sql(conn, "review_records")
-        and all(value in _table_sql(conn, "review_record_events") for value in REVIEW_EVENT_TYPES)
-        and _index_sql(conn, "review_records_revision_shot_idx")
-        != ""
+        "review_id TEXT PRIMARY KEY" in review_records_sql
+        and "artifact_id TEXT NOT NULL" in review_records_sql
+        and "revision_id TEXT NOT NULL" in review_records_sql
+        and "scope TEXT NOT NULL CHECK (scope IN ('set','shot'))" in review_records_sql
+        and "shot_id TEXT" in review_records_sql
+        and "body_hash TEXT NOT NULL" in review_records_sql
+        and "blocking INTEGER NOT NULL CHECK (blocking IN (0,1))" in review_records_sql
+        and "scope = 'set' AND shot_id IS NULL" in review_records_sql
+        and "scope = 'shot' AND shot_id IS NOT NULL" in review_records_sql
+        and "FOREIGN KEY(revision_id) REFERENCES revisions(revision_id)" in review_records_sql
+        and "event_id TEXT PRIMARY KEY" in review_record_events_sql
+        and "review_id TEXT NOT NULL" in review_record_events_sql
+        and all(value in review_record_events_sql for value in REVIEW_EVENT_TYPES)
+        and "FOREIGN KEY(review_id) REFERENCES review_records(review_id)" in review_record_events_sql
+    )
+
+
+def _review_indexes_are_current(conn):
+    return (
+        _index_sql(conn, "review_records_revision_shot_idx")
+        == "CREATE INDEX review_records_revision_shot_idx ON review_records(revision_id, shot_id)"
         and _index_sql(conn, "review_records_artifact_revision_idx")
-        != ""
+        == "CREATE INDEX review_records_artifact_revision_idx ON review_records(artifact_id, revision_id)"
         and _index_sql(conn, "review_record_events_review_id_created_event_idx")
-        != ""
+        == "CREATE INDEX review_record_events_review_id_created_event_idx ON review_record_events(review_id, created_at, event_id)"
     )
 
 
