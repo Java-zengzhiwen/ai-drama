@@ -10,9 +10,9 @@
 
 ---
 
-Plan Status: IMPLEMENTATION_PLAN_PENDING_USER_REVIEW
-Implementation: IMPLEMENTATION_NOT_AUTHORIZED
-Phase 3B+: NOT_AUTHORIZED
+Plan Status: IMPLEMENTATION_PLAN_PRECHECK_REPAIR_IN_PROGRESS
+Implementation: PHASE_3A_AUTHORIZED_BY_ONE_SHOT_EXECUTION_PROMPT
+Phase 3B+: AUTHORIZED_AFTER_PRIOR_SUBPHASE_GATE
 Phase 4: PHASE4_NOT_AUTHORIZED
 
 ## Scope
@@ -221,11 +221,17 @@ def table_columns(conn, table_name):
 
 def index_sql(conn, table_name):
     return {
-        row["name"]: row["sql"]
-        for row in conn.execute(
-            "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = ? ORDER BY name",
-            (table_name,),
-        ).fetchall()
+        row["name"]: {
+            "unique": bool(row["unique"]),
+            "origin": row["origin"],
+            "partial": bool(row["partial"]),
+            "columns": [
+                column["name"]
+                for column in conn.execute("PRAGMA index_info(%s)" % row["name"]).fetchall()
+            ],
+            "predicate_tokens": _normalized_partial_index_predicate(conn, row["name"]),
+        }
+        for row in conn.execute("PRAGMA index_list(%s)" % table_name).fetchall()
     }
 
 
@@ -239,6 +245,27 @@ def table_sql(conn, table_name):
 
 def _normalized_sql_tokens(sql):
     return sorted(set(sql.replace("\n", " ").replace("(", " ( ").replace(")", " ) ").replace(",", " , ").split()))
+
+
+def _normalized_partial_index_predicate(conn, index_name):
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?",
+        (index_name,),
+    ).fetchone()
+    sql = "" if row is None or row["sql"] is None else row["sql"]
+    marker = " WHERE "
+    upper_sql = sql.upper()
+    predicate = sql[upper_sql.find(marker) + len(marker):] if marker in upper_sql else ""
+    return _normalized_sql_tokens(predicate)
+
+
+def check_constraints(conn, table_name):
+    sql = table_sql(conn, table_name)
+    return [
+        _normalized_sql_tokens(match)
+        for match in sql.split("CHECK")
+        if "(" in match
+    ]
 
 
 def normalized_schema_snapshot(conn):
@@ -263,7 +290,7 @@ def normalized_schema_snapshot(conn):
             ],
             "foreign_keys": [dict(row) for row in conn.execute("PRAGMA foreign_key_list(%s)" % name).fetchall()],
             "indexes": index_sql(conn, name),
-            "check_tokens": _normalized_sql_tokens(table_sql(conn, name)),
+            "check_constraints": check_constraints(conn, name),
         }
     return result
 
@@ -295,6 +322,45 @@ def create_phase2_legacy_db(db_path):
     from tests.test_storyboard_legacy_migration import _create_planning_baseline_legacy_db
 
     _create_planning_baseline_legacy_db(db_path)
+
+
+def seed_phase3_store(store, *, revision_id="legacy-revision", artifact_id="artifact-1", artifact_type="storyboard"):
+    content_object_id = store.write_text_object("{}")
+    store.ensure_artifact(artifact_id, artifact_type, "project-1", "chapter-1")
+    run = store.create_run(
+        run_id="run-1",
+        artifact_id=artifact_id,
+        project_id="project-1",
+        chapter_id="chapter-1",
+        skill_id="ai-drama-storyboard-design-skill",
+        skill_version="v0.2.0",
+        skill_hash="skill-hash",
+        runtime="test-runtime",
+        provider="mock",
+        model="mock",
+        status="COMPLETED",
+        request_object_id=content_object_id,
+        response_object_id=content_object_id,
+        input_hash=content_object_id,
+    )
+    return store.insert_revision(
+        revision_id=revision_id,
+        artifact_id=artifact_id,
+        artifact_type=artifact_type,
+        project_id="project-1",
+        chapter_id="chapter-1",
+        run_id=run.run_id,
+        skill_id="ai-drama-storyboard-design-skill",
+        skill_version="v0.2.0",
+        skill_package_hash="skill-hash",
+        runtime_provider="mock",
+        runtime_model="mock",
+        content_object_id=content_object_id,
+        content_hash=content_object_id,
+        raw_response_object_id=content_object_id,
+        parser_version="storyboard-canonical-json-v1",
+        content_profile="storyboard-canonical-v1",
+    )
 ```
 
 - [ ] **Step 4: Run the focused test**
@@ -391,6 +457,8 @@ import sqlite3
 from pathlib import Path
 
 
+SHOT_PROMPT_ARTIFACT_TYPE = "shot_prompt_set"
+SHOT_PROMPT_BUSINESS_KEY_TYPE = "source_storyboard_revision_id"
 REVISION_APPROVAL_STATUSES = ("pending", "approved", "rejected", "superseded", "revoked")
 APPROVAL_ACTIONS = (
     "script_approved",
@@ -554,14 +622,12 @@ import sqlite3
 import pytest
 
 from ai_drama_runtime.store import RuntimeStore
-from tests.shot_prompt_store_support import create_phase2_legacy_db, index_sql, table_columns
+from tests.shot_prompt_store_support import index_sql, table_columns
 
 
 def test_shot_prompt_artifact_business_key_is_unique_and_internal_id_is_generated(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
-    create_phase2_legacy_db(db_path)
-
     with RuntimeStore(db_path, objects_root) as store:
         first = store.ensure_shot_prompt_artifact(
             project_id="project-1",
@@ -590,7 +656,9 @@ def test_shot_prompt_artifact_business_key_is_unique_and_internal_id_is_generate
                 ("dup", "shot_prompt_set", "project-1", "chapter-1", "source_storyboard_revision_id", "storyboard-revision-1", "2026-07-03T00:00:00Z"),
             )
         assert {"business_key_type", "business_key_value"} <= set(table_columns(store.conn, "artifacts"))
-        assert "artifact_type = 'shot_prompt_set'" in index_sql(store.conn, "artifacts")["one_shot_prompt_set_per_source_storyboard_revision"]
+        artifact_index = index_sql(store.conn, "artifacts")["one_shot_prompt_set_per_source_storyboard_revision"]
+        assert artifact_index["columns"] == ["artifact_type", "business_key_type", "business_key_value"]
+        assert {"artifact_type", "'shot_prompt_set'", "business_key_type", "'source_storyboard_revision_id'"} <= set(artifact_index["predicate_tokens"])
 ```
 
 - [ ] **Step 2: Run the focused test and verify failure**
@@ -708,15 +776,14 @@ import pytest
 
 from ai_drama_runtime.shot_prompt_migration import PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES, REVISION_OUTPUT_LOGICAL_TYPES
 from ai_drama_runtime.store import RuntimeStore
-from tests.shot_prompt_store_support import create_phase2_legacy_db, index_sql, table_sql
+from tests.shot_prompt_store_support import index_sql, seed_phase3_store, table_sql
 
 
 def test_revision_outputs_accept_exact_logical_types_and_preserve_schema(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
-    create_phase2_legacy_db(db_path)
-
     with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
         object_id = store.write_text_object("{}")
         revision = store.get_revision("legacy-revision")
         rows = [
@@ -915,15 +982,14 @@ import pytest
 
 from ai_drama_runtime.shot_prompt_migration import REVISION_APPROVAL_STATUSES
 from ai_drama_runtime.store import RuntimeStore
-from tests.shot_prompt_store_support import create_phase2_legacy_db, index_sql, table_sql
+from tests.shot_prompt_store_support import index_sql, seed_phase3_store, table_sql
 
 
 def test_revision_status_check_preserves_schema_and_approved_index(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
-    create_phase2_legacy_db(db_path)
-
     with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
         for status in REVISION_APPROVAL_STATUSES:
             store.conn.execute("UPDATE revisions SET approval_status = ? WHERE revision_id = ?", (status, "legacy-revision"))
             store.conn.commit()
@@ -934,7 +1000,8 @@ def test_revision_status_check_preserves_schema_and_approved_index(tmp_path):
         assert "approval_status TEXT NOT NULL CHECK" in sql
         assert "FOREIGN KEY(run_id) REFERENCES runs(run_id)" in sql
         approved_index = index_sql(store.conn, "revisions")["one_current_approved_revision"]
-        assert "WHERE approval_status = 'approved'" in approved_index
+        assert approved_index["columns"] == ["artifact_id"]
+        assert {"approval_status", "'approved'"} <= set(approved_index["predicate_tokens"])
 ```
 
 - [ ] **Step 2: Run the focused test and verify failure**
@@ -992,32 +1059,37 @@ def _rebuild_revisions_for_phase3(conn):
     current_sql = _table_sql(conn, "revisions")
     if all(value in current_sql for value in REVISION_APPROVAL_STATUSES) and "approval_status TEXT NOT NULL CHECK" in current_sql:
         return
-    conn.execute("DROP INDEX IF EXISTS one_current_approved_revision")
-    conn.execute("ALTER TABLE revisions RENAME TO revisions_old")
-    _create_revisions_table(conn)
-    conn.execute(
-        """
-        INSERT INTO revisions
-        (revision_id, artifact_id, artifact_type, project_id, chapter_id, run_id, skill_id, skill_version,
-         skill_package_hash, runtime_provider, runtime_model, number, content_object_id, content_hash,
-         raw_response_object_id, parser_version, content_profile, derivation_type, supersedes_revision_id,
-         approval_status, created_at)
-        SELECT revision_id, artifact_id, artifact_type, project_id, chapter_id, run_id, skill_id, skill_version,
-               skill_package_hash, runtime_provider, runtime_model, number, content_object_id, content_hash,
-               raw_response_object_id, parser_version, content_profile, derivation_type, supersedes_revision_id,
-               approval_status, created_at
-        FROM revisions_old
-        ORDER BY artifact_id, number
-        """
-    )
-    conn.execute("DROP TABLE revisions_old")
-    conn.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS one_current_approved_revision
-          ON revisions(artifact_id)
-          WHERE approval_status = 'approved'
-        """
-    )
+    previous_legacy_alter = conn.execute("PRAGMA legacy_alter_table").fetchone()[0]
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    try:
+        conn.execute("DROP INDEX IF EXISTS one_current_approved_revision")
+        conn.execute("ALTER TABLE revisions RENAME TO revisions_old")
+        _create_revisions_table(conn)
+        conn.execute(
+            """
+            INSERT INTO revisions
+            (revision_id, artifact_id, artifact_type, project_id, chapter_id, run_id, skill_id, skill_version,
+             skill_package_hash, runtime_provider, runtime_model, number, content_object_id, content_hash,
+             raw_response_object_id, parser_version, content_profile, derivation_type, supersedes_revision_id,
+             approval_status, created_at)
+            SELECT revision_id, artifact_id, artifact_type, project_id, chapter_id, run_id, skill_id, skill_version,
+                   skill_package_hash, runtime_provider, runtime_model, number, content_object_id, content_hash,
+                   raw_response_object_id, parser_version, content_profile, derivation_type, supersedes_revision_id,
+                   approval_status, created_at
+            FROM revisions_old
+            ORDER BY artifact_id, number
+            """
+        )
+        conn.execute("DROP TABLE revisions_old")
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS one_current_approved_revision
+              ON revisions(artifact_id)
+              WHERE approval_status = 'approved'
+            """
+        )
+    finally:
+        conn.execute("PRAGMA legacy_alter_table = %d" % previous_legacy_alter)
 ```
 
 - [ ] **Step 4: Run the focused test**
@@ -1070,15 +1142,14 @@ import pytest
 
 from ai_drama_runtime.shot_prompt_migration import APPROVAL_ACTIONS
 from ai_drama_runtime.store import RuntimeStore
-from tests.shot_prompt_store_support import create_phase2_legacy_db, table_sql
+from tests.shot_prompt_store_support import seed_phase3_store, table_sql
 
 
 def test_approval_actions_accept_old_and_phase3_values_only(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
-    create_phase2_legacy_db(db_path)
-
     with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
         for action in APPROVAL_ACTIONS:
             store.conn.execute(
                 """
@@ -1211,15 +1282,14 @@ git commit -m "feat: extend approval action storage"
 ```python
 from ai_drama_runtime.shot_prompt_migration import APPROVAL_EVIDENCE_COLUMNS
 from ai_drama_runtime.store import RuntimeStore
-from tests.shot_prompt_store_support import create_phase2_legacy_db, table_columns
+from tests.shot_prompt_store_support import seed_phase3_store, table_columns
 
 
 def test_approval_records_map_exact_evidence_columns_with_defaults(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
-    create_phase2_legacy_db(db_path)
-
     with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
         columns = table_columns(store.conn, "approval_records")
         for name in APPROVAL_EVIDENCE_COLUMNS:
             assert columns[name]["dflt_value"] == "''"
@@ -1354,6 +1424,7 @@ git commit -m "feat: map shot prompt approval evidence"
 
 **Files:**
 - Modify: `ai_drama_runtime/store.py`
+- Modify: `ai_drama_runtime/shot_prompt_migration.py`
 - Test: `tests/test_shot_prompt_review_records.py`
 - Verify: `python3 -m pytest tests/test_shot_prompt_review_records.py::test_review_tables_enforce_scope_events_and_indexes -q`
 
@@ -1366,15 +1437,14 @@ import pytest
 
 from ai_drama_runtime.shot_prompt_migration import REVIEW_EVENT_TYPES
 from ai_drama_runtime.store import RuntimeStore
-from tests.shot_prompt_store_support import create_phase2_legacy_db, index_sql, table_sql
+from tests.shot_prompt_store_support import index_sql, seed_phase3_store, table_sql
 
 
 def test_review_tables_enforce_scope_events_and_indexes(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
-    create_phase2_legacy_db(db_path)
-
     with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
         set_review_id = "review-set"
         shot_review_id = "review-shot"
         store.conn.execute(
@@ -1448,6 +1518,8 @@ FAIL because review_records and review_record_events do not exist
 
 - [ ] **Step 3: Implement the minimal production change**
 
+Add `from typing import Optional` to `ai_drama_runtime/store.py`.
+
 ```python
 @dataclass(frozen=True)
 class ReviewRecord:
@@ -1455,7 +1527,7 @@ class ReviewRecord:
     artifact_id: str
     revision_id: str
     scope: str
-    shot_id: str | None
+    shot_id: Optional[str]
     body: str
     body_hash: str
     blocking: bool
@@ -1514,7 +1586,7 @@ def _ensure_review_tables_for_conn(conn):
     conn.execute("CREATE INDEX IF NOT EXISTS review_record_events_review_id_created_event_idx ON review_record_events(review_id, created_at, event_id)")
 ```
 
-Call `_ensure_review_tables_for_conn(self.conn)` from `RuntimeStore._init_schema(self)` for fresh databases. Do not call it from `RuntimeStore._ensure_columns()`. Legacy databases receive review tables only through `apply_phase3_store_migration(db_path)`.
+Define `_ensure_review_tables_for_conn(conn)` in `ai_drama_runtime/shot_prompt_migration.py` so Task 12 can call the same helper during legacy migration. Import it into `ai_drama_runtime/store.py` and call `_ensure_review_tables_for_conn(self.conn)` from `RuntimeStore._init_schema(self)` for fresh databases. Do not call it from `RuntimeStore._ensure_columns()`. Legacy databases receive review tables only through `apply_phase3_store_migration(db_path)`.
 
 - [ ] **Step 4: Run the focused test**
 
@@ -1543,7 +1615,7 @@ all selected tests passed
 - [ ] **Step 6: Commit**
 
 ```bash
-git add tests/test_shot_prompt_review_records.py ai_drama_runtime/store.py
+git add tests/test_shot_prompt_review_records.py ai_drama_runtime/store.py ai_drama_runtime/shot_prompt_migration.py
 git commit -m "feat: add shot prompt review table schema"
 ```
 
@@ -1562,15 +1634,14 @@ git commit -m "feat: add shot prompt review table schema"
 import pytest
 
 from ai_drama_runtime.store import RuntimeStore
-from tests.shot_prompt_store_support import create_phase2_legacy_db
+from tests.shot_prompt_store_support import seed_phase3_store
 
 
 def test_review_record_creation_always_creates_opened_event_atomically(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
-    create_phase2_legacy_db(db_path)
-
     with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
         review = store.insert_review_record_with_opened_event(
             artifact_id="artifact-1",
             revision_id="legacy-revision",
@@ -1595,9 +1666,8 @@ def test_review_record_creation_always_creates_opened_event_atomically(tmp_path)
 def test_review_record_creation_rolls_back_when_opened_event_fails(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
-    create_phase2_legacy_db(db_path)
-
     with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
         def fail_event_insert(**_values):
             raise RuntimeError("forced opened event insert failure")
 
@@ -1622,9 +1692,8 @@ def test_review_record_creation_rolls_back_when_opened_event_fails(tmp_path):
 def test_review_status_uses_event_id_as_same_timestamp_tie_breaker(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
-    create_phase2_legacy_db(db_path)
-
     with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
         review = store.insert_review_record_with_opened_event(
             artifact_id="artifact-1",
             revision_id="legacy-revision",
@@ -1841,15 +1910,14 @@ git commit -m "feat: add atomic shot prompt review creation"
 
 ```python
 from ai_drama_runtime.store import RuntimeStore
-from tests.shot_prompt_store_support import create_phase2_legacy_db
+from tests.shot_prompt_store_support import seed_phase3_store
 
 
 def test_latest_validation_queries_are_deterministic(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
-    create_phase2_legacy_db(db_path)
-
     with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
         empty = store.write_text_object("")
         report = store.write_text_object("{}")
         store.insert_validation(
@@ -1975,7 +2043,7 @@ import pytest
 
 from ai_drama_runtime.shot_prompt_migration import PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
 from ai_drama_runtime.store import RuntimeStore
-from tests.shot_prompt_store_support import create_phase2_legacy_db
+from tests.shot_prompt_store_support import seed_phase3_store
 
 
 def _phase3_rows(store, revision_id):
@@ -1997,9 +2065,8 @@ def _phase3_rows(store, revision_id):
 def test_phase3_output_insert_validates_inputs_and_rolls_back_new_rows(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
-    create_phase2_legacy_db(db_path)
-
     with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
         rows = _phase3_rows(store, "legacy-revision")
         unordered_rows = [rows[3], rows[0], rows[6], rows[2], rows[4], rows[1], rows[5]]
         with pytest.raises(ValueError):
@@ -2021,9 +2088,8 @@ def test_phase3_output_insert_validates_inputs_and_rolls_back_new_rows(tmp_path)
 def test_phase3_output_insert_rolls_back_when_row_helper_fails(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
-    create_phase2_legacy_db(db_path)
-
     with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
         rows = _phase3_rows(store, "legacy-revision")
         original = store._insert_revision_output_rows_no_commit
 
@@ -2150,6 +2216,14 @@ def test_apply_phase3_store_migration_is_idempotent_and_transactional(tmp_path):
         runtime_store_fk_enabled = bool(store.conn.execute("PRAGMA foreign_keys").fetchone()[0])
         assert runtime_store_fk_enabled
         assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        for child_table in ("validation_results", "approval_records", "export_records", "revision_outputs", "revision_dependencies"):
+            fk_targets = {
+                row["table"]
+                for row in store.conn.execute("PRAGMA foreign_key_list(%s)" % child_table).fetchall()
+                if row["from"] in {"revision_id", "child_revision_id", "parent_revision_id"}
+            }
+            assert "revisions" in fk_targets
+            assert "revisions_old" not in fk_targets
         snapshot = snapshot_database(store.conn)
         assert snapshot["transient_tables"] == []
         assert snapshot["legacy_revision"]["revision_id"] == "legacy-revision"
@@ -2187,6 +2261,7 @@ def test_apply_phase3_store_migration_rolls_back_to_logical_snapshot(tmp_path, m
         conn.close()
     assert after == before
 
+    monkeypatch.undo()
     with RuntimeStore(db_path, objects_root) as store:
         assert bool(store.conn.execute("PRAGMA foreign_keys").fetchone()[0])
         assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
@@ -2479,7 +2554,11 @@ git commit -m "test: verify fresh and migrated phase 3a schema parity"
 - [ ] **Step 1: Write the scope guard test**
 
 ```python
+import os
+import subprocess
 from pathlib import Path
+
+import pytest
 
 
 def test_phase3a_scope_does_not_create_later_phase_files():
@@ -2492,18 +2571,48 @@ def test_phase3a_scope_does_not_create_later_phase_files():
         "tools/verify_phase3_shot_prompt_canonical_foundation.py",
     ]
     assert [path for path in forbidden if (repo_root / path).exists()] == []
+
+
+def test_phase3a_changed_files_stay_in_allowlist_and_protect_upstream_contracts():
+    repo_root = Path(__file__).resolve().parents[1]
+    base = os.environ.get("PHASE3_IMPLEMENTATION_START_COMMIT")
+    if not base:
+        pytest.skip("PHASE3_IMPLEMENTATION_START_COMMIT is required for changed-file scope verification")
+    changed = set(
+        subprocess.check_output(
+            ["git", "diff", "--name-only", "%s...HEAD" % base],
+            cwd=repo_root,
+            text=True,
+        ).splitlines()
+    )
+    allowed = {
+        "ai_drama_runtime/store.py",
+        "ai_drama_runtime/shot_prompt_migration.py",
+        "tests/test_shot_prompt_store_migration.py",
+        "tests/test_shot_prompt_review_records.py",
+        "tests/shot_prompt_store_support.py",
+        "tests/test_storyboard_legacy_migration.py",
+    }
+    protected = {
+        "docs/superpowers/specs/2026-07-01-phase3-shot-prompt-canonical-design.md",
+        "docs/superpowers/specs/2026-07-04-phase-3-agent-execution-acceptance-contract.md",
+        "docs/superpowers/plans/2026-07-03-phase3-shot-prompt-canonical-program.md",
+        "skills/ai-drama-storyboard-design-skill/v0.2.1/skill.json",
+    }
+    assert changed <= allowed
+    assert changed.isdisjoint(protected)
 ```
 
 - [ ] **Step 2: Run the focused test**
 
 ```bash
-python3 -m pytest tests/test_shot_prompt_store_migration.py::test_phase3a_scope_does_not_create_later_phase_files -q
+PHASE3_IMPLEMENTATION_START_COMMIT=$(git merge-base HEAD test/phase2-minimal-bundle-foundation) python3 -m pytest tests/test_shot_prompt_store_migration.py::test_phase3a_scope_does_not_create_later_phase_files tests/test_shot_prompt_store_migration.py::test_phase3a_changed_files_stay_in_allowlist_and_protect_upstream_contracts -q
 ```
 
 Expected:
 
 ```text
-1 passed
+2 passed
 ```
 
 - [ ] **Step 3: Run Phase 3A focused tests**
@@ -2605,9 +2714,9 @@ Run the revision-prompt semantic scans from the shell before staging, so the sca
 Expected final planning state:
 
 ```text
-Program Status: SPLIT_PLAN_PROGRAM_PENDING_USER_REVIEW
-Phase 3A: IMPLEMENTATION_PLAN_PENDING_USER_REVIEW
-Phase 3B-3E: PLANNING_NOT_STARTED
-Implementation: IMPLEMENTATION_NOT_AUTHORIZED
+Program Status: SPLIT_PLAN_PROGRAM_EXECUTION_IN_PROGRESS
+Phase 3A: IMPLEMENTATION_PRECHECK_REPAIR_IN_PROGRESS
+Phase 3B-3E: AUTHORIZED_AFTER_PRIOR_SUBPHASE_GATE
+Implementation: PHASE_3A_AUTHORIZED_BY_ONE_SHOT_EXECUTION_PROMPT
 Phase 4: PHASE4_NOT_AUTHORIZED
 ```
