@@ -6,7 +6,9 @@ import ai_drama_runtime.shot_prompt_migration as migration
 from ai_drama_runtime.shot_prompt_migration import (
     APPROVAL_ACTIONS,
     APPROVAL_EVIDENCE_COLUMNS,
+    Phase3StoreMigrationError,
     REVISION_APPROVAL_STATUSES,
+    apply_phase3_store_migration,
     preview_phase3_store_migration,
 )
 from ai_drama_runtime.store import RuntimeStore
@@ -95,15 +97,16 @@ def test_phase3a_support_creates_phase2_legacy_database(tmp_path):
         assert store.get_revision("legacy-revision").revision_id == "legacy-revision"
 
 
-def test_runtime_store_reopen_phase2_legacy_db_does_not_create_review_tables(tmp_path):
+def test_runtime_store_reopen_phase2_legacy_db_runs_phase3_migration(tmp_path):
     db_path = tmp_path / "runtime.db"
     objects_root = tmp_path / "objects"
     create_phase2_legacy_db(db_path)
 
     with RuntimeStore(db_path, objects_root) as store:
         assert store.get_revision("legacy-revision").revision_id == "legacy-revision"
-        assert table_sql(store.conn, "review_records") == ""
-        assert table_sql(store.conn, "review_record_events") == ""
+        assert preview_phase3_store_migration(db_path)["status"] == "CURRENT"
+        assert "CREATE TABLE" in table_sql(store.conn, "review_records")
+        assert "CREATE TABLE" in table_sql(store.conn, "review_record_events")
 
 
 def test_phase3_preview_reports_each_contract_check_without_mutation(tmp_path):
@@ -496,3 +499,130 @@ def test_phase3_output_insert_rolls_back_when_row_helper_fails(tmp_path):
             store.insert_phase3_revision_outputs_atomically("legacy-revision", rows)
         monkeypatch.undo()
         assert store.revision_outputs("legacy-revision") == []
+
+
+def test_apply_phase3_store_migration_is_idempotent_and_transactional(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+
+    first = apply_phase3_store_migration(db_path)
+    second = apply_phase3_store_migration(db_path)
+
+    assert first["status"] == "APPLIED"
+    assert second["status"] == "ALREADY_CURRENT"
+    preview = preview_phase3_store_migration(db_path)
+    assert preview["status"] == "CURRENT"
+
+    with RuntimeStore(db_path, objects_root) as store:
+        runtime_store_fk_enabled = bool(store.conn.execute("PRAGMA foreign_keys").fetchone()[0])
+        assert runtime_store_fk_enabled
+        assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        for child_table in (
+            "validation_results",
+            "approval_records",
+            "export_records",
+            "revision_outputs",
+            "revision_dependencies",
+        ):
+            fk_targets = {
+                row["table"]
+                for row in store.conn.execute("PRAGMA foreign_key_list(%s)" % child_table).fetchall()
+                if row["from"] in {"revision_id", "child_revision_id", "parent_revision_id"}
+            }
+            assert "revisions" in fk_targets
+            assert "revisions_old" not in fk_targets
+        snapshot = snapshot_database(store.conn)
+        assert snapshot["transient_tables"] == []
+        assert snapshot["legacy_revision"]["revision_id"] == "legacy-revision"
+
+
+def test_apply_phase3_store_migration_rolls_back_to_logical_snapshot(tmp_path, monkeypatch):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    before = snapshot_database(conn)
+    conn.close()
+
+    original = migration._rebuild_approval_records_for_phase3
+
+    def fail_after_approval_actions(conn):
+        original(conn)
+        raise RuntimeError("injected migration failure")
+
+    monkeypatch.setattr(
+        migration,
+        "_rebuild_approval_records_for_phase3",
+        fail_after_approval_actions,
+    )
+    with pytest.raises(Phase3StoreMigrationError):
+        apply_phase3_store_migration(db_path)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        after = snapshot_database(conn)
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        conn.close()
+    assert after == before
+
+    monkeypatch.undo()
+    with RuntimeStore(db_path, objects_root) as store:
+        assert bool(store.conn.execute("PRAGMA foreign_keys").fetchone()[0])
+        assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert snapshot_database(store.conn)["transient_tables"] == []
+
+
+def test_runtime_store_open_runs_phase3_migration_orchestrator(tmp_path, monkeypatch):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+    calls = []
+    original = migration.apply_phase3_store_migration
+
+    def wrapped(db_path_arg):
+        calls.append(str(db_path_arg))
+        return original(db_path_arg)
+
+    monkeypatch.setattr(migration, "apply_phase3_store_migration", wrapped)
+
+    with RuntimeStore(db_path, objects_root) as store:
+        assert calls == [str(db_path)]
+        assert preview_phase3_store_migration(db_path)["status"] == "CURRENT"
+        assert store.get_revision("legacy-revision").revision_id == "legacy-revision"
+
+
+def test_runtime_store_open_does_not_half_initialize_when_migration_fails(tmp_path, monkeypatch):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    before = snapshot_database(conn)
+    conn.close()
+
+    original = migration._rebuild_approval_records_for_phase3
+
+    def fail_after_approval_actions(conn):
+        original(conn)
+        raise RuntimeError("injected migration failure")
+
+    monkeypatch.setattr(
+        migration,
+        "_rebuild_approval_records_for_phase3",
+        fail_after_approval_actions,
+    )
+
+    with pytest.raises(Phase3StoreMigrationError):
+        RuntimeStore(db_path, objects_root)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        assert snapshot_database(conn) == before
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        conn.close()

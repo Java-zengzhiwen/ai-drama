@@ -218,8 +218,15 @@ class RuntimeStore:
         self.objects_root = Path(objects_root)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.objects_root.mkdir(parents=True, exist_ok=True)
+        if self.db_path.exists() and self.db_path.stat().st_size > 0:
+            from ai_drama_runtime import shot_prompt_migration
+
+            preview = shot_prompt_migration.preview_phase3_store_migration(self.db_path)
+            if preview["status"] == "NEEDS_MIGRATION":
+                shot_prompt_migration.apply_phase3_store_migration(self.db_path)
         self.conn = sqlite3.connect(str(self.db_path))
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys = ON")
         self._init_schema()
 
     def close(self):

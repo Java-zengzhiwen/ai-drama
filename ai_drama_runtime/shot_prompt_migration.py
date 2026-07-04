@@ -49,6 +49,10 @@ REVISION_OUTPUT_LOGICAL_TYPES = (
 )
 
 
+class Phase3StoreMigrationError(RuntimeError):
+    pass
+
+
 def preview_phase3_store_migration(db_path):
     conn = _connect(db_path)
     try:
@@ -90,6 +94,74 @@ def preview_phase3_store_migration(db_path):
         conn.close()
 
 
+def _migration_is_current(db_path):
+    if preview_phase3_store_migration(db_path)["status"] != "CURRENT":
+        return False
+    conn = _connect(db_path)
+    try:
+        return (
+            _artifacts_schema_is_current(conn)
+            and _export_records_schema_is_current(conn)
+            and _input_snapshots_schema_is_current(conn)
+            and _review_tables_schema_is_current(conn)
+        )
+    finally:
+        conn.close()
+
+
+def apply_phase3_store_migration(db_path):
+    db_path = Path(db_path)
+    if _migration_is_current(db_path):
+        return {"status": "ALREADY_CURRENT", "database_path": str(db_path)}
+
+    conn = _connect(db_path)
+    try:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            _rebuild_artifacts_for_phase3(conn)
+            _ensure_input_snapshots_table_for_conn(conn)
+            _rebuild_revisions_for_phase3(conn)
+            _rebuild_revision_outputs_for_phase3(conn)
+            _rebuild_approval_records_for_phase3(conn)
+            _rebuild_export_records_for_phase3(conn)
+            _ensure_review_tables_for_conn(conn)
+            failures = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if failures:
+                raise Phase3StoreMigrationError("foreign key check failed")
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            transient = conn.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table' AND (name LIKE '%_old' OR name LIKE '%_new')
+                """
+            ).fetchall()
+            if transient:
+                raise Phase3StoreMigrationError("rollback left transient migration tables") from exc
+            if isinstance(exc, Phase3StoreMigrationError):
+                raise
+            raise Phase3StoreMigrationError(str(exc)) from exc
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
+        if not _migration_is_current(db_path):
+            raise Phase3StoreMigrationError("migration finished but preview is not current")
+        return {"status": "APPLIED", "database_path": str(db_path)}
+    finally:
+        conn.close()
+
+
+MIGRATION_STEPS = (
+    "artifact_business_key",
+    "revision_status",
+    "revision_outputs",
+    "approval_records",
+    "review_tables",
+    "foreign_key_check",
+)
+
+
 def _ensure_artifact_business_key_columns_for_conn(conn):
     columns = _columns(conn, "artifacts")
     for name in ("business_key_type", "business_key_value"):
@@ -103,6 +175,85 @@ def _ensure_artifact_business_key_columns_for_conn(conn):
             AND business_key_type = 'source_storyboard_revision_id'
         """
     )
+
+
+def _column_names(conn, table_name):
+    return [
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(%s)" % table_name).fetchall()
+    ]
+
+
+def _create_artifacts_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE artifacts (
+          artifact_id TEXT PRIMARY KEY,
+          artifact_type TEXT NOT NULL,
+          project_id TEXT NOT NULL,
+          chapter_id TEXT NOT NULL,
+          business_key_type TEXT NOT NULL DEFAULT '',
+          business_key_value TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL
+        )
+        """
+    )
+
+
+def _create_artifact_business_key_index(conn):
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS one_shot_prompt_set_per_source_storyboard_revision
+          ON artifacts(artifact_type, business_key_type, business_key_value)
+          WHERE artifact_type = 'shot_prompt_set'
+            AND business_key_type = 'source_storyboard_revision_id'
+        """
+    )
+
+
+def _artifacts_schema_is_current(conn):
+    return _column_names(conn, "artifacts") == [
+        "artifact_id",
+        "artifact_type",
+        "project_id",
+        "chapter_id",
+        "business_key_type",
+        "business_key_value",
+        "created_at",
+    ] and "business_key_type = 'source_storyboard_revision_id'" in _index_sql(
+        conn, "one_shot_prompt_set_per_source_storyboard_revision"
+    )
+
+
+def _rebuild_artifacts_for_phase3(conn):
+    if _artifacts_schema_is_current(conn):
+        return
+    existing_columns = _columns(conn, "artifacts")
+    conn.execute("DROP INDEX IF EXISTS one_shot_prompt_set_per_source_storyboard_revision")
+    conn.execute("ALTER TABLE artifacts RENAME TO artifacts_old")
+    _create_artifacts_table(conn)
+    business_key_type = (
+        "business_key_type"
+        if "business_key_type" in existing_columns
+        else "'' AS business_key_type"
+    )
+    business_key_value = (
+        "business_key_value"
+        if "business_key_value" in existing_columns
+        else "'' AS business_key_value"
+    )
+    conn.execute(
+        """
+        INSERT INTO artifacts
+        (artifact_id, artifact_type, project_id, chapter_id, business_key_type, business_key_value, created_at)
+        SELECT artifact_id, artifact_type, project_id, chapter_id, %s, %s, created_at
+        FROM artifacts_old
+        ORDER BY created_at, artifact_id
+        """
+        % (business_key_type, business_key_value)
+    )
+    conn.execute("DROP TABLE artifacts_old")
+    _create_artifact_business_key_index(conn)
 
 
 def _quoted(values):
@@ -137,6 +288,17 @@ def _create_revision_outputs_table(conn):
 
 def _rebuild_revision_outputs_for_phase3(conn):
     current_sql = _table_sql(conn, "revision_outputs")
+    if current_sql == "":
+        _create_revision_outputs_table(conn)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS revision_outputs_content_hash_idx "
+            "ON revision_outputs(content_hash)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS revision_outputs_object_id_idx "
+            "ON revision_outputs(object_id)"
+        )
+        return
     if all(value in current_sql for value in REVISION_OUTPUT_LOGICAL_TYPES):
         return
     conn.execute("ALTER TABLE revision_outputs RENAME TO revision_outputs_old")
@@ -271,9 +433,142 @@ def _create_approval_records_table(conn):
     )
 
 
+def _export_records_columns():
+    return [
+        "export_id",
+        "artifact_id",
+        "revision_id",
+        "run_id",
+        "content_hash",
+        "destination",
+        "provenance_object_id",
+        "created_at",
+        "export_kind",
+        "freshness_status",
+        "diagnostic_only",
+        "not_an_execution_package",
+        "execution_ready",
+        "bundle_manifest_hash",
+        "error_code",
+    ]
+
+
+def _create_export_records_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE export_records (
+          export_id TEXT PRIMARY KEY,
+          artifact_id TEXT NOT NULL,
+          revision_id TEXT NOT NULL,
+          run_id TEXT NOT NULL,
+          content_hash TEXT NOT NULL,
+          destination TEXT NOT NULL,
+          provenance_object_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          export_kind TEXT NOT NULL DEFAULT 'legacy_single' CHECK (export_kind IN ('legacy_single','formal_review','diagnostic','execution')),
+          freshness_status TEXT NOT NULL DEFAULT '' CHECK (freshness_status IN ('','FRESH','STALE')),
+          diagnostic_only INTEGER NOT NULL DEFAULT 0 CHECK (diagnostic_only IN (0,1)),
+          not_an_execution_package INTEGER NOT NULL DEFAULT 1 CHECK (not_an_execution_package IN (0,1)),
+          execution_ready INTEGER NOT NULL DEFAULT 0 CHECK (execution_ready IN (0,1)),
+          bundle_manifest_hash TEXT NOT NULL DEFAULT '',
+          error_code TEXT NOT NULL DEFAULT '',
+          FOREIGN KEY(revision_id) REFERENCES revisions(revision_id)
+        )
+        """
+    )
+
+
+def _export_records_schema_is_current(conn):
+    current_sql = _table_sql(conn, "export_records")
+    return _column_names(conn, "export_records") == _export_records_columns() and all(
+        token in current_sql
+        for token in (
+            "export_kind TEXT NOT NULL DEFAULT 'legacy_single' CHECK",
+            "freshness_status TEXT NOT NULL DEFAULT '' CHECK",
+            "diagnostic_only INTEGER NOT NULL DEFAULT 0 CHECK",
+            "not_an_execution_package INTEGER NOT NULL DEFAULT 1 CHECK",
+            "execution_ready INTEGER NOT NULL DEFAULT 0 CHECK",
+            "bundle_manifest_hash TEXT NOT NULL DEFAULT ''",
+            "error_code TEXT NOT NULL DEFAULT ''",
+        )
+    )
+
+
+def _rebuild_export_records_for_phase3(conn):
+    if _export_records_schema_is_current(conn):
+        return
+    existing_columns = _columns(conn, "export_records")
+    conn.execute("ALTER TABLE export_records RENAME TO export_records_old")
+    _create_export_records_table(conn)
+    select_values = []
+    defaults = {
+        "export_kind": "'legacy_single' AS export_kind",
+        "freshness_status": "'' AS freshness_status",
+        "diagnostic_only": "0 AS diagnostic_only",
+        "not_an_execution_package": "1 AS not_an_execution_package",
+        "execution_ready": "0 AS execution_ready",
+        "bundle_manifest_hash": "'' AS bundle_manifest_hash",
+        "error_code": "'' AS error_code",
+    }
+    for column in _export_records_columns():
+        select_values.append(column if column in existing_columns else defaults[column])
+    conn.execute(
+        """
+        INSERT INTO export_records
+        (%s)
+        SELECT %s
+        FROM export_records_old
+        ORDER BY created_at, export_id
+        """
+        % (", ".join(_export_records_columns()), ", ".join(select_values))
+    )
+    conn.execute("DROP TABLE export_records_old")
+
+
+def _input_snapshots_schema_is_current(conn):
+    return _column_names(conn, "input_snapshots") == [
+        "run_id",
+        "logical_type",
+        "source_relative_path",
+        "source_path",
+        "sha256",
+        "object_id",
+    ]
+
+
+def _ensure_input_snapshots_table_for_conn(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS input_snapshots (
+          run_id TEXT NOT NULL,
+          logical_type TEXT NOT NULL,
+          source_relative_path TEXT NOT NULL,
+          source_path TEXT NOT NULL,
+          sha256 TEXT NOT NULL,
+          object_id TEXT NOT NULL,
+          PRIMARY KEY(run_id, logical_type),
+          FOREIGN KEY(run_id) REFERENCES runs(run_id)
+        )
+        """
+    )
+
+
 def _review_event_check_sql():
     return "event_type TEXT NOT NULL CHECK (event_type IN (%s))" % _quoted(
         REVIEW_EVENT_TYPES
+    )
+
+
+def _review_tables_schema_is_current(conn):
+    return (
+        "scope = 'set' AND shot_id IS NULL" in _table_sql(conn, "review_records")
+        and all(value in _table_sql(conn, "review_record_events") for value in REVIEW_EVENT_TYPES)
+        and _index_sql(conn, "review_records_revision_shot_idx")
+        != ""
+        and _index_sql(conn, "review_records_artifact_revision_idx")
+        != ""
+        and _index_sql(conn, "review_record_events_review_id_created_event_idx")
+        != ""
     )
 
 
