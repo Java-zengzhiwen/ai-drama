@@ -1,0 +1,757 @@
+import os
+import sqlite3
+import subprocess
+from pathlib import Path
+
+import pytest
+
+import ai_drama_runtime.shot_prompt_migration as migration
+from ai_drama_runtime.shot_prompt_migration import (
+    APPROVAL_ACTIONS,
+    APPROVAL_EVIDENCE_COLUMNS,
+    Phase3StoreMigrationError,
+    REVISION_APPROVAL_STATUSES,
+    apply_phase3_store_migration,
+    preview_phase3_store_migration,
+)
+from ai_drama_runtime.store import RuntimeStore
+from tests.shot_prompt_store_support import (
+    create_phase2_legacy_db,
+    index_sql,
+    normalized_schema_snapshot,
+    seed_phase3_store,
+    snapshot_database,
+    table_columns,
+    table_sql,
+)
+from tests.test_storyboard_legacy_migration import (
+    _create_planning_baseline_legacy_db as create_real_phase2_legacy_db,
+)
+
+
+EXPECTED_PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES = (
+    "shot_prompt_positive_prompts",
+    "shot_prompt_negative_prompts",
+    "shot_prompt_asset_requirements",
+    "shot_prompt_render_provenance",
+    "shot_prompt_review_markdown",
+    "shot_prompt_validation_report",
+    "bundle_manifest",
+)
+EXPECTED_REVISION_OUTPUT_LOGICAL_TYPES = (
+    "rendered_positive_prompt",
+    "rendered_negative_prompt",
+    "rendered_markdown",
+    "shot_prompt_positive_prompts",
+    "shot_prompt_negative_prompts",
+    "shot_prompt_asset_requirements",
+    "shot_prompt_render_provenance",
+    "shot_prompt_review_markdown",
+    "shot_prompt_validation_report",
+    "bundle_manifest",
+)
+
+
+def test_phase3a_migration_exports_only_owned_schema_constants():
+    assert (
+        migration.PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
+        == EXPECTED_PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
+    )
+    assert (
+        migration.REVISION_OUTPUT_LOGICAL_TYPES
+        == EXPECTED_REVISION_OUTPUT_LOGICAL_TYPES
+    )
+    review_exports = [name for name in vars(migration) if name.startswith("REVIEW_")]
+    assert review_exports == ["REVIEW_EVENT_TYPES"]
+
+
+def test_phase3a_support_creates_phase2_legacy_database(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    real_db_path = tmp_path / "real-runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+    create_real_phase2_legacy_db(real_db_path)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    real_conn = sqlite3.connect(real_db_path)
+    real_conn.row_factory = sqlite3.Row
+    try:
+        artifact_columns = set(table_columns(conn, "artifacts"))
+        assert {
+            "artifact_id",
+            "artifact_type",
+            "project_id",
+            "chapter_id",
+            "created_at",
+        } <= artifact_columns
+        assert "business_key_type" not in artifact_columns
+        assert "business_key_value" not in artifact_columns
+        snapshot = snapshot_database(conn)
+        assert snapshot["tables"]["artifacts"]["row_count"] == 1
+        assert snapshot["foreign_key_check"] == []
+        assert snapshot["transient_tables"] == []
+        assert normalized_schema_snapshot(conn) == normalized_schema_snapshot(real_conn)
+    finally:
+        conn.close()
+        real_conn.close()
+
+    with RuntimeStore(db_path, objects_root) as store:
+        assert store.get_revision("legacy-revision").revision_id == "legacy-revision"
+
+
+def test_runtime_store_reopen_phase2_legacy_db_runs_phase3_migration(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+
+    with RuntimeStore(db_path, objects_root) as store:
+        assert store.get_revision("legacy-revision").revision_id == "legacy-revision"
+        assert preview_phase3_store_migration(db_path)["status"] == "CURRENT"
+        assert "CREATE TABLE" in table_sql(store.conn, "review_records")
+        assert "CREATE TABLE" in table_sql(store.conn, "review_record_events")
+
+
+def test_phase3_preview_reports_each_contract_check_without_mutation(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    create_phase2_legacy_db(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    before = snapshot_database(conn)
+    conn.close()
+
+    preview = preview_phase3_store_migration(db_path)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    after = snapshot_database(conn)
+    conn.close()
+
+    assert before == after
+    assert preview["status"] == "NEEDS_MIGRATION"
+    assert preview["checks"]["artifact_business_key"]["status"] == "MISSING"
+    assert preview["checks"]["revision_outputs_check"]["status"] == "MISSING"
+    assert preview["checks"]["revision_status_check"]["status"] == "MISSING"
+    assert preview["checks"]["approval_action_check"]["status"] == "MISSING"
+    assert preview["checks"]["approval_evidence_columns"]["status"] == "MISSING"
+    assert preview["checks"]["review_tables"]["status"] == "MISSING"
+    assert preview["checks"]["review_indexes"]["status"] == "MISSING"
+
+
+def test_phase3_preview_reports_fresh_a1_store_current(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    with RuntimeStore(db_path, objects_root):
+        pass
+
+    preview = preview_phase3_store_migration(db_path)
+
+    assert preview["status"] == "CURRENT"
+    assert set(preview["checks"]) == {
+        "artifact_business_key",
+        "revision_outputs_check",
+        "revision_status_check",
+        "approval_action_check",
+        "approval_evidence_columns",
+        "review_tables",
+        "review_indexes",
+        "foreign_key_check",
+    }
+    assert all(item["status"] == "OK" for item in preview["checks"].values())
+
+
+def test_shot_prompt_artifact_business_key_is_unique_and_internal_id_is_generated(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    with RuntimeStore(db_path, objects_root) as store:
+        first = store.ensure_shot_prompt_artifact(
+            project_id="project-1",
+            chapter_id="chapter-1",
+            source_storyboard_revision_id="storyboard-revision-1",
+        )
+        second = store.ensure_shot_prompt_artifact(
+            project_id="project-1",
+            chapter_id="chapter-1",
+            source_storyboard_revision_id="storyboard-revision-1",
+        )
+        assert first["artifact_id"] == second["artifact_id"]
+        assert first["artifact_id"] != "storyboard-revision-1"
+        assert (
+            store.artifact_by_business_key(
+                "shot_prompt_set",
+                "source_storyboard_revision_id",
+                "storyboard-revision-1",
+            )["artifact_id"]
+            == first["artifact_id"]
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            store.conn.execute(
+                """
+                INSERT INTO artifacts
+                (artifact_id, artifact_type, project_id, chapter_id,
+                 business_key_type, business_key_value, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "dup",
+                    "shot_prompt_set",
+                    "project-1",
+                    "chapter-1",
+                    "source_storyboard_revision_id",
+                    "storyboard-revision-1",
+                    "2026-07-03T00:00:00Z",
+                ),
+            )
+        assert {"business_key_type", "business_key_value"} <= set(
+            table_columns(store.conn, "artifacts")
+        )
+        artifact_index = index_sql(store.conn, "artifacts")[
+            "one_shot_prompt_set_per_source_storyboard_revision"
+        ]
+        assert artifact_index["columns"] == [
+            "artifact_type",
+            "business_key_type",
+            "business_key_value",
+        ]
+        assert {
+            "artifact_type",
+            "'shot_prompt_set'",
+            "business_key_type",
+            "'source_storyboard_revision_id'",
+        } <= set(artifact_index["predicate_tokens"])
+
+
+def test_revision_outputs_accept_exact_logical_types_and_preserve_schema(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
+        object_id = store.write_text_object("{}")
+        revision = store.get_revision("legacy-revision")
+        rows = [
+            {
+                "revision_id": revision.revision_id,
+                "logical_type": logical_type,
+                "object_id": object_id,
+                "content_hash": object_id,
+                "media_type": "application/json",
+                "generator": "test",
+                "generator_version": "1.0.0",
+            }
+            for logical_type in EXPECTED_PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
+        ]
+        inserted = store.insert_revision_outputs_transaction(rows)
+        assert [item.logical_type for item in inserted] == list(
+            EXPECTED_PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            store.insert_revision_outputs_transaction([dict(rows[0], logical_type="unknown")])
+        sql = table_sql(store.conn, "revision_outputs")
+        for logical_type in EXPECTED_REVISION_OUTPUT_LOGICAL_TYPES:
+            assert logical_type in sql
+        indexes = index_sql(store.conn, "revision_outputs")
+        assert "revision_outputs_content_hash_idx" in indexes
+        assert "revision_outputs_object_id_idx" in indexes
+
+
+def test_revision_status_check_preserves_schema_and_approved_index(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
+        for status in REVISION_APPROVAL_STATUSES:
+            store.conn.execute(
+                "UPDATE revisions SET approval_status = ? WHERE revision_id = ?",
+                (status, "legacy-revision"),
+            )
+            store.conn.commit()
+            assert store.get_revision("legacy-revision").approval_status == status
+        with pytest.raises(sqlite3.IntegrityError):
+            store.conn.execute(
+                "UPDATE revisions SET approval_status = 'unknown' "
+                "WHERE revision_id = 'legacy-revision'"
+            )
+        sql = table_sql(store.conn, "revisions")
+        assert "approval_status TEXT NOT NULL CHECK" in sql
+        assert "FOREIGN KEY(run_id) REFERENCES runs(run_id)" in sql
+        approved_index = index_sql(store.conn, "revisions")["one_current_approved_revision"]
+        assert approved_index["columns"] == ["artifact_id"]
+        assert {"approval_status", "'approved'"} <= set(approved_index["predicate_tokens"])
+
+
+def test_approval_actions_accept_old_and_phase3_values_only(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
+        for action in APPROVAL_ACTIONS:
+            store.conn.execute(
+                """
+                INSERT INTO approval_records
+                (record_id, revision_id, artifact_id, action, reviewer, note, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "record-" + action,
+                    "legacy-revision",
+                    "artifact-1",
+                    action,
+                    "tester",
+                    "",
+                    "2026-07-03T00:00:00Z",
+                ),
+            )
+        with pytest.raises(sqlite3.IntegrityError):
+            store.conn.execute(
+                """
+                INSERT INTO approval_records
+                (record_id, revision_id, artifact_id, action, reviewer, note, created_at)
+                VALUES ('bad', 'legacy-revision', 'artifact-1', 'unknown', 'tester', '',
+                        '2026-07-03T00:00:00Z')
+                """
+            )
+        assert "shot_prompt_approval_revoked" in table_sql(store.conn, "approval_records")
+
+
+def test_approval_records_map_exact_evidence_columns_with_defaults(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
+        columns = table_columns(store.conn, "approval_records")
+        for name in APPROVAL_EVIDENCE_COLUMNS:
+            assert columns[name]["dflt_value"] == "''"
+        assert set(APPROVAL_EVIDENCE_COLUMNS) == {
+            "source_storyboard_revision_id",
+            "canonical_content_hash",
+            "bundle_manifest_hash",
+            "qualification_report_hash",
+            "qualification_report_object_id",
+            "renderer_profile_id",
+            "renderer_profile_version",
+            "qualification_profile_id",
+            "qualification_profile_version",
+        }
+        revision = store.get_revision("legacy-revision")
+        approval = store.approve_in_transaction(revision, "tester", "legacy approval")
+        assert approval.source_storyboard_revision_id == ""
+        assert approval.canonical_content_hash == ""
+        assert approval.renderer_profile_id == ""
+        assert approval.qualification_profile_version == ""
+        store.conn.execute(
+            """
+            INSERT INTO approval_records
+            (record_id, revision_id, artifact_id, action, reviewer, note, created_at,
+             source_storyboard_revision_id, canonical_content_hash, bundle_manifest_hash,
+             qualification_report_hash, qualification_report_object_id, renderer_profile_id,
+             renderer_profile_version, qualification_profile_id, qualification_profile_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "shot-prompt-record",
+                "legacy-revision",
+                "artifact-1",
+                "shot_prompt_approved",
+                "reviewer",
+                "",
+                "2026-07-03T00:00:00Z",
+                "storyboard-revision",
+                "canonical-hash",
+                "bundle-hash",
+                "qualification-hash",
+                "qualification-object",
+                "shot_prompt_standard",
+                "1.0.0",
+                "shot_prompt_approval_qualification",
+                "1.0.0",
+            ),
+        )
+        mapped = store.approval_record("shot-prompt-record")
+        assert mapped.action == "shot_prompt_approved"
+        assert mapped.source_storyboard_revision_id == "storyboard-revision"
+        assert mapped.canonical_content_hash == "canonical-hash"
+        assert mapped.renderer_profile_id == "shot_prompt_standard"
+        assert store.latest_approval("legacy-revision").record_id == "shot-prompt-record"
+
+
+def test_legacy_approval_records_reopen_with_empty_evidence_defaults(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO approval_records
+            (record_id, revision_id, artifact_id, action, reviewer, note, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-approval",
+                "legacy-revision",
+                "artifact-1",
+                "storyboard_approved",
+                "legacy-reviewer",
+                "",
+                "2026-07-03T00:00:00Z",
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with RuntimeStore(db_path, objects_root) as store:
+        approval = store.approval_record("legacy-approval")
+        for name in APPROVAL_EVIDENCE_COLUMNS:
+            assert getattr(approval, name) == ""
+
+
+def test_runtime_store_ensure_columns_does_not_add_phase3_approval_evidence_columns(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+
+    monkeypatch.setattr(migration, "phase3_store_migration_is_current", lambda _: True)
+
+    def fail_if_called(_):
+        raise AssertionError("phase3 migration orchestrator should be skipped")
+
+    monkeypatch.setattr(migration, "apply_phase3_store_migration", fail_if_called)
+
+    with RuntimeStore(db_path, objects_root) as store:
+        approval_columns = table_columns(store.conn, "approval_records")
+
+    assert "sequence" in approval_columns
+    for name in APPROVAL_EVIDENCE_COLUMNS:
+        assert name not in approval_columns
+
+
+def test_latest_validation_queries_are_deterministic(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
+        empty = store.write_text_object("")
+        report = store.write_text_object("{}")
+        store.insert_validation(
+            revision_id="legacy-revision",
+            validator_id="shot_prompt_schema",
+            validator_name="schema",
+            status="FAIL",
+            required=1,
+            exit_code=1,
+            error_code="ERR",
+            duration_ms=1,
+            stdout_object_id=empty,
+            stderr_object_id=empty,
+            report_object_id=report,
+            created_at="2026-07-03T00:00:00.000000Z",
+        )
+        store.insert_validation(
+            revision_id="legacy-revision",
+            validator_id="shot_prompt_schema",
+            validator_name="schema",
+            status="PASS",
+            required=1,
+            exit_code=0,
+            error_code="",
+            duration_ms=1,
+            stdout_object_id=empty,
+            stderr_object_id=empty,
+            report_object_id=report,
+            created_at="2026-07-03T00:00:01.000000Z",
+        )
+        assert store.latest_validation_result("legacy-revision", "shot_prompt_schema").status == "PASS"
+        assert store.latest_validation_results("legacy-revision")["shot_prompt_schema"].status == "PASS"
+
+
+def _phase3_rows(store, revision_id):
+    object_id = store.write_text_object("{}")
+    return [
+        {
+            "revision_id": revision_id,
+            "logical_type": logical_type,
+            "object_id": object_id,
+            "content_hash": object_id,
+            "media_type": "application/json",
+            "generator": "shot-prompt-test",
+            "generator_version": "1.0.0",
+        }
+        for logical_type in migration.PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
+    ]
+
+
+def test_phase3_output_insert_validates_inputs_and_rolls_back_new_rows(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
+        rows = _phase3_rows(store, "legacy-revision")
+        unordered_rows = [rows[3], rows[0], rows[6], rows[2], rows[4], rows[1], rows[5]]
+        with pytest.raises(ValueError):
+            store.insert_phase3_revision_outputs_atomically("legacy-revision", rows[:-1])
+        with pytest.raises(ValueError):
+            store.insert_phase3_revision_outputs_atomically("missing-revision", rows)
+        bad_rows = list(rows)
+        bad_rows[3] = dict(bad_rows[3], logical_type="unknown")
+        with pytest.raises(Exception):
+            store.insert_phase3_revision_outputs_atomically("legacy-revision", bad_rows)
+        assert store.revision_outputs("legacy-revision") == []
+        inserted = store.insert_phase3_revision_outputs_atomically("legacy-revision", unordered_rows)
+        assert [item.logical_type for item in inserted] == list(
+            migration.PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES
+        )
+        with pytest.raises(Exception):
+            store.insert_phase3_revision_outputs_atomically("legacy-revision", rows)
+        assert len(store.revision_outputs("legacy-revision")) == 7
+
+
+def test_phase3_output_insert_rolls_back_when_row_helper_fails(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    with RuntimeStore(db_path, objects_root) as store:
+        seed_phase3_store(store)
+        rows = _phase3_rows(store, "legacy-revision")
+        original = store._insert_revision_output_rows_no_commit
+
+        def fail_after_one_row(items):
+            original(items[:1])
+            raise RuntimeError("forced row insert failure")
+
+        monkeypatch = pytest.MonkeyPatch()
+        monkeypatch.setattr(store, "_insert_revision_output_rows_no_commit", fail_after_one_row)
+        with pytest.raises(RuntimeError):
+            store.insert_phase3_revision_outputs_atomically("legacy-revision", rows)
+        monkeypatch.undo()
+        assert store.revision_outputs("legacy-revision") == []
+
+
+def test_apply_phase3_store_migration_is_idempotent_and_transactional(tmp_path):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+
+    first = apply_phase3_store_migration(db_path)
+    second = apply_phase3_store_migration(db_path)
+
+    assert first["status"] == "APPLIED"
+    assert second["status"] == "ALREADY_CURRENT"
+    preview = preview_phase3_store_migration(db_path)
+    assert preview["status"] == "CURRENT"
+
+    with RuntimeStore(db_path, objects_root) as store:
+        runtime_store_fk_enabled = bool(store.conn.execute("PRAGMA foreign_keys").fetchone()[0])
+        assert runtime_store_fk_enabled
+        assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        for child_table in (
+            "validation_results",
+            "approval_records",
+            "export_records",
+            "revision_outputs",
+            "revision_dependencies",
+        ):
+            fk_targets = {
+                row["table"]
+                for row in store.conn.execute("PRAGMA foreign_key_list(%s)" % child_table).fetchall()
+                if row["from"] in {"revision_id", "child_revision_id", "parent_revision_id"}
+            }
+            assert "revisions" in fk_targets
+            assert "revisions_old" not in fk_targets
+        snapshot = snapshot_database(store.conn)
+        assert snapshot["transient_tables"] == []
+        assert snapshot["legacy_revision"]["revision_id"] == "legacy-revision"
+
+
+def test_apply_phase3_store_migration_rolls_back_to_logical_snapshot(tmp_path, monkeypatch):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    before = snapshot_database(conn)
+    conn.close()
+
+    original = migration._rebuild_approval_records_for_phase3
+
+    def fail_after_approval_actions(conn):
+        original(conn)
+        raise RuntimeError("injected migration failure")
+
+    monkeypatch.setattr(
+        migration,
+        "_rebuild_approval_records_for_phase3",
+        fail_after_approval_actions,
+    )
+    with pytest.raises(Phase3StoreMigrationError):
+        apply_phase3_store_migration(db_path)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        after = snapshot_database(conn)
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        conn.close()
+    assert after == before
+
+    monkeypatch.undo()
+    with RuntimeStore(db_path, objects_root) as store:
+        assert bool(store.conn.execute("PRAGMA foreign_keys").fetchone()[0])
+        assert store.conn.execute("PRAGMA foreign_key_check").fetchall() == []
+        assert snapshot_database(store.conn)["transient_tables"] == []
+
+
+def test_runtime_store_open_runs_phase3_migration_orchestrator(tmp_path, monkeypatch):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+    calls = []
+    original = migration.apply_phase3_store_migration
+
+    def wrapped(db_path_arg):
+        calls.append(str(db_path_arg))
+        return original(db_path_arg)
+
+    monkeypatch.setattr(migration, "apply_phase3_store_migration", wrapped)
+
+    with RuntimeStore(db_path, objects_root) as store:
+        assert calls == [str(db_path)]
+        assert preview_phase3_store_migration(db_path)["status"] == "CURRENT"
+        assert store.get_revision("legacy-revision").revision_id == "legacy-revision"
+
+
+def test_runtime_store_open_migrates_db_missing_review_tables(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+    apply_phase3_store_migration(db_path)
+
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("DROP TABLE review_record_events")
+        conn.execute("DROP TABLE review_records")
+        conn.commit()
+    finally:
+        conn.close()
+
+    preview = preview_phase3_store_migration(db_path)
+    assert preview["status"] == "NEEDS_MIGRATION"
+    assert preview["checks"]["review_tables"]["status"] == "MISSING"
+    assert preview["checks"]["review_indexes"]["status"] == "MISSING"
+    assert not migration.phase3_store_migration_is_current(db_path)
+
+    calls = []
+    original = migration.apply_phase3_store_migration
+
+    def wrapped(db_path_arg):
+        calls.append(str(db_path_arg))
+        return original(db_path_arg)
+
+    monkeypatch.setattr(migration, "apply_phase3_store_migration", wrapped)
+
+    with RuntimeStore(db_path, objects_root) as store:
+        assert calls == [str(db_path)]
+        assert "CREATE TABLE" in table_sql(store.conn, "review_records")
+        assert "CREATE TABLE" in table_sql(store.conn, "review_record_events")
+
+    assert preview_phase3_store_migration(db_path)["status"] == "CURRENT"
+    assert migration.phase3_store_migration_is_current(db_path)
+
+
+def test_runtime_store_open_does_not_half_initialize_when_migration_fails(tmp_path, monkeypatch):
+    db_path = tmp_path / "runtime.db"
+    objects_root = tmp_path / "objects"
+    create_phase2_legacy_db(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    before = snapshot_database(conn)
+    conn.close()
+
+    original = migration._rebuild_approval_records_for_phase3
+
+    def fail_after_approval_actions(conn):
+        original(conn)
+        raise RuntimeError("injected migration failure")
+
+    monkeypatch.setattr(
+        migration,
+        "_rebuild_approval_records_for_phase3",
+        fail_after_approval_actions,
+    )
+
+    with pytest.raises(Phase3StoreMigrationError):
+        RuntimeStore(db_path, objects_root)
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        assert snapshot_database(conn) == before
+        assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    finally:
+        conn.close()
+
+
+def test_fresh_runtime_store_schema_matches_migrated_legacy_schema(tmp_path):
+    fresh_db = tmp_path / "fresh.db"
+    legacy_db = tmp_path / "legacy.db"
+    create_phase2_legacy_db(legacy_db)
+
+    with RuntimeStore(fresh_db, tmp_path / "fresh-objects") as fresh_store:
+        fresh_schema = normalized_schema_snapshot(fresh_store.conn)
+
+    apply_phase3_store_migration(legacy_db)
+    conn = sqlite3.connect(legacy_db)
+    conn.row_factory = sqlite3.Row
+    try:
+        migrated_legacy_schema = normalized_schema_snapshot(conn)
+    finally:
+        conn.close()
+
+    assert fresh_schema == migrated_legacy_schema
+
+
+def test_phase3a_scope_does_not_create_later_phase_files():
+    repo_root = Path(__file__).resolve().parents[1]
+    forbidden = [
+        "ai_drama_runtime/shot_prompt_canonical.py",
+        "ai_drama_runtime/shot_prompt_renderer.py",
+        "ai_drama_runtime/shot_prompt_bundle.py",
+        "skills/ai-drama-shot-prompt-canonical-skill/v0.1.0/skill.json",
+        "tools/verify_phase3_shot_prompt_canonical_foundation.py",
+    ]
+    assert [path for path in forbidden if (repo_root / path).exists()] == []
+
+
+def test_phase3a_changed_files_stay_in_allowlist_and_protect_upstream_contracts():
+    repo_root = Path(__file__).resolve().parents[1]
+    base = os.environ.get("PHASE3_IMPLEMENTATION_START_COMMIT")
+    if not base:
+        pytest.skip("PHASE3_IMPLEMENTATION_START_COMMIT is required for changed-file scope verification")
+    changed = set(
+        subprocess.check_output(
+            ["git", "diff", "--name-only", "%s...HEAD" % base],
+            cwd=repo_root,
+            text=True,
+        ).splitlines()
+    )
+    allowed = {
+        "ai_drama_runtime/store.py",
+        "ai_drama_runtime/shot_prompt_migration.py",
+        "docs/superpowers/plans/2026-07-03-phase3a-store-migration-implementation.md",
+        "tests/test_shot_prompt_store_migration.py",
+        "tests/test_shot_prompt_review_records.py",
+        "tests/shot_prompt_store_support.py",
+        "tests/test_storyboard_legacy_migration.py",
+    }
+    protected = {
+        "docs/superpowers/specs/2026-07-01-phase3-shot-prompt-canonical-design.md",
+        "docs/superpowers/specs/2026-07-04-phase-3-agent-execution-acceptance-contract.md",
+        "docs/superpowers/plans/2026-07-03-phase3-shot-prompt-canonical-program.md",
+        "skills/ai-drama-storyboard-design-skill/v0.2.1/skill.json",
+    }
+    assert changed <= allowed
+    assert changed.isdisjoint(protected)

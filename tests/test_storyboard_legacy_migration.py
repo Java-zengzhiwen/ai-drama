@@ -1,4 +1,5 @@
 import hashlib
+import re
 import sqlite3
 from pathlib import Path
 
@@ -130,6 +131,18 @@ def test_legacy_migration_fails_closed_when_required_legacy_fields_are_missing(t
 
 
 def test_revision_outputs_schema_matches_frozen_ddl(tmp_path):
+    expected_logical_types = [
+        "rendered_positive_prompt",
+        "rendered_negative_prompt",
+        "rendered_markdown",
+        "shot_prompt_positive_prompts",
+        "shot_prompt_negative_prompts",
+        "shot_prompt_asset_requirements",
+        "shot_prompt_render_provenance",
+        "shot_prompt_review_markdown",
+        "shot_prompt_validation_report",
+        "bundle_manifest",
+    ]
     with RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects") as store:
         columns = _revision_output_columns(store)
         assert list(columns) == [
@@ -152,7 +165,15 @@ def test_revision_outputs_schema_matches_frozen_ddl(tmp_path):
         table_sql = store.conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'revision_outputs'"
         ).fetchone()["sql"]
-        assert "logical_type IN ('rendered_positive_prompt', 'rendered_negative_prompt', 'rendered_markdown', 'bundle_manifest')" in table_sql
+        match = re.search(
+            r"logical_type TEXT NOT NULL CHECK \(logical_type IN \(([^)]*)\)\)",
+            table_sql,
+        )
+        assert match is not None
+        actual_logical_types = [
+            value.strip().strip("'") for value in match.group(1).split(",")
+        ]
+        assert actual_logical_types == expected_logical_types
 
         index_names = {
             row["name"]
