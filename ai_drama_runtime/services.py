@@ -4,14 +4,27 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import time
+import uuid
 from .store import now_iso
 
 from .acceptance import load_acceptance_bundle
-from .parser import PARSER_VERSION, STORYBOARD_PARSER_VERSION, ParseError, parse_script_response, parse_storyboard_response
+from .parser import (
+    PARSER_VERSION,
+    STORYBOARD_CANONICAL_PARSER_VERSION,
+    STORYBOARD_PARSER_VERSION,
+    ParseError,
+    parse_script_response,
+    parse_storyboard_canonical_response,
+    parse_storyboard_response,
+)
 from .request import build_runtime_request, build_storyboard_runtime_request
 from .runtime import RuntimeErrorBase, run_runtime
-from .validators import run_declared_validators
+from .validators import recursive_freshness_status, run_declared_validators
+from .storyboard_canonical import CONTENT_PROFILE as STORYBOARD_CANONICAL_PROFILE, canonical_storyboard_hash, parse_canonical_json, serialize_canonical_json
+from .storyboard_migration import StoryboardMigrationError, legacy_markdown_to_canonical, write_migration_preview
+from .storyboard_renderer import RENDERER_ID, RENDERER_VERSION, render_storyboard_markdown
 
 
 class ApprovalBlocked(RuntimeError):
@@ -20,6 +33,34 @@ class ApprovalBlocked(RuntimeError):
 
 class ExportConflict(RuntimeError):
     pass
+
+
+class BundleError(RuntimeError):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.safe_message = message
+
+
+class BundleExportError(RuntimeError):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.safe_message = message
+
+
+class BundleApprovalBlocked(RuntimeError):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.safe_message = message
+
+
+class DiagnosticParentError(RuntimeError):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.safe_message = message
 
 
 class NotFound(RuntimeError):
@@ -67,6 +108,10 @@ def _sha256_text(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _skill_profile_id(skill):
+    return ((skill.metadata.get("execution_profiles") or [{}])[0]).get("profile_id", "")
+
+
 def _required_input_types(skill):
     return list(skill.input_types)
 
@@ -99,6 +144,471 @@ class RuntimeService:
 
     def __exit__(self, *_):
         self.close()
+
+    def _sha256_bytes(self, data):
+        return hashlib.sha256(data).hexdigest()
+
+    def _canonical_json_v1_bytes(self, value):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+    def _rendered_markdown_output(self, canonical):
+        data = render_storyboard_markdown(canonical).encode("utf-8")
+        return {
+            "logical_type": "rendered_markdown",
+            "bytes": data,
+            "content_hash": self._sha256_bytes(data),
+            "media_type": "text/markdown",
+            "generator": RENDERER_ID,
+            "generator_version": RENDERER_VERSION,
+        }
+
+    def _build_storyboard_bundle_manifest(self, *, revision_id, canonical_content_hash, rendered_markdown_hash):
+        output = {
+            "logical_type": "rendered_markdown",
+            "content_hash": rendered_markdown_hash,
+            "media_type": "text/markdown",
+            "generator": RENDERER_ID,
+            "generator_version": RENDERER_VERSION,
+        }
+        business_preimage = {
+            "schema_version": "bundle-manifest-v1",
+            "artifact_type": "storyboard",
+            "canonical_content_hash": canonical_content_hash,
+            "outputs": [output],
+        }
+        bundle_manifest_hash = self._sha256_bytes(self._canonical_json_v1_bytes(business_preimage))
+        manifest = {
+            "schema_version": "bundle-manifest-v1",
+            "revision_id": revision_id,
+            "artifact_type": "storyboard",
+            "canonical_content_hash": canonical_content_hash,
+            "outputs": [output],
+            "bundle_manifest_hash": bundle_manifest_hash,
+        }
+        data = self._canonical_json_v1_bytes(manifest)
+        return {
+            "logical_type": "bundle_manifest",
+            "bytes": data,
+            "content_hash": self._sha256_bytes(data),
+            "media_type": "application/json",
+            "generator": "bundle-manifest-builder",
+            "generator_version": "1",
+            "business_preimage": business_preimage,
+            "bundle_manifest_hash": bundle_manifest_hash,
+            "manifest": manifest,
+        }
+
+    def _storyboard_bundle_payloads(self, revision):
+        canonical = parse_canonical_json(self.store.read_text(revision.content_object_id))
+        rendered = self._rendered_markdown_output(canonical)
+        manifest = self._build_storyboard_bundle_manifest(
+            revision_id=revision.revision_id,
+            canonical_content_hash=revision.content_hash,
+            rendered_markdown_hash=rendered["content_hash"],
+        )
+        return rendered, manifest
+
+    def _materialized_bundle_response(self, revision, status, outputs):
+        by_type = {item.logical_type: item for item in outputs}
+        manifest = json.loads(self.store.read_text(by_type["bundle_manifest"].object_id))
+        integrity = self.check_storyboard_bundle_integrity(revision.revision_id)
+        return {
+            "status": status,
+            "revision_id": revision.revision_id,
+            "rendered_markdown_output_id": by_type["rendered_markdown"].revision_output_id,
+            "bundle_manifest_output_id": by_type["bundle_manifest"].revision_output_id,
+            "bundle_manifest_hash": manifest["bundle_manifest_hash"],
+            "bundle_integrity": integrity["status"],
+            "approval_status": revision.approval_status,
+        }
+
+    def _bundle_output_map_or_raise(self, revision_id):
+        outputs = self.store.revision_outputs(revision_id)
+        if not outputs:
+            raise BundleError("BUNDLE_NOT_MATERIALIZED", "Storyboard bundle is not materialized")
+        by_type = {item.logical_type: item for item in outputs}
+        if len(outputs) != len(by_type) or set(by_type) != {"rendered_markdown", "bundle_manifest"}:
+            raise BundleError("REVISION_OUTPUT_COMBINATION_INVALID", "Storyboard revision output combination is invalid")
+        return by_type
+
+    def check_storyboard_bundle_integrity(self, revision_id):
+        revision = self._revision_or_raise(revision_id)
+        if revision.artifact_type != "storyboard" or revision.content_profile != STORYBOARD_CANONICAL_PROFILE:
+            raise BundleError("BUNDLE_PROFILE_UNSUPPORTED", "revision does not use the Storyboard canonical bundle profile")
+        by_type = self._bundle_output_map_or_raise(revision.revision_id)
+        output_bytes = {}
+        for output in by_type.values():
+            try:
+                data = self.store.read_bytes_object(output.object_id)
+            except (FileNotFoundError, RuntimeError) as exc:
+                raise BundleError("REVISION_OUTPUT_HASH_MISMATCH", "revision output object is missing") from exc
+            actual = self._sha256_bytes(data)
+            if actual != output.object_id or actual != output.content_hash:
+                raise BundleError("REVISION_OUTPUT_HASH_MISMATCH", "revision output hash does not match exact bytes")
+            output_bytes[output.logical_type] = data
+
+        canonical = parse_canonical_json(self.store.read_text(revision.content_object_id))
+        expected_rendered = self._rendered_markdown_output(canonical)
+        rendered = by_type["rendered_markdown"]
+        if (
+            rendered.media_type != expected_rendered["media_type"]
+            or rendered.generator != expected_rendered["generator"]
+            or rendered.generator_version != expected_rendered["generator_version"]
+            or output_bytes["rendered_markdown"] != expected_rendered["bytes"]
+        ):
+            raise BundleError("BUNDLE_INTEGRITY_FAILED", "rendered Markdown output does not match frozen renderer contract")
+
+        manifest_output = by_type["bundle_manifest"]
+        if (
+            manifest_output.media_type != "application/json"
+            or manifest_output.generator != "bundle-manifest-builder"
+            or manifest_output.generator_version != "1"
+        ):
+            raise BundleError("BUNDLE_INTEGRITY_FAILED", "bundle manifest metadata does not match frozen contract")
+        try:
+            manifest = json.loads(output_bytes["bundle_manifest"].decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise BundleError("BUNDLE_INTEGRITY_FAILED", "bundle manifest is not valid canonical JSON") from exc
+        expected_manifest = self._build_storyboard_bundle_manifest(
+            revision_id=revision.revision_id,
+            canonical_content_hash=revision.content_hash,
+            rendered_markdown_hash=rendered.content_hash,
+        )
+        if manifest != expected_manifest["manifest"]:
+            raise BundleError("BUNDLE_INTEGRITY_FAILED", "bundle manifest contents do not match frozen contract")
+        if output_bytes["bundle_manifest"] != expected_manifest["bytes"]:
+            raise BundleError("BUNDLE_INTEGRITY_FAILED", "bundle manifest bytes are not canonical-json-v1")
+        return {
+            "status": "PASS",
+            "revision_id": revision.revision_id,
+            "bundle_manifest_hash": expected_manifest["bundle_manifest_hash"],
+        }
+
+    def _bundle_integrity_failure_code(self, code):
+        if code == "BUNDLE_NOT_MATERIALIZED":
+            return code
+        return "BUNDLE_INTEGRITY_FAILED"
+
+    def _normalize_bundle_integrity_error(self, exc):
+        if exc.code == "BUNDLE_NOT_MATERIALIZED":
+            return exc
+        return BundleError("BUNDLE_INTEGRITY_FAILED", exc.safe_message)
+
+    def bundle_outputs(self, revision_id):
+        revision = self._revision_or_raise(revision_id)
+        if revision.artifact_type != "storyboard" or revision.content_profile != STORYBOARD_CANONICAL_PROFILE:
+            raise BundleError("BUNDLE_PROFILE_UNSUPPORTED", "revision does not use the Storyboard canonical bundle profile")
+        outputs = self.store.revision_outputs(revision.revision_id)
+        materialization_status = "NOT_MATERIALIZED"
+        bundle_integrity = "NOT_CHECKED"
+        bundle_manifest_hash = ""
+        if outputs:
+            types = {item.logical_type for item in outputs}
+            if types == {"rendered_markdown", "bundle_manifest"} and len(outputs) == 2:
+                materialization_status = "MATERIALIZED"
+                try:
+                    integrity = self.check_storyboard_bundle_integrity(revision.revision_id)
+                    bundle_integrity = "PASS"
+                    bundle_manifest_hash = integrity["bundle_manifest_hash"]
+                except BundleError:
+                    bundle_integrity = "FAIL"
+            else:
+                materialization_status = "CONFLICT"
+                bundle_integrity = "FAIL"
+        return {
+            "revision_id": revision.revision_id,
+            "artifact_type": revision.artifact_type,
+            "content_profile": revision.content_profile,
+            "materialization_status": materialization_status,
+            "bundle_integrity": bundle_integrity,
+            "bundle_manifest_hash": bundle_manifest_hash,
+            "outputs": [
+                {
+                    "revision_output_id": item.revision_output_id,
+                    "logical_type": item.logical_type,
+                    "object_id": item.object_id,
+                    "content_hash": item.content_hash,
+                    "media_type": item.media_type,
+                    "generator": item.generator,
+                    "generator_version": item.generator_version,
+                    "created_at": item.created_at,
+                }
+                for item in outputs
+            ],
+        }
+
+    def materialize_storyboard_bundle(self, revision_id):
+        revision = self._revision_or_raise(revision_id)
+        if revision.artifact_type != "storyboard" or revision.content_profile != STORYBOARD_CANONICAL_PROFILE:
+            raise BundleError("BUNDLE_PROFILE_UNSUPPORTED", "revision does not use the Storyboard canonical bundle profile")
+        existing = self.store.revision_outputs(revision.revision_id)
+        existing_types = {item.logical_type for item in existing}
+        if existing_types == {"rendered_markdown", "bundle_manifest"} and len(existing) == 2:
+            return self._materialized_bundle_response(revision, "ALREADY_MATERIALIZED", existing)
+        if existing:
+            raise BundleError("BUNDLE_OUTPUT_CONFLICT", "revision outputs are partial or conflicting")
+
+        rendered, manifest = self._storyboard_bundle_payloads(revision)
+        rendered_object_id = self.store.write_bytes_object(rendered["bytes"])
+        manifest_object_id = self.store.write_bytes_object(manifest["bytes"])
+        rows = [
+            {
+                "revision_id": revision.revision_id,
+                "logical_type": rendered["logical_type"],
+                "object_id": rendered_object_id,
+                "content_hash": rendered["content_hash"],
+                "media_type": rendered["media_type"],
+                "generator": rendered["generator"],
+                "generator_version": rendered["generator_version"],
+            },
+            {
+                "revision_id": revision.revision_id,
+                "logical_type": manifest["logical_type"],
+                "object_id": manifest_object_id,
+                "content_hash": manifest["content_hash"],
+                "media_type": manifest["media_type"],
+                "generator": manifest["generator"],
+                "generator_version": manifest["generator_version"],
+            },
+        ]
+        with self.store.conn:
+            outputs = self.store.insert_revision_outputs_transaction(rows)
+        return self._materialized_bundle_response(revision, "MATERIALIZED", outputs)
+
+    def _bundle_export_payloads(self, revision):
+        by_type = self._bundle_output_map_or_raise(revision.revision_id)
+        integrity = self.check_storyboard_bundle_integrity(revision.revision_id)
+        return by_type, integrity
+
+    def _export_provenance(self, *, export_id, export_kind, revision, bundle_manifest_hash, bundle_status, freshness_status, diagnostic_only, destination, error_code=""):
+        return {
+            "schema_version": "export-provenance-v1",
+            "export_id": export_id,
+            "export_kind": export_kind,
+            "artifact_id": revision.artifact_id,
+            "revision_id": revision.revision_id,
+            "canonical_content_hash": revision.content_hash,
+            "bundle_manifest_hash": bundle_manifest_hash,
+            "bundle_status": bundle_status,
+            "freshness_status": freshness_status,
+            "diagnostic_only": diagnostic_only,
+            "not_an_execution_package": True,
+            "execution_ready": False,
+            "requested_destination": str(destination),
+            "export_time": now_iso(),
+            "error_code": error_code,
+        }
+
+    def _write_bundle_export_files(self, revision, by_type, provenance, staging):
+        staging = Path(staging)
+        canonical_bytes = self.store.read_bytes_object(revision.content_object_id)
+        markdown_bytes = self.store.read_bytes_object(by_type["rendered_markdown"].object_id)
+        provenance_bytes = self._canonical_json_v1_bytes(provenance)
+        manifest_bytes = self.store.read_bytes_object(by_type["bundle_manifest"].object_id)
+        staging.joinpath("canonical-content.json").write_bytes(canonical_bytes)
+        staging.joinpath("rendered-markdown.md").write_bytes(markdown_bytes)
+        staging.joinpath("export-provenance.json").write_bytes(provenance_bytes)
+        staging.joinpath("bundle-manifest.json").write_bytes(manifest_bytes)
+        if staging.joinpath("canonical-content.json").read_bytes() != canonical_bytes:
+            raise BundleExportError("BUNDLE_INTEGRITY_FAILED", "canonical export bytes changed during write")
+        if staging.joinpath("rendered-markdown.md").read_bytes() != markdown_bytes:
+            raise BundleExportError("BUNDLE_INTEGRITY_FAILED", "rendered Markdown export bytes changed during write")
+        if staging.joinpath("export-provenance.json").read_bytes() != provenance_bytes:
+            raise BundleExportError("BUNDLE_INTEGRITY_FAILED", "export provenance bytes changed during write")
+        if staging.joinpath("bundle-manifest.json").read_bytes() != manifest_bytes:
+            raise BundleExportError("BUNDLE_INTEGRITY_FAILED", "bundle manifest export bytes changed during write")
+        return provenance_bytes
+
+    def _commit_export_transaction(self):
+        self.store.conn.commit()
+
+    def _atomic_successful_bundle_export(self, *, revision, output, by_type, integrity, export_kind, freshness, diagnostic_only):
+        output = Path(output)
+        if output.exists():
+            raise BundleExportError("EXPORT_DESTINATION_EXISTS", "export destination already exists")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        staging = output.parent / (".%s.%s.staging" % (output.name, uuid.uuid4().hex))
+        staging.mkdir()
+        export_id = uuid.uuid4().hex
+        provenance = self._export_provenance(
+            export_id=export_id,
+            export_kind=export_kind,
+            revision=revision,
+            bundle_manifest_hash=integrity["bundle_manifest_hash"],
+            bundle_status="verified",
+            freshness_status=freshness,
+            diagnostic_only=diagnostic_only,
+            destination=output,
+        )
+        final_exists = False
+        try:
+            provenance_bytes = self._write_bundle_export_files(revision, by_type, provenance, staging)
+            provenance_object_id = self.store.write_bytes_object(provenance_bytes)
+            self.store.conn.execute("BEGIN")
+            export = self.store.insert_export_record_in_transaction(
+                export_id=export_id,
+                artifact_id=revision.artifact_id,
+                revision_id=revision.revision_id,
+                run_id=revision.run_id,
+                content_hash=revision.content_hash,
+                destination=str(output),
+                provenance_object_id=provenance_object_id,
+                export_kind=export_kind,
+                freshness_status=freshness,
+                diagnostic_only=1 if diagnostic_only else 0,
+                not_an_execution_package=1,
+                execution_ready=0,
+                bundle_manifest_hash=integrity["bundle_manifest_hash"],
+                error_code="",
+            )
+            os.replace(staging, output)
+            final_exists = True
+            self._commit_export_transaction()
+        except Exception as exc:
+            try:
+                self.store.conn.rollback()
+            finally:
+                if staging.exists():
+                    shutil.rmtree(staging)
+                if final_exists and output.exists():
+                    shutil.rmtree(output)
+            if isinstance(exc, BundleExportError):
+                raise
+            raise BundleExportError("FORMAL_REVIEW_EXPORT_BLOCKED", str(exc)) from exc
+        return {
+            "status": "EXPORTED",
+            "export_id": export.export_id,
+            "revision_id": revision.revision_id,
+            "export_kind": export_kind,
+            "destination": str(output),
+            "bundle_manifest_hash": integrity["bundle_manifest_hash"],
+            "freshness_status": freshness,
+            "diagnostic_only": diagnostic_only,
+            "not_an_execution_package": True,
+            "execution_ready": False,
+        }
+
+    def _export_storyboard_formal_review(self, revision, output):
+        try:
+            by_type, integrity = self._bundle_export_payloads(revision)
+        except BundleError as exc:
+            raise BundleError(self._bundle_integrity_failure_code(exc.code), exc.safe_message) from exc
+        freshness = self.revision_freshness(revision.revision_id)
+        results = self.store.validation_results(revision.revision_id)
+        blocking = [
+            item
+            for item in results
+            if item.required and item.validator_id != "storyboard_bundle_integrity" and item.status != "PASS"
+        ]
+        if revision.approval_status != "approved" or freshness != "FRESH" or blocking:
+            raise BundleExportError("FORMAL_REVIEW_EXPORT_BLOCKED", "formal-review export gates did not pass")
+        return self._atomic_successful_bundle_export(
+            revision=revision,
+            output=output,
+            by_type=by_type,
+            integrity=integrity,
+            export_kind="formal_review",
+            freshness=freshness,
+            diagnostic_only=False,
+        )
+
+    def _export_storyboard_diagnostic(self, revision, output):
+        try:
+            by_type, integrity = self._bundle_export_payloads(revision)
+        except BundleError as exc:
+            raise BundleError(self._bundle_integrity_failure_code(exc.code), exc.safe_message) from exc
+        freshness = self.revision_freshness(revision.revision_id)
+        if freshness != "STALE":
+            raise BundleExportError("DIAGNOSTIC_EXPORT_REQUIRES_STALE", "diagnostic export requires a STALE revision")
+        return self._atomic_successful_bundle_export(
+            revision=revision,
+            output=output,
+            by_type=by_type,
+            integrity=integrity,
+            export_kind="diagnostic",
+            freshness=freshness,
+            diagnostic_only=True,
+        )
+
+    def _execution_bundle_status(self, revision):
+        try:
+            integrity = self.check_storyboard_bundle_integrity(revision.revision_id)
+            return "verified", integrity["bundle_manifest_hash"]
+        except BundleError as exc:
+            if exc.code == "BUNDLE_NOT_MATERIALIZED":
+                return "not_materialized", ""
+            if exc.code == "REVISION_OUTPUT_HASH_MISMATCH":
+                return "invalid", ""
+            return "invalid", ""
+
+    def _record_storyboard_execution_block(self, revision, output):
+        bundle_status, bundle_manifest_hash = self._execution_bundle_status(revision)
+        export_id = uuid.uuid4().hex
+        provenance = self._export_provenance(
+            export_id=export_id,
+            export_kind="execution",
+            revision=revision,
+            bundle_manifest_hash=bundle_manifest_hash,
+            bundle_status=bundle_status,
+            freshness_status="",
+            diagnostic_only=False,
+            destination=output,
+            error_code="EXPORT_NOT_EXECUTION_READY",
+        )
+        provenance_object_id = self.store.write_bytes_object(self._canonical_json_v1_bytes(provenance))
+        export = self.store.insert_export_record(
+            export_id=export_id,
+            artifact_id=revision.artifact_id,
+            revision_id=revision.revision_id,
+            run_id=revision.run_id,
+            content_hash=revision.content_hash,
+            destination=str(output),
+            provenance_object_id=provenance_object_id,
+            export_kind="execution",
+            freshness_status="",
+            diagnostic_only=0,
+            not_an_execution_package=1,
+            execution_ready=0,
+            bundle_manifest_hash=bundle_manifest_hash,
+            error_code="EXPORT_NOT_EXECUTION_READY",
+        )
+        return {
+            "status": "BLOCKED",
+            "export_id": export.export_id,
+            "revision_id": revision.revision_id,
+            "export_kind": "execution",
+            "bundle_status": bundle_status,
+            "bundle_manifest_hash": bundle_manifest_hash,
+            "error_code": "EXPORT_NOT_EXECUTION_READY",
+            "error_message": "Storyboard bundle export is not execution-ready in Phase 2",
+        }
+
+    def export_storyboard_bundle(self, revision_id, export_kind, output):
+        revision = self._revision_or_raise(revision_id)
+        if revision.artifact_type != "storyboard" or revision.content_profile != STORYBOARD_CANONICAL_PROFILE:
+            raise BundleError("BUNDLE_PROFILE_UNSUPPORTED", "revision does not use the Storyboard canonical bundle profile")
+        normalized = export_kind.replace("_", "-")
+        if normalized == "formal-review":
+            return self._export_storyboard_formal_review(revision, output)
+        if normalized == "diagnostic":
+            return self._export_storyboard_diagnostic(revision, output)
+        if normalized == "execution":
+            return self._record_storyboard_execution_block(revision, output)
+        raise BundleExportError("EXPORT_NOT_EXECUTION_READY", "unsupported bundle export kind")
+
+    def attach_export_dependency(self, child_revision_id, parent_export_id, relation_type):
+        export = self.store.get_export_record(parent_export_id)
+        if export is None:
+            raise NotFound("export not found: %s" % parent_export_id)
+        if export.export_kind == "diagnostic":
+            raise DiagnosticParentError("DIAGNOSTIC_EXPORT_NOT_PARENTABLE", "diagnostic exports cannot be dependency parents")
+        return self.store.insert_revision_dependency(
+            child_revision_id=child_revision_id,
+            parent_revision_id=export.revision_id,
+            relation_type=relation_type,
+            parent_content_hash=export.content_hash,
+            parent_approval_record_id="",
+        )
 
     def run_acceptance(self, skill, acceptance_root, runtime, model, mock_mode="success"):
         _validate_skill_input_mode(skill, "input")
@@ -202,7 +712,7 @@ class RuntimeService:
             parser_version=PARSER_VERSION,
         )
         validations = run_declared_validators(self.store, skill, revision, bundle.root, repo_root=self.repo_root)
-        blocking = [item for item in validations if item.required and item.status not in {"PASS", "NOT_APPLICABLE"}]
+        blocking = [item for item in validations if item.required and item.status not in {"PASS"}]
         if blocking:
             validator_ids = ", ".join(item.validator_id for item in blocking)
             run = self.store.update_run(
@@ -301,8 +811,12 @@ class RuntimeService:
             )
             return RunResult(run=run, revision=None, validation_results=[], adapter_request_json=request_json)
         response_object_id = self.store.write_text_object(response.raw)
+        profile_id = _skill_profile_id(skill)
         try:
-            storyboard_text = parse_storyboard_response(response.raw)
+            if profile_id == STORYBOARD_CANONICAL_PROFILE:
+                storyboard_text = parse_storyboard_canonical_response(response.raw)
+            else:
+                storyboard_text = parse_storyboard_response(response.raw)
         except ParseError as exc:
             run = self.store.update_run(
                 run.run_id,
@@ -321,7 +835,7 @@ class RuntimeService:
             )
             return RunResult(run=run, revision=None, validation_results=[], adapter_request_json=request_json)
         content_object_id = self.store.write_text_object(storyboard_text)
-        content_hash = _sha256_text(storyboard_text)
+        content_hash = canonical_storyboard_hash(parse_canonical_json(storyboard_text)) if profile_id == STORYBOARD_CANONICAL_PROFILE else _sha256_text(storyboard_text)
         run = self.store.update_run(
             run.run_id,
             status="SUCCEEDED",
@@ -349,7 +863,9 @@ class RuntimeService:
             content_object_id=content_object_id,
             content_hash=content_hash,
             raw_response_object_id=response_object_id,
-            parser_version=STORYBOARD_PARSER_VERSION,
+            parser_version=STORYBOARD_CANONICAL_PARSER_VERSION if profile_id == STORYBOARD_CANONICAL_PROFILE else STORYBOARD_PARSER_VERSION,
+            content_profile=profile_id or "storyboard-markdown-mvp-v1",
+            derivation_type="model_generation",
         )
         self.store.insert_revision_dependency(
             child_revision_id=revision.revision_id,
@@ -358,7 +874,21 @@ class RuntimeService:
             parent_content_hash=source_revision.content_hash,
             parent_approval_record_id=(self.store.latest_approval(source_revision.revision_id).record_id if self.store.latest_approval(source_revision.revision_id) else ""),
         )
+        if skill.version == "v0.2.1" and profile_id == STORYBOARD_CANONICAL_PROFILE:
+            try:
+                prevalidation = [self._auto_materialize_storyboard_bundle(revision, run.run_id)]
+            except BundleError as exc:
+                run = self.store.update_run(
+                    run.run_id,
+                    status="VALIDATION_FAILED",
+                    error_code=exc.code,
+                    error_message=exc.safe_message,
+                )
+                return RunResult(run=run, revision=revision, validation_results=[], adapter_request_json=request_json)
+        else:
+            prevalidation = []
         validations = run_declared_validators(self.store, skill, revision, self.repo_root, repo_root=self.repo_root)
+        validations = prevalidation + [item for item in validations if item.validator_id != "storyboard_bundle_integrity"]
         blocking = [item for item in validations if item.required and item.status not in {"PASS", "NOT_APPLICABLE"}]
         if blocking:
             validator_ids = ", ".join(item.validator_id for item in blocking)
@@ -369,6 +899,31 @@ class RuntimeService:
                 error_message="required validators did not pass: %s" % validator_ids,
             )
         return RunResult(run=run, revision=revision, validation_results=validations, adapter_request_json=request_json)
+
+    def _auto_materialize_storyboard_bundle(self, revision, run_id):
+        self.materialize_storyboard_bundle(revision.revision_id)
+        report = json.dumps(
+            {
+                "validator_id": "storyboard_bundle_integrity",
+                "final_status": "pass",
+                "materialization_status": "MATERIALIZED",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        return self.store.insert_validation(
+            revision_id=revision.revision_id,
+            validator_id="storyboard_bundle_integrity",
+            validator_name="storyboard_bundle_integrity",
+            status="PASS",
+            required=1,
+            exit_code=0,
+            error_code="",
+            duration_ms=0,
+            stdout_object_id=self.store.write_text_object(""),
+            stderr_object_id=self.store.write_text_object(""),
+            report_object_id=self.store.write_text_object(report + "\n"),
+        )
 
     def approve_revision(self, revision_id, reviewer, note=""):
         revision = self._revision_or_raise(revision_id)
@@ -383,9 +938,14 @@ class RuntimeService:
         required = [item for item in results if item.required]
         if not required:
             raise ApprovalBlocked("missing required validator result")
-        blocking = [item for item in required if item.status not in {"PASS", "NOT_APPLICABLE"}]
+        blocking = [item for item in required if item.validator_id != "storyboard_bundle_integrity" and item.status not in {"PASS"}]
         if blocking:
             raise ApprovalBlocked("required validators did not pass: %s" % ", ".join(item.validator_id for item in blocking))
+        if revision.artifact_type == "storyboard" and getattr(revision, "content_profile", "") == STORYBOARD_CANONICAL_PROFILE:
+            try:
+                self.check_storyboard_bundle_integrity(revision_id)
+            except BundleError as exc:
+                raise self._normalize_bundle_integrity_error(exc) from exc
         self.store.approve_in_transaction(revision, reviewer, note)
         return self.store.get_revision(revision_id)
 
@@ -418,14 +978,7 @@ class RuntimeService:
         revision = self._revision_or_raise(revision_id)
         if revision.artifact_type != "storyboard":
             return "FRESH"
-        source_revision_id = self.revision_source_revision_id(revision_id)
-        if not source_revision_id:
-            return "STALE"
-        source = self.store.get_revision(source_revision_id)
-        if source is None:
-            return "STALE"
-        current = self.store.current_approved(source.artifact_id)
-        return "FRESH" if current and current.revision_id == source_revision_id else "STALE"
+        return recursive_freshness_status(self.store, revision_id)
 
     def compare_revisions(self, left_revision_id, right_revision_id):
         left = self._revision_or_raise(left_revision_id)
@@ -470,8 +1023,8 @@ class RuntimeService:
                 "right": {item.validator_id: item.status for item in self.store.validation_results(right.revision_id)},
             },
         }
-        left_text = self.store.read_text(left.content_object_id).splitlines(keepends=True)
-        right_text = self.store.read_text(right.content_object_id).splitlines(keepends=True)
+        left_text = self._revision_display_text(left).splitlines(keepends=True)
+        right_text = self._revision_display_text(right).splitlines(keepends=True)
         return "metadata:\n%s\ninput_hash_diff:\n%s\nrequest_hash_diff:\n%s\nvalidator_status:\n%s\ntext_diff:\n%s" % (
             json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True),
             json.dumps(metadata["input_hashes"], ensure_ascii=False, indent=2, sort_keys=True),
@@ -489,7 +1042,7 @@ class RuntimeService:
         if not force and (output.exists() or sidecar.exists()):
             raise ExportConflict("output or provenance sidecar exists; use --force")
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(self.store.read_text(revision.content_object_id), encoding="utf-8")
+        output.write_text(self._revision_display_text(revision), encoding="utf-8")
         approval = self.store.latest_approval(revision.revision_id)
         run = self.store.get_run(revision.run_id)
         inputs = [
@@ -510,6 +1063,7 @@ class RuntimeService:
             "provider": revision.runtime_provider,
             "model": revision.runtime_model,
             "content_hash": revision.content_hash,
+            "content_profile": getattr(revision, "content_profile", ""),
             "freshness_status": self.revision_freshness(revision.revision_id),
             "source_revision_id": self.revision_source_revision_id(revision.revision_id),
             "source_approval_record": self.revision_source_approval_record(revision.revision_id),
@@ -534,8 +1088,122 @@ class RuntimeService:
             provenance_object_id=provenance_object_id,
         )
 
+    def _legacy_migration_candidate(self, source_revision_id):
+        legacy = self._revision_or_raise(source_revision_id)
+        if legacy.artifact_type != "storyboard" or getattr(legacy, "content_profile", "") != "storyboard-markdown-mvp-v1":
+            raise WorkflowGateError("LEGACY_MIGRATION_REQUIRES_REVIEW", "source revision is not a legacy storyboard revision", legacy.artifact_id, source_revision_id, source_revision_id)
+        deps = self.store.revision_dependencies(legacy.revision_id)
+        if not deps:
+            raise WorkflowGateError("LEGACY_MIGRATION_REQUIRES_REVIEW", "legacy storyboard has no source dependency", legacy.artifact_id, source_revision_id, source_revision_id)
+        source = self._revision_or_raise(deps[0].parent_revision_id)
+        try:
+            candidate = legacy_markdown_to_canonical(
+                self.store.read_text(legacy.content_object_id),
+                source_revision=source,
+                source_artifact_id=source.artifact_id,
+                source_content_hash=source.content_hash,
+            )
+        except StoryboardMigrationError as exc:
+            raise WorkflowGateError(exc.code, str(exc), legacy.artifact_id, source_revision_id, source_revision_id) from exc
+        return legacy, source, deps[0], candidate
+
+    def preview_legacy_storyboard_migration(self, source_revision_id, output):
+        _, _, _, candidate = self._legacy_migration_candidate(source_revision_id)
+        return write_migration_preview(candidate, Path(output))
+
+    def confirm_legacy_storyboard_migration(self, source_revision_id, confirm_candidate_hash, output):
+        legacy, source, dep, candidate = self._legacy_migration_candidate(source_revision_id)
+        actual_hash = canonical_storyboard_hash(candidate)
+        if actual_hash != confirm_candidate_hash:
+            raise WorkflowGateError(
+                "LEGACY_MIGRATION_REQUIRES_REVIEW",
+                "candidate hash confirmation does not match",
+                legacy.artifact_id,
+                source_revision_id,
+                source_revision_id,
+            )
+        preview = write_migration_preview(candidate, Path(output))
+        request_object_id = self.store.write_text_object(json.dumps({"source_revision_id": source_revision_id, "candidate_hash": actual_hash}, ensure_ascii=False, sort_keys=True))
+        canonical_text = serialize_canonical_json(candidate).decode("utf-8")
+        response_object_id = self.store.write_text_object(canonical_text)
+        run = self.store.create_run(
+            artifact_id=legacy.artifact_id,
+            project_id=legacy.project_id,
+            chapter_id=legacy.chapter_id,
+            skill_id=legacy.skill_id,
+            skill_version="v0.2.0",
+            skill_hash="",
+            runtime="migration",
+            provider="migration",
+            model="legacy-migration",
+            status="SUCCEEDED",
+            request_object_id=request_object_id,
+            response_object_id=response_object_id,
+            input_hash=actual_hash,
+            request_hash=actual_hash,
+        )
+        content_object_id = self.store.write_text_object(canonical_text)
+        revision = self.store.insert_revision(
+            artifact_id=legacy.artifact_id,
+            artifact_type="storyboard",
+            project_id=legacy.project_id,
+            chapter_id=legacy.chapter_id,
+            run_id=run.run_id,
+            skill_id=legacy.skill_id,
+            skill_version="v0.2.0",
+            skill_package_hash="",
+            runtime_provider="migration",
+            runtime_model="legacy-migration",
+            content_object_id=content_object_id,
+            content_hash=actual_hash,
+            raw_response_object_id=response_object_id,
+            parser_version=STORYBOARD_CANONICAL_PARSER_VERSION,
+            content_profile=STORYBOARD_CANONICAL_PROFILE,
+            derivation_type="legacy_migration",
+        )
+        self.store.insert_revision_dependency(
+            child_revision_id=revision.revision_id,
+            parent_revision_id=source.revision_id,
+            relation_type=dep.relation_type,
+            parent_content_hash=source.content_hash,
+            parent_approval_record_id=dep.parent_approval_record_id,
+        )
+        return {
+            "status": "PENDING_CANONICAL_REVISION",
+            "revision_id": revision.revision_id,
+            "candidate_hash": actual_hash,
+            "content_profile": STORYBOARD_CANONICAL_PROFILE,
+            "approval_status": revision.approval_status,
+            "canonical_candidate_path": preview["canonical_candidate_path"],
+            "rendered_markdown_path": preview["rendered_markdown_path"],
+        }
+
+    def render_storyboard_revision(self, revision_id, output):
+        revision = self._revision_or_raise(revision_id)
+        if revision.artifact_type != "storyboard":
+            raise NotFound("revision is not a storyboard: %s" % revision_id)
+        output = Path(output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(self._revision_display_text(revision), encoding="utf-8")
+        payload = {
+            "status": "RENDERED",
+            "revision_id": revision.revision_id,
+            "content_profile": getattr(revision, "content_profile", ""),
+            "canonical_hash": revision.content_hash if getattr(revision, "content_profile", "") == STORYBOARD_CANONICAL_PROFILE else "",
+            "renderer_id": "storyboard-canonical-markdown-renderer" if getattr(revision, "content_profile", "") == STORYBOARD_CANONICAL_PROFILE else "",
+            "renderer_version": "1.0.0" if getattr(revision, "content_profile", "") == STORYBOARD_CANONICAL_PROFILE else "",
+            "output_path": str(output),
+        }
+        return payload
+
     def _revision_or_raise(self, revision_id):
         revision = self.store.get_revision(revision_id)
         if revision is None:
             raise NotFound("revision not found: %s" % revision_id)
         return revision
+
+    def _revision_display_text(self, revision):
+        text = self.store.read_text(revision.content_object_id)
+        if getattr(revision, "content_profile", "") == STORYBOARD_CANONICAL_PROFILE:
+            return render_storyboard_markdown(parse_canonical_json(text))
+        return text

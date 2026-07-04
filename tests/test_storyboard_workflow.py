@@ -65,6 +65,35 @@ def test_storyboard_validators_execute_and_persist_outputs(tmp_path):
             assert service.store.read_text(item.report_object_id).strip()
 
 
+def test_storyboard_runtime_integration_with_three_scene_script_and_two_scene_storyboard(tmp_path):
+    with _service(tmp_path) as service:
+        source = service.run_acceptance(load_skill_package(SCRIPT_SKILL_ROOT), SCRIPT_ACCEPTANCE_ROOT, "mock", "mock", mock_mode="three_scene_script")
+        service.approve_revision(source.revision.revision_id, "tester")
+
+        source_text = service.store.read_text(source.revision.content_object_id)
+        assert source_text.count("## Scene:") == 3
+
+        result = service.run_storyboard(
+            load_skill_package(STORYBOARD_SKILL_ROOT),
+            source.revision.revision_id,
+            "mock",
+            "mock-storyboard-v1",
+        )
+        storyboard_text = service.store.read_text(result.revision.content_object_id)
+        assert storyboard_text.count("## 场次：") == 2
+        assert result.run.status == "SUCCEEDED"
+        assert service.revision_freshness(result.revision.revision_id) == "FRESH"
+        validator_statuses = {v.validator_id: v.status for v in result.validation_results}
+        assert validator_statuses["storyboard_source_coverage"] == "PASS"
+        from tools.verify_storyboard_workflow import _coverage_report, _extract_source_scenes, _extract_storyboard_refs
+
+        coverage = _coverage_report(_extract_source_scenes(source_text), _extract_storyboard_refs(storyboard_text))
+        assert coverage["SOURCE_SCRIPT_SCENES"] == ["1-1", "1-2", "1-3"]
+        assert coverage["MISSING_SOURCE_SCENES"] == ["1-3"]
+        assert coverage["EXTRA_SOURCE_REFERENCES"] == []
+        assert coverage["ORDER_MISMATCH"] is True
+
+
 def test_storyboard_run_uses_current_approved_script_and_becomes_stale_when_script_changes(tmp_path):
     with _service(tmp_path) as service:
         source = _approved_script_revision(service)

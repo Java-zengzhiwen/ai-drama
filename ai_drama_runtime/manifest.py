@@ -45,6 +45,17 @@ VALIDATOR_FIELDS = {
 }
 
 
+CANONICAL_STORYBOARD_PROFILE_ID = "storyboard-canonical-v1"
+CANONICAL_STORYBOARD_PROFILE_FIELDS = {
+    "profile_id",
+    "output_format",
+    "parser_version",
+    "required_schema_version",
+    "renderer_id",
+    "renderer_version",
+}
+
+
 @dataclass(frozen=True)
 class SkillValidator:
     validator_id: str
@@ -137,11 +148,30 @@ def _hash_files(root, files):
     return hasher.hexdigest()
 
 
+def _validate_execution_profiles(profiles):
+    for index, profile in enumerate(profiles):
+        if not isinstance(profile, dict):
+            raise SkillManifestError("execution_profiles[%d] must be an object" % index)
+        if profile.get("profile_id") != CANONICAL_STORYBOARD_PROFILE_ID:
+            continue
+        missing = [field for field in sorted(CANONICAL_STORYBOARD_PROFILE_FIELDS) if field not in profile]
+        if missing:
+            raise SkillManifestError("execution_profiles[%d] missing required field: %s" % (index, ",".join(missing)))
+        for field in sorted(CANONICAL_STORYBOARD_PROFILE_FIELDS):
+            if not isinstance(profile[field], str) or not profile[field]:
+                raise SkillManifestError("execution_profiles[%d].%s must be a non-empty string" % (index, field))
+        if profile["output_format"] != "json":
+            raise SkillManifestError("execution_profiles[%d].output_format must be json" % index)
+        if profile["required_schema_version"] != CANONICAL_STORYBOARD_PROFILE_ID:
+            raise SkillManifestError("execution_profiles[%d].required_schema_version must be %s" % (index, CANONICAL_STORYBOARD_PROFILE_ID))
+
+
 def load_skill_package(root):
     root = Path(root).resolve()
     data = _load_metadata(root)
     for field, expected in REQUIRED_FIELDS.items():
         _check_type(data, field, expected)
+    _validate_execution_profiles(data["execution_profiles"])
 
     instructions = _safe_path(root, data["instructions_entry"], "instructions_entry")
     context_files = _safe_path_list(root, data["context_files"], "context_files")

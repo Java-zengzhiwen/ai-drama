@@ -29,6 +29,7 @@ def test_normalized_request_contains_skill_context_and_excludes_reference_and_ke
         "references/adaptation-rules.md",
         "contracts/script-revision-presentation-contract-v2.md",
     }
+    assert len({item["relative_path"] for item in payload["context_files"]}) == len(payload["context_files"])
     assert {item["logical_type"] for item in payload["inputs"]} == {
         "source_chapter",
         "series_canon",
