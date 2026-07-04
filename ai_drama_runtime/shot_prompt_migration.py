@@ -25,6 +25,7 @@ APPROVAL_EVIDENCE_COLUMNS = (
     "qualification_profile_id",
     "qualification_profile_version",
 )
+REVIEW_EVENT_TYPES = ("opened", "resolved", "reopened", "voided")
 PHASE3_FORMAL_OUTPUT_LOGICAL_TYPES = (
     "shot_prompt_positive_prompts",
     "shot_prompt_negative_prompts",
@@ -267,6 +268,63 @@ def _create_approval_records_table(conn):
         )
         """
         % (_approval_action_check_sql(), _approval_evidence_columns_sql())
+    )
+
+
+def _review_event_check_sql():
+    return "event_type TEXT NOT NULL CHECK (event_type IN (%s))" % _quoted(
+        REVIEW_EVENT_TYPES
+    )
+
+
+def _ensure_review_tables_for_conn(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS review_records (
+          review_id TEXT PRIMARY KEY,
+          artifact_id TEXT NOT NULL,
+          revision_id TEXT NOT NULL,
+          scope TEXT NOT NULL CHECK (scope IN ('set','shot')),
+          shot_id TEXT,
+          body TEXT NOT NULL,
+          body_hash TEXT NOT NULL,
+          blocking INTEGER NOT NULL CHECK (blocking IN (0,1)),
+          created_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          CHECK (
+            (scope = 'set' AND shot_id IS NULL)
+            OR
+            (scope = 'shot' AND shot_id IS NOT NULL)
+          ),
+          FOREIGN KEY(revision_id) REFERENCES revisions(revision_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS review_record_events (
+          event_id TEXT PRIMARY KEY,
+          review_id TEXT NOT NULL,
+          %s,
+          actor TEXT NOT NULL,
+          note TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          FOREIGN KEY(review_id) REFERENCES review_records(review_id)
+        )
+        """
+        % _review_event_check_sql()
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS review_records_revision_shot_idx "
+        "ON review_records(revision_id, shot_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS review_records_artifact_revision_idx "
+        "ON review_records(artifact_id, revision_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS review_record_events_review_id_created_event_idx "
+        "ON review_record_events(review_id, created_at, event_id)"
     )
 
 

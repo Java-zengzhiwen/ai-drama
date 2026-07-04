@@ -57,7 +57,7 @@ def test_phase3a_migration_exports_only_owned_schema_constants():
         == EXPECTED_REVISION_OUTPUT_LOGICAL_TYPES
     )
     review_exports = [name for name in vars(migration) if name.startswith("REVIEW_")]
-    assert review_exports == []
+    assert review_exports == ["REVIEW_EVENT_TYPES"]
 
 
 def test_phase3a_support_creates_phase2_legacy_database(tmp_path):

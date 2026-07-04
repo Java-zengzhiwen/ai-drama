@@ -7,6 +7,7 @@ import sqlite3
 import time
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from ai_drama_runtime.shot_prompt_migration import (
     APPROVAL_ACTIONS,
@@ -15,6 +16,7 @@ from ai_drama_runtime.shot_prompt_migration import (
     REVISION_OUTPUT_LOGICAL_TYPES,
     SHOT_PROMPT_ARTIFACT_TYPE,
     SHOT_PROMPT_BUSINESS_KEY_TYPE,
+    _ensure_review_tables_for_conn,
 )
 
 
@@ -151,6 +153,30 @@ class ApprovalRecord:
     renderer_profile_version: str
     qualification_profile_id: str
     qualification_profile_version: str
+
+
+@dataclass(frozen=True)
+class ReviewRecord:
+    review_id: str
+    artifact_id: str
+    revision_id: str
+    scope: str
+    shot_id: Optional[str]
+    body: str
+    body_hash: str
+    blocking: bool
+    created_by: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class ReviewEventRecord:
+    event_id: str
+    review_id: str
+    event_type: str
+    actor: str
+    note: str
+    created_at: str
 
 
 @dataclass(frozen=True)
@@ -387,6 +413,7 @@ class RuntimeStore:
                 revision_output_logical_types,
             )
         )
+        _ensure_review_tables_for_conn(self.conn)
         self._ensure_columns()
         artifact_columns = {
             row["name"] for row in self.conn.execute("PRAGMA table_info(artifacts)").fetchall()
