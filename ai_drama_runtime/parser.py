@@ -4,7 +4,6 @@ import re
 
 PARSER_VERSION = "drama-script-markdown-v1"
 STORYBOARD_PARSER_VERSION = "storyboard-markdown-v1"
-STORYBOARD_CANONICAL_PARSER_VERSION = "storyboard-canonical-json-v1"
 
 
 class ParseError(ValueError):
@@ -55,34 +54,3 @@ def parse_storyboard_response(raw):
     if not re.search(r"\bshot_id\s*:", text) and not re.search(r"^###\s*镜头\b", text, flags=re.M):
         raise ParseError("STORYBOARD_PARSER_NO_SHOTS", "storyboard markdown does not contain shot markers")
     return text
-
-
-def parse_storyboard_canonical_response(raw):
-    from .storyboard_canonical import CanonicalStoryboardError, parse_canonical_json, serialize_canonical_json, validate_storyboard_canonical
-
-    if not raw or not raw.strip():
-        raise ParseError("STORYBOARD_PARSER_EMPTY_OUTPUT", "empty runtime response")
-    try:
-        data = parse_canonical_json(raw)
-    except CanonicalStoryboardError as exc:
-        raise ParseError(exc.code, exc.safe_message) from exc
-    if isinstance(data, dict) and "storyboard_canonical" in data:
-        data = data["storyboard_canonical"]
-    elif isinstance(data, dict) and "choices" in data:
-        try:
-            content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise ParseError("CANONICAL_SCHEMA_INVALID", "OpenAI-compatible response does not contain choices[0].message.content") from exc
-        if not isinstance(content, str) or not content.strip():
-            raise ParseError("CANONICAL_SCHEMA_INVALID", "OpenAI-compatible response content must be non-empty JSON text")
-        try:
-            data = parse_canonical_json(content)
-        except CanonicalStoryboardError as exc:
-            raise ParseError(exc.code, exc.safe_message) from exc
-        if isinstance(data, dict) and "storyboard_canonical" in data:
-            data = data["storyboard_canonical"]
-    try:
-        validate_storyboard_canonical(data)
-        return serialize_canonical_json(data).decode("utf-8")
-    except CanonicalStoryboardError as exc:
-        raise ParseError(exc.code, exc.safe_message) from exc

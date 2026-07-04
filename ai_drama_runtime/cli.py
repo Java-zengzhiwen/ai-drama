@@ -7,7 +7,7 @@ from .acceptance import AcceptanceError
 from .manifest import SkillManifestError
 from .registry import DuplicateSkillError, SkillNotFoundError, SkillRegistry
 from .runtime import RuntimeErrorBase
-from .services import ApprovalBlocked, BundleApprovalBlocked, BundleError, BundleExportError, DiagnosticParentError, ExportConflict, NotFound, RuntimeService, WorkflowGateError
+from .services import ApprovalBlocked, ExportConflict, NotFound, RuntimeService, WorkflowGateError
 from .store import RuntimeStore
 
 
@@ -140,40 +140,6 @@ def _artifacts_export(args):
     _json(_with_service(args, lambda service: service.export_approved(args.artifact_id, args.output, force=args.force).__dict__))
 
 
-def _artifacts_outputs(args):
-    _json(_with_service(args, lambda service: service.bundle_outputs(args.revision)))
-
-
-def _artifacts_materialize_bundle(args):
-    _json(_with_service(args, lambda service: service.materialize_storyboard_bundle(args.revision)))
-
-
-def _artifacts_export_bundle(args):
-    _json(_with_service(args, lambda service: service.export_storyboard_bundle(args.revision, args.kind, args.output)))
-    return 0
-
-
-def _storyboard_render(args):
-    _json(_with_service(args, lambda service: service.render_storyboard_revision(args.revision, args.output)))
-
-
-def _storyboard_migrate_legacy(args):
-    if args.preview:
-        _json(_with_service(args, lambda service: service.preview_legacy_storyboard_migration(args.source_revision, args.output)))
-        return 0
-    _json(
-        _with_service(
-            args,
-            lambda service: service.confirm_legacy_storyboard_migration(
-                args.source_revision,
-                args.confirm_candidate_hash,
-                args.output,
-            ),
-        )
-    )
-    return 0
-
-
 def _approvals_approve(args):
     revision = _with_service(args, lambda service: service.approve_revision(args.revision_id, args.reviewer, args.note))
     _json({"revision_id": revision.revision_id, "artifact_id": revision.artifact_id, "approval_status": revision.approval_status})
@@ -238,31 +204,6 @@ def build_parser():
     p.add_argument("--output", required=True)
     p.add_argument("--force", action="store_true")
     p.set_defaults(func=_artifacts_export)
-    p = art_sub.add_parser("outputs")
-    p.add_argument("--revision", required=True)
-    p.set_defaults(func=_artifacts_outputs)
-    p = art_sub.add_parser("materialize-bundle")
-    p.add_argument("--revision", required=True)
-    p.set_defaults(func=_artifacts_materialize_bundle)
-    p = art_sub.add_parser("export-bundle")
-    p.add_argument("--revision", required=True)
-    p.add_argument("--kind", choices=["formal-review", "diagnostic", "execution"], required=True)
-    p.add_argument("--output", required=True)
-    p.set_defaults(func=_artifacts_export_bundle)
-
-    storyboard = sub.add_parser("storyboard")
-    storyboard_sub = storyboard.add_subparsers(dest="storyboard_command", required=True)
-    p = storyboard_sub.add_parser("render")
-    p.add_argument("--revision", required=True)
-    p.add_argument("--output", required=True)
-    p.set_defaults(func=_storyboard_render)
-    p = storyboard_sub.add_parser("migrate-legacy")
-    p.add_argument("--source-revision", required=True)
-    migration_mode = p.add_mutually_exclusive_group(required=True)
-    migration_mode.add_argument("--preview", action="store_true")
-    migration_mode.add_argument("--confirm-candidate-hash")
-    p.add_argument("--output", required=True)
-    p.set_defaults(func=_storyboard_migrate_legacy)
 
     approvals = sub.add_parser("approvals")
     appr_sub = approvals.add_subparsers(dest="approvals_command", required=True)
@@ -288,18 +229,6 @@ def main(argv=None):
     except WorkflowGateError as exc:
         _json({"error_code": exc.code, "error_message": exc.safe_message})
         return EXIT_INVALID
-    except BundleError as exc:
-        _json({"error_code": exc.code, "error_message": exc.safe_message})
-        return EXIT_INVALID
-    except BundleApprovalBlocked as exc:
-        _json({"error_code": exc.code, "error_message": exc.safe_message})
-        return EXIT_APPROVAL
-    except DiagnosticParentError as exc:
-        _json({"error_code": exc.code, "error_message": exc.safe_message})
-        return EXIT_INVALID
-    except BundleExportError as exc:
-        _json({"error_code": exc.code, "error_message": exc.safe_message})
-        return EXIT_NOT_FOUND
     except (ValueError, SkillManifestError, AcceptanceError) as exc:
         print(str(exc), file=sys.stderr)
         return EXIT_INVALID

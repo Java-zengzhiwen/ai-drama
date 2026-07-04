@@ -26,7 +26,7 @@ def _mock_script(model):
 runtime_model: %s
 source_basis: manifest
 
-## Scene: 1-1
+## Scene 1
 
 【画面】
 女主在清晨醒来，意识到命运重启。
@@ -37,7 +37,7 @@ source_basis: manifest
 【台词】
 女主：这一世，我要先看清局。
 
-## Scene: 1-2
+## Scene 2
 
 【画面】
 账册摊开，旧日线索重新浮现。
@@ -47,47 +47,6 @@ source_basis: manifest
 
 【台词】
 女主：账不会骗人，人心才会。
-""" % model
-
-
-def _mock_script_three_scene(model):
-    return """# Mock Drama Script Revision
-
-runtime_model: %s
-source_basis: manifest
-
-## Scene: 1-1
-
-【画面】
-女主在清晨醒来，意识到命运重启。
-
-【动作】
-她检查身边物件，确认眼前不是幻觉。
-
-【台词】
-女主：这一世，我要先看清局。
-
-## Scene: 1-2
-
-【画面】
-账册摊开，旧日线索重新浮现。
-
-【动作】
-她整理证据，把危险关系和家族账目分开标记。
-
-【台词】
-女主：账不会骗人，人心才会。
-
-## Scene: 1-3
-
-【画面】
-祠堂灯火忽明忽暗，新的线索在暗处浮现。
-
-【动作】
-她推开暗门，发现被藏起的旧信。
-
-【台词】
-女主：第三步，才是真相。
 """ % model
 
 
@@ -180,161 +139,6 @@ source_script_approval_action: script_approved
 """ % model
 
 
-def _mock_storyboard_canonical(runtime_request):
-    payload = runtime_request.to_dict()
-    inputs = payload.get("inputs", {})
-    return {
-        "schema_version": "storyboard-canonical-v1",
-        "project_id": "project-%s" % inputs.get("source_script_artifact_id", "mock"),
-        "chapter_id": "chapter-%s" % inputs.get("source_script_artifact_id", "mock"),
-        "source": {
-            "script_artifact_id": inputs.get("source_script_artifact_id", ""),
-            "script_revision_id": inputs.get("source_script_revision_id", ""),
-            "script_content_hash": inputs.get("source_script_content_hash", ""),
-        },
-        "scenes": [
-            {
-                "scene_id": "SCENE_001",
-                "scene_order": 1,
-                "source_scene_reference": "1-1",
-                "location": None,
-                "time": None,
-                "interior_exterior": None,
-                "characters": ["CHAR_SHEN_QINGHE"],
-                "summary": "Shen Qinghe wakes and verifies the reset.",
-            },
-            {
-                "scene_id": "SCENE_002",
-                "scene_order": 2,
-                "source_scene_reference": "1-2",
-                "location": None,
-                "time": None,
-                "interior_exterior": None,
-                "characters": ["CHAR_SHEN_QINGHE"],
-                "summary": "She studies the account book and separates the clues.",
-            },
-        ],
-        "shots": [
-            {
-                "scene_id": "SCENE_001",
-                "shot_id": "SHOT_001",
-                "shot_order": 1,
-                "source_scene_reference": "1-1",
-                "duration_seconds": 8,
-                "shot_size": "medium",
-                "camera_angle": "eye_level",
-                "camera_movement": None,
-                "visual_composition": {
-                    "framing": "centered medium composition",
-                    "subject_focus": "CHAR_SHEN_QINGHE",
-                    "background_relation": "morning room remains still",
-                    "screen_direction": None,
-                },
-                "character_positions": [
-                    {
-                        "character_id": "CHAR_SHEN_QINGHE",
-                        "screen_zone": "center",
-                        "depth": "foreground",
-                        "pose": "standing",
-                        "facing": None,
-                    }
-                ],
-                "character_actions": [
-                    {
-                        "character_id": "CHAR_SHEN_QINGHE",
-                        "action_order": 1,
-                        "action": "checks the objects beside her",
-                    }
-                ],
-                "emotion_performance": [
-                    {
-                        "character_id": "CHAR_SHEN_QINGHE",
-                        "emotion": "alert",
-                        "intensity": "medium",
-                        "performance_note": None,
-                    }
-                ],
-                "dialogue": [
-                    {
-                        "speaker_character_id": "CHAR_SHEN_QINGHE",
-                        "text": "这一世，我要先看清局。",
-                        "lip_sync_required": True,
-                    }
-                ],
-                "sound_notes": ["morning wind"],
-                "continuity_in": {
-                    "must_preserve": ["wardrobe"],
-                    "must_change": [],
-                    "source_unit_or_shot_id": None,
-                },
-                "continuity_out": {
-                    "must_preserve": ["wardrobe"],
-                    "must_change": ["attention shifts to evidence"],
-                    "source_unit_or_shot_id": None,
-                },
-            },
-            {
-                "scene_id": "SCENE_002",
-                "shot_id": "SHOT_002",
-                "shot_order": 1,
-                "source_scene_reference": "1-2",
-                "duration_seconds": 8,
-                "shot_size": "medium",
-                "camera_angle": "eye_level",
-                "camera_movement": None,
-                "visual_composition": {
-                    "framing": "tabletop evidence composition",
-                    "subject_focus": "account book",
-                    "background_relation": "room stays quiet",
-                    "screen_direction": None,
-                },
-                "character_positions": [
-                    {
-                        "character_id": "CHAR_SHEN_QINGHE",
-                        "screen_zone": "center",
-                        "depth": "midground",
-                        "pose": "seated",
-                        "facing": None,
-                    }
-                ],
-                "character_actions": [
-                    {
-                        "character_id": "CHAR_SHEN_QINGHE",
-                        "action_order": 1,
-                        "action": "marks the account book",
-                    }
-                ],
-                "emotion_performance": [
-                    {
-                        "character_id": "CHAR_SHEN_QINGHE",
-                        "emotion": "focused",
-                        "intensity": "medium",
-                        "performance_note": None,
-                    }
-                ],
-                "dialogue": [
-                    {
-                        "speaker_character_id": "CHAR_SHEN_QINGHE",
-                        "text": "账不会骗人，人心才会。",
-                        "lip_sync_required": True,
-                    }
-                ],
-                "sound_notes": ["paper movement"],
-                "continuity_in": {
-                    "must_preserve": ["wardrobe"],
-                    "must_change": [],
-                    "source_unit_or_shot_id": "SHOT_001",
-                },
-                "continuity_out": {
-                    "must_preserve": ["wardrobe"],
-                    "must_change": [],
-                    "source_unit_or_shot_id": "SHOT_001",
-                },
-            },
-        ],
-    }
-
-
 def run_runtime(runtime_request, mock_mode="success"):
     started = time.time()
     request_json = runtime_request.to_json()
@@ -350,10 +154,6 @@ def run_runtime(runtime_request, mock_mode="success"):
             raw = ""
         elif mock_mode == "parse_failure":
             raw = json.dumps({"not_script": "bad"}, ensure_ascii=False)
-        elif mock_mode == "three_scene_script":
-            raw = json.dumps({"script_markdown": _mock_script_three_scene(model)}, ensure_ascii=False)
-        elif profile == "storyboard-canonical-v1":
-            raw = json.dumps({"storyboard_canonical": _mock_storyboard_canonical(runtime_request)}, ensure_ascii=False, sort_keys=True)
         elif profile == "storyboard-markdown-mvp-v1":
             raw = json.dumps({"storyboard_markdown": _mock_storyboard(model)}, ensure_ascii=False)
         else:

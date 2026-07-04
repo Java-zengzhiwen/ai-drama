@@ -71,8 +71,6 @@ class RevisionRecord:
     content_hash: str
     raw_response_object_id: str
     parser_version: str
-    content_profile: str
-    derivation_type: str
     supersedes_revision_id: str
     approval_status: str
     created_at: str
@@ -132,19 +130,6 @@ class ApprovalRecord:
 
 
 @dataclass(frozen=True)
-class RevisionOutputRecord:
-    revision_output_id: str
-    revision_id: str
-    logical_type: str
-    object_id: str
-    content_hash: str
-    media_type: str
-    generator: str
-    generator_version: str
-    created_at: str
-
-
-@dataclass(frozen=True)
 class ExportRecord:
     export_id: str
     artifact_id: str
@@ -154,13 +139,6 @@ class ExportRecord:
     destination: str
     provenance_object_id: str
     created_at: str
-    export_kind: str
-    freshness_status: str
-    diagnostic_only: bool
-    not_an_execution_package: bool
-    execution_ready: bool
-    bundle_manifest_hash: str
-    error_code: str
 
 
 class RuntimeStore:
@@ -256,8 +234,6 @@ class RuntimeStore:
               content_hash TEXT NOT NULL,
               raw_response_object_id TEXT NOT NULL,
               parser_version TEXT NOT NULL,
-              content_profile TEXT NOT NULL DEFAULT '',
-              derivation_type TEXT NOT NULL DEFAULT 'model_generation',
               supersedes_revision_id TEXT NOT NULL,
               approval_status TEXT NOT NULL,
               created_at TEXT NOT NULL,
@@ -299,29 +275,8 @@ class RuntimeStore:
               destination TEXT NOT NULL,
               provenance_object_id TEXT NOT NULL,
               created_at TEXT NOT NULL,
-              export_kind TEXT NOT NULL DEFAULT 'legacy_single' CHECK (export_kind IN ('legacy_single','formal_review','diagnostic','execution')),
-              freshness_status TEXT NOT NULL DEFAULT '' CHECK (freshness_status IN ('','FRESH','STALE')),
-              diagnostic_only INTEGER NOT NULL DEFAULT 0 CHECK (diagnostic_only IN (0,1)),
-              not_an_execution_package INTEGER NOT NULL DEFAULT 1 CHECK (not_an_execution_package IN (0,1)),
-              execution_ready INTEGER NOT NULL DEFAULT 0 CHECK (execution_ready IN (0,1)),
-              bundle_manifest_hash TEXT NOT NULL DEFAULT '',
-              error_code TEXT NOT NULL DEFAULT '',
               FOREIGN KEY(revision_id) REFERENCES revisions(revision_id)
             );
-            CREATE TABLE IF NOT EXISTS revision_outputs (
-              revision_output_id TEXT PRIMARY KEY,
-              revision_id TEXT NOT NULL REFERENCES revisions(revision_id) ON DELETE RESTRICT,
-              logical_type TEXT NOT NULL CHECK (logical_type IN ('rendered_positive_prompt', 'rendered_negative_prompt', 'rendered_markdown', 'bundle_manifest')),
-              object_id TEXT NOT NULL,
-              content_hash TEXT NOT NULL,
-              media_type TEXT NOT NULL,
-              generator TEXT NOT NULL,
-              generator_version TEXT NOT NULL,
-              created_at TEXT NOT NULL,
-              UNIQUE(revision_id, logical_type)
-            );
-            CREATE INDEX IF NOT EXISTS revision_outputs_content_hash_idx ON revision_outputs(content_hash);
-            CREATE INDEX IF NOT EXISTS revision_outputs_object_id_idx ON revision_outputs(object_id);
             CREATE TABLE IF NOT EXISTS revision_dependencies (
               child_revision_id TEXT NOT NULL,
               parent_revision_id TEXT NOT NULL,
@@ -413,22 +368,6 @@ class RuntimeStore:
                 DROP TABLE revision_dependencies_old;
                 """
             )
-        revision_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(revisions)").fetchall()}
-        if revision_columns and "content_profile" not in revision_columns:
-            self.conn.execute("ALTER TABLE revisions ADD COLUMN content_profile TEXT NOT NULL DEFAULT ''")
-        if revision_columns and "derivation_type" not in revision_columns:
-            self.conn.execute("ALTER TABLE revisions ADD COLUMN derivation_type TEXT NOT NULL DEFAULT 'model_generation'")
-        self.conn.execute(
-            """
-            UPDATE revisions
-            SET content_profile = CASE
-              WHEN artifact_type = 'drama_script' THEN 'markdown-script-mvp-v1'
-              WHEN artifact_type = 'storyboard' THEN 'storyboard-markdown-mvp-v1'
-              ELSE content_profile
-            END
-            WHERE content_profile = ''
-            """
-        )
         gate_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(workflow_gate_records)").fetchall()}
         if gate_columns and "request_reference" not in gate_columns:
             self.conn.executescript(
@@ -453,39 +392,9 @@ class RuntimeStore:
                 DROP TABLE workflow_gate_records_old;
                 """
             )
-        self.conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS revision_outputs (
-              revision_output_id TEXT PRIMARY KEY,
-              revision_id TEXT NOT NULL REFERENCES revisions(revision_id) ON DELETE RESTRICT,
-              logical_type TEXT NOT NULL CHECK (logical_type IN ('rendered_positive_prompt', 'rendered_negative_prompt', 'rendered_markdown', 'bundle_manifest')),
-              object_id TEXT NOT NULL,
-              content_hash TEXT NOT NULL,
-              media_type TEXT NOT NULL,
-              generator TEXT NOT NULL,
-              generator_version TEXT NOT NULL,
-              created_at TEXT NOT NULL,
-              UNIQUE(revision_id, logical_type)
-            );
-            CREATE INDEX IF NOT EXISTS revision_outputs_content_hash_idx ON revision_outputs(content_hash);
-            CREATE INDEX IF NOT EXISTS revision_outputs_object_id_idx ON revision_outputs(object_id);
-            """
-        )
-        export_columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(export_records)").fetchall()}
-        export_additions = {
-            "export_kind": "TEXT NOT NULL DEFAULT 'legacy_single' CHECK (export_kind IN ('legacy_single','formal_review','diagnostic','execution'))",
-            "freshness_status": "TEXT NOT NULL DEFAULT '' CHECK (freshness_status IN ('','FRESH','STALE'))",
-            "diagnostic_only": "INTEGER NOT NULL DEFAULT 0 CHECK (diagnostic_only IN (0,1))",
-            "not_an_execution_package": "INTEGER NOT NULL DEFAULT 1 CHECK (not_an_execution_package IN (0,1))",
-            "execution_ready": "INTEGER NOT NULL DEFAULT 0 CHECK (execution_ready IN (0,1))",
-            "bundle_manifest_hash": "TEXT NOT NULL DEFAULT ''",
-            "error_code": "TEXT NOT NULL DEFAULT ''",
-        }
-        for name, spec in export_additions.items():
-            if name not in export_columns:
-                self.conn.execute("ALTER TABLE export_records ADD COLUMN %s %s" % (name, spec))
 
-    def write_bytes_object(self, data):
+    def write_text_object(self, text):
+        data = text.encode("utf-8")
         object_id = hashlib.sha256(data).hexdigest()
         directory = self.objects_root / object_id[:2]
         directory.mkdir(parents=True, exist_ok=True)
@@ -496,21 +405,15 @@ class RuntimeStore:
                 handle.write(data)
         return object_id
 
-    def read_bytes_object(self, object_id):
-        data = self.object_path(object_id).read_bytes()
-        actual = hashlib.sha256(data).hexdigest()
-        if actual != object_id:
-            raise RuntimeError("immutable object hash mismatch: %s" % object_id)
-        return data
-
-    def write_text_object(self, text):
-        return self.write_bytes_object(text.encode("utf-8"))
-
     def object_path(self, object_id):
         return self.objects_root / object_id[:2] / object_id
 
     def read_text(self, object_id):
-        return self.read_bytes_object(object_id).decode("utf-8")
+        data = self.object_path(object_id).read_bytes()
+        actual = hashlib.sha256(data).hexdigest()
+        if actual != object_id:
+            raise RuntimeError("immutable object hash mismatch: %s" % object_id)
+        return data.decode("utf-8")
 
     def ensure_artifact(self, artifact_id, artifact_type, project_id, chapter_id):
         self.conn.execute(
@@ -602,14 +505,6 @@ class RuntimeStore:
         values.setdefault("number", int(row["n"]))
         values.setdefault("supersedes_revision_id", previous["revision_id"] if previous else "")
         values.setdefault("approval_status", "pending")
-        values.setdefault("derivation_type", "model_generation")
-        if "content_profile" not in values:
-            if values["artifact_type"] == "drama_script":
-                values["content_profile"] = "markdown-script-mvp-v1"
-            elif values["artifact_type"] == "storyboard":
-                values["content_profile"] = "storyboard-markdown-mvp-v1"
-            else:
-                values["content_profile"] = ""
         values.setdefault("created_at", now_iso())
         columns = list(values)
         self.conn.execute(
@@ -704,44 +599,6 @@ class RuntimeStore:
             self.conn.execute("SELECT * FROM export_records WHERE export_id = ?", (values["export_id"],)).fetchone()
         )
 
-    def insert_revision_outputs_transaction(self, rows):
-        created = []
-        now = now_iso()
-        for row in rows:
-            values = dict(row)
-            values.setdefault("revision_output_id", uuid.uuid4().hex)
-            values.setdefault("created_at", now)
-            columns = list(values)
-            self.conn.execute(
-                "INSERT INTO revision_outputs (%s) VALUES (%s)"
-                % (",".join(columns), ",".join("?" for _ in columns)),
-                [values[column] for column in columns],
-            )
-            created.append(self.get_revision_output(values["revision_id"], values["logical_type"]))
-        return created
-
-    def insert_export_record_in_transaction(self, **values):
-        values.setdefault("export_id", uuid.uuid4().hex)
-        values.setdefault("created_at", now_iso())
-        values.setdefault("export_kind", "legacy_single")
-        values.setdefault("freshness_status", "")
-        values.setdefault("diagnostic_only", 0)
-        values.setdefault("not_an_execution_package", 1)
-        values.setdefault("execution_ready", 0)
-        values.setdefault("bundle_manifest_hash", "")
-        values.setdefault("error_code", "")
-        columns = list(values)
-        self.conn.execute(
-            "INSERT INTO export_records (%s) VALUES (%s)"
-            % (",".join(columns), ",".join("?" for _ in columns)),
-            [values[column] for column in columns],
-        )
-        return self.get_export_record(values["export_id"])
-
-    def insert_export_record(self, **values):
-        with self.conn:
-            return self.insert_export_record_in_transaction(**values)
-
     def insert_revision_dependency(self, **values):
         values.setdefault("created_at", now_iso())
         columns = list(values)
@@ -771,26 +628,6 @@ class RuntimeStore:
             (artifact_id,),
         ).fetchall()
         return [self._export_from_row(row) for row in rows]
-
-    def revision_outputs(self, revision_id):
-        rows = self.conn.execute(
-            "SELECT * FROM revision_outputs WHERE revision_id = ? ORDER BY created_at, logical_type, revision_output_id",
-            (revision_id,),
-        ).fetchall()
-        return [self._revision_output_from_row(row) for row in rows]
-
-    def get_revision_output(self, revision_id, logical_type):
-        return self._revision_output_from_row(
-            self.conn.execute(
-                "SELECT * FROM revision_outputs WHERE revision_id = ? AND logical_type = ?",
-                (revision_id, logical_type),
-            ).fetchone()
-        )
-
-    def get_export_record(self, export_id):
-        return self._export_from_row(
-            self.conn.execute("SELECT * FROM export_records WHERE export_id = ?", (export_id,)).fetchone()
-        )
 
     def artifacts(self):
         return [dict(row) for row in self.conn.execute("SELECT * FROM artifacts ORDER BY artifact_id").fetchall()]
@@ -866,14 +703,5 @@ class RuntimeStore:
     def _approval_from_row(self, row):
         return None if row is None else ApprovalRecord(**dict(row))
 
-    def _revision_output_from_row(self, row):
-        return None if row is None else RevisionOutputRecord(**dict(row))
-
     def _export_from_row(self, row):
-        if row is None:
-            return None
-        data = dict(row)
-        data["diagnostic_only"] = bool(data["diagnostic_only"])
-        data["not_an_execution_package"] = bool(data["not_an_execution_package"])
-        data["execution_ready"] = bool(data["execution_ready"])
-        return ExportRecord(**data)
+        return None if row is None else ExportRecord(**dict(row))

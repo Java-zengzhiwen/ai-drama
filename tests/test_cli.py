@@ -8,7 +8,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 ACCEPTANCE_ROOT = REPO_ROOT / "acceptance" / "shengsi-chapter-001"
 SKILL_REF = "ai-drama-script-adaptation-skill@v0.6.1-rc2.4"
 STORYBOARD_SKILL_REF = "ai-drama-storyboard-design-skill@v0.1.0"
-STORYBOARD_CANONICAL_SKILL_REF = "ai-drama-storyboard-design-skill@v0.2.0"
 
 
 def _cli(tmp_path, *args, check=True, env=None):
@@ -31,41 +30,6 @@ def _cli(tmp_path, *args, check=True, env=None):
         check=check,
         env=env,
     )
-
-
-def _canonical_revision_via_cli(tmp_path):
-    script_run = json.loads(
-        _cli(
-            tmp_path,
-            "run",
-            "create",
-            "--skill",
-            SKILL_REF,
-            "--input",
-            ACCEPTANCE_ROOT,
-            "--runtime",
-            "mock",
-            "--model",
-            "mock-script",
-        ).stdout
-    )
-    _cli(tmp_path, "approvals", "approve", script_run["revision_id"], "--reviewer", "cli")
-    storyboard_run = json.loads(
-        _cli(
-            tmp_path,
-            "run",
-            "create",
-            "--skill",
-            STORYBOARD_CANONICAL_SKILL_REF,
-            "--source-revision",
-            script_run["revision_id"],
-            "--runtime",
-            "mock",
-            "--model",
-            "mock-storyboard-canonical",
-        ).stdout
-    )
-    return storyboard_run["revision_id"]
 
 
 def test_cli_required_command_flow_and_restart_reads(tmp_path):
@@ -177,91 +141,6 @@ def test_cli_storyboard_run_flow(tmp_path):
     assert storyboard_run["revision_id"]
 
 
-def test_cli_canonical_storyboard_render_and_legacy_migration(tmp_path):
-    script_run = json.loads(
-        _cli(
-            tmp_path,
-            "run",
-            "create",
-            "--skill",
-            SKILL_REF,
-            "--input",
-            ACCEPTANCE_ROOT,
-            "--runtime",
-            "mock",
-            "--model",
-            "mock-script",
-        ).stdout
-    )
-    _cli(tmp_path, "approvals", "approve", script_run["revision_id"], "--reviewer", "cli")
-
-    canonical_run = json.loads(
-        _cli(
-            tmp_path,
-            "run",
-            "create",
-            "--skill",
-            STORYBOARD_CANONICAL_SKILL_REF,
-            "--source-revision",
-            script_run["revision_id"],
-            "--runtime",
-            "mock",
-            "--model",
-            "mock-storyboard-canonical",
-        ).stdout
-    )
-    render_path = tmp_path / "canonical.md"
-    rendered = json.loads(_cli(tmp_path, "storyboard", "render", "--revision", canonical_run["revision_id"], "--output", render_path).stdout)
-    assert rendered["status"] == "RENDERED"
-    assert rendered["content_profile"] == "storyboard-canonical-v1"
-    assert render_path.read_text(encoding="utf-8").startswith("# Storyboard Canonical Render\n")
-
-    legacy_run = json.loads(
-        _cli(
-            tmp_path,
-            "run",
-            "create",
-            "--skill",
-            STORYBOARD_SKILL_REF,
-            "--source-revision",
-            script_run["revision_id"],
-            "--runtime",
-            "mock",
-            "--model",
-            "mock-storyboard",
-        ).stdout
-    )
-    _cli(tmp_path, "approvals", "approve", legacy_run["revision_id"], "--reviewer", "cli")
-    preview = json.loads(
-        _cli(
-            tmp_path,
-            "storyboard",
-            "migrate-legacy",
-            "--source-revision",
-            legacy_run["revision_id"],
-            "--preview",
-            "--output",
-            tmp_path / "preview",
-        ).stdout
-    )
-    assert preview["status"] == "PREVIEW"
-    confirmed = json.loads(
-        _cli(
-            tmp_path,
-            "storyboard",
-            "migrate-legacy",
-            "--source-revision",
-            legacy_run["revision_id"],
-            "--confirm-candidate-hash",
-            preview["candidate_hash"],
-            "--output",
-            tmp_path / "confirm",
-        ).stdout
-    )
-    assert confirmed["status"] == "PENDING_CANONICAL_REVISION"
-    assert confirmed["approval_status"] == "pending"
-
-
 def test_cli_enforces_mutually_exclusive_inputs(tmp_path):
     conflict = _cli(
         tmp_path,
@@ -309,128 +188,6 @@ def test_cli_reports_storyboard_gate_failures(tmp_path):
     assert gate.returncode == 2
     payload = json.loads(gate.stdout)
     assert payload["error_code"] == "SOURCE_REVISION_NOT_FOUND"
-
-
-def test_artifacts_outputs_returns_frozen_json_contract(tmp_path):
-    revision_id = _canonical_revision_via_cli(tmp_path)
-
-    payload = json.loads(_cli(tmp_path, "artifacts", "outputs", "--revision", revision_id).stdout)
-
-    assert payload["revision_id"] == revision_id
-    assert payload["artifact_type"] == "storyboard"
-    assert payload["content_profile"] == "storyboard-canonical-v1"
-    assert payload["materialization_status"] == "NOT_MATERIALIZED"
-    assert payload["bundle_integrity"] == "NOT_CHECKED"
-    assert payload["bundle_manifest_hash"] == ""
-    assert payload["outputs"] == []
-
-
-def test_artifacts_materialize_bundle_returns_frozen_json_contract(tmp_path):
-    revision_id = _canonical_revision_via_cli(tmp_path)
-
-    payload = json.loads(_cli(tmp_path, "artifacts", "materialize-bundle", "--revision", revision_id).stdout)
-
-    assert payload["status"] == "MATERIALIZED"
-    assert payload["revision_id"] == revision_id
-    assert payload["rendered_markdown_output_id"]
-    assert payload["bundle_manifest_output_id"]
-    assert payload["bundle_manifest_hash"]
-    assert payload["bundle_integrity"] == "PASS"
-    assert payload["approval_status"] == "pending"
-
-
-def test_artifacts_export_bundle_returns_frozen_json_contract(tmp_path):
-    revision_id = _canonical_revision_via_cli(tmp_path)
-    _cli(tmp_path, "artifacts", "materialize-bundle", "--revision", revision_id)
-    _cli(tmp_path, "approvals", "approve", revision_id, "--reviewer", "cli")
-
-    output = tmp_path / "formal-review"
-    payload = json.loads(
-        _cli(
-            tmp_path,
-            "artifacts",
-            "export-bundle",
-            "--revision",
-            revision_id,
-            "--kind",
-            "formal-review",
-            "--output",
-            output,
-        ).stdout
-    )
-
-    assert payload["status"] == "EXPORTED"
-    assert payload["revision_id"] == revision_id
-    assert payload["export_kind"] == "formal_review"
-    assert payload["destination"] == str(output)
-    assert payload["bundle_manifest_hash"]
-    assert payload["freshness_status"] == "FRESH"
-    assert payload["diagnostic_only"] is False
-    assert payload["not_an_execution_package"] is True
-    assert payload["execution_ready"] is False
-
-
-def test_artifacts_export_bundle_execution_returns_blocked_json_and_zero_exit(tmp_path):
-    revision_id = _canonical_revision_via_cli(tmp_path)
-    output = tmp_path / "execution"
-
-    result = _cli(
-        tmp_path,
-        "artifacts",
-        "export-bundle",
-        "--revision",
-        revision_id,
-        "--kind",
-        "execution",
-        "--output",
-        output,
-        check=False,
-    )
-    payload = json.loads(result.stdout)
-
-    assert result.returncode == 0
-    assert payload["status"] == "BLOCKED"
-    assert payload["revision_id"] == revision_id
-    assert payload["export_kind"] == "execution"
-    assert payload["bundle_status"] == "not_materialized"
-    assert payload["bundle_manifest_hash"] == ""
-    assert payload["error_code"] == "EXPORT_NOT_EXECUTION_READY"
-    assert not output.exists()
-
-
-def test_artifacts_export_bundle_rejects_unsupported_profile(tmp_path):
-    script_run = json.loads(
-        _cli(
-            tmp_path,
-            "run",
-            "create",
-            "--skill",
-            SKILL_REF,
-            "--input",
-            ACCEPTANCE_ROOT,
-            "--runtime",
-            "mock",
-            "--model",
-            "mock-script",
-        ).stdout
-    )
-
-    result = _cli(
-        tmp_path,
-        "artifacts",
-        "export-bundle",
-        "--revision",
-        script_run["revision_id"],
-        "--kind",
-        "formal-review",
-        "--output",
-        tmp_path / "bad-profile",
-        check=False,
-    )
-    payload = json.loads(result.stdout)
-
-    assert result.returncode == 2
-    assert payload["error_code"] == "BUNDLE_PROFILE_UNSUPPORTED"
 
 
 def test_cli_rejects_skill_input_type_mismatch(tmp_path):

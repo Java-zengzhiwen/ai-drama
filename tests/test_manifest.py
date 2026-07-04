@@ -1,6 +1,4 @@
 from pathlib import Path
-import json
-import shutil
 
 import pytest
 
@@ -10,7 +8,6 @@ from ai_drama_runtime.registry import DuplicateSkillError, SkillRegistry
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SKILL_ROOT = REPO_ROOT / "skills" / "ai-drama-script-adaptation-skill" / "v0.6.1-rc2.4"
-STORYBOARD_CANONICAL_SKILL_ROOT = REPO_ROOT / "skills" / "ai-drama-storyboard-design-skill" / "v0.2.0"
 
 
 def _write_skill(root, **overrides):
@@ -216,35 +213,3 @@ def test_real_skill_package_is_valid_and_paths_are_inside_root():
     assert all(SKILL_ROOT.resolve() in path.parents for path in [v.entrypoint for v in package.validators])
     genericity = [v for v in package.validators if v.validator_id == "genericity"][0]
     assert not any("{repo_root}" in part for part in genericity.command)
-
-
-def test_canonical_storyboard_execution_profile_metadata_is_valid():
-    package = load_skill_package(STORYBOARD_CANONICAL_SKILL_ROOT)
-
-    profile = package.execution_profiles[0]
-    assert profile["profile_id"] == "storyboard-canonical-v1"
-    assert profile["output_format"] == "json"
-    assert profile["parser_version"] == "storyboard-canonical-json-v1"
-    assert profile["required_schema_version"] == "storyboard-canonical-v1"
-    assert profile["renderer_id"] == "storyboard-canonical-markdown-renderer"
-    assert profile["renderer_version"] == "1.0.0"
-
-
-@pytest.mark.parametrize(
-    "mutate, match",
-    [
-        (lambda profile: profile.pop("renderer_id"), "renderer_id"),
-        (lambda profile: profile.__setitem__("output_format", "markdown"), "output_format"),
-        (lambda profile: profile.__setitem__("required_schema_version", "other"), "required_schema_version"),
-        (lambda profile: profile.__setitem__("renderer_version", ""), "renderer_version"),
-    ],
-)
-def test_canonical_storyboard_execution_profile_metadata_is_required(tmp_path, mutate, match):
-    root = tmp_path / "storyboard-canonical"
-    shutil.copytree(STORYBOARD_CANONICAL_SKILL_ROOT, root)
-    data = json.loads((root / "skill.json").read_text(encoding="utf-8"))
-    mutate(data["execution_profiles"][0])
-    (root / "skill.json").write_text(json.dumps(data), encoding="utf-8")
-
-    with pytest.raises(SkillManifestError, match=match):
-        load_skill_package(root)
