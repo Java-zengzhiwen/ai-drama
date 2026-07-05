@@ -58,7 +58,23 @@ class StoryboardWorkflowService:
     def create_manual_revision(self, revision_id: str, content: str):
         if self.runtime_store.get_revision(revision_id) is None:
             raise MissingRecord
+        skill = self._storyboard_skill()
         revision = self.runtime_service.create_manual_revision(revision_id, content, actor="local-user")
+        if revision.content_profile == STORYBOARD_CANONICAL_PROFILE:
+            self.runtime_service.materialize_storyboard_bundle(revision.revision_id)
+        run_declared_validators(
+            self.runtime_store,
+            skill,
+            revision,
+            self.repo_root,
+            repo_root=self.repo_root,
+        )
+        return self._read_revision(revision.revision_id)
+
+    def validate_revision(self, revision_id: str):
+        revision = self.runtime_store.get_revision(revision_id)
+        if revision is None:
+            raise MissingRecord
         skill = self._storyboard_skill()
         if revision.content_profile == STORYBOARD_CANONICAL_PROFILE:
             self.runtime_service.materialize_storyboard_bundle(revision.revision_id)

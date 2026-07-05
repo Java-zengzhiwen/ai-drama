@@ -76,6 +76,23 @@ async def update_storyboard_revision(
         raise HTTPException(status_code=404, detail="storyboard revision not found")
     except ValueError as exc:
         return _error(422, "INVALID_REVISION_CONTENT", str(exc))
+    except WorkflowExecutionError as exc:
+        return _error(exc.status_code, exc.code, exc.safe_message)
+    except BundleError as exc:
+        return _error(422, exc.code, exc.safe_message)
+
+
+@router.post("/storyboard-revisions/{revision_id}/validate", response_model=ScriptRevisionRead)
+async def validate_storyboard_revision(
+    revision_id: str,
+    service: StoryboardWorkflowService = Depends(get_service),
+):
+    try:
+        return service.validate_revision(revision_id)
+    except MissingRecord:
+        raise HTTPException(status_code=404, detail="storyboard revision not found")
+    except WorkflowExecutionError as exc:
+        return _error(exc.status_code, exc.code, exc.safe_message)
     except BundleError as exc:
         return _error(422, exc.code, exc.safe_message)
 

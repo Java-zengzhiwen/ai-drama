@@ -146,6 +146,24 @@ def test_storyboard_approve_maps_bundle_errors(client):
     assert response.json()["error_message"]
 
 
+def test_storyboard_revision_can_be_validated_on_demand(client):
+    generated = _generate_storyboard_after_approving_script(client)
+    initial_count = len(generated["validation_results"])
+
+    response = client.post(f"/api/storyboard-revisions/{generated['revision_id']}/validate")
+
+    assert response.status_code == 200
+    validated = response.json()
+    assert validated["revision_id"] == generated["revision_id"]
+    assert len(validated["validation_results"]) > initial_count
+    latest_statuses = {
+        item["validator_id"]: item["status"]
+        for item in validated["validation_results"][-initial_count:]
+    }
+    assert latest_statuses["storyboard_canonical_schema"] == "PASS"
+    assert latest_statuses["storyboard_bundle_integrity"] == "PASS"
+
+
 def test_storyboard_manual_edit_maps_bundle_materialization_errors(client, monkeypatch):
     from ai_drama_runtime.services import BundleError, RuntimeService
 
@@ -187,3 +205,46 @@ def test_storyboard_skill_config_errors_are_stable(client, monkeypatch):
         "error_code": "SKILL_CONFIG_INVALID",
         "error_message": "duplicate storyboard skill",
     }
+
+
+def test_storyboard_validate_skill_config_errors_are_stable(client, monkeypatch):
+    from ai_drama_runtime.registry import DuplicateSkillError, SkillRegistry
+
+    generated = _generate_storyboard_after_approving_script(client)
+
+    def fail_scan(roots):
+        raise DuplicateSkillError("duplicate storyboard skill")
+
+    monkeypatch.setattr(SkillRegistry, "scan", fail_scan)
+
+    response = client.post(f"/api/storyboard-revisions/{generated['revision_id']}/validate")
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error_code": "SKILL_CONFIG_INVALID",
+        "error_message": "duplicate storyboard skill",
+    }
+
+
+def test_storyboard_manual_edit_skill_config_errors_do_not_leave_revision(client, monkeypatch):
+    from ai_drama_runtime.registry import DuplicateSkillError, SkillRegistry
+
+    generated = _generate_storyboard_after_approving_script(client)
+
+    def fail_scan(roots):
+        raise DuplicateSkillError("duplicate storyboard skill")
+
+    monkeypatch.setattr(SkillRegistry, "scan", fail_scan)
+
+    response = client.put(
+        f"/api/storyboard-revisions/{generated['revision_id']}",
+        json={"content": generated["content"]},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error_code": "SKILL_CONFIG_INVALID",
+        "error_message": "duplicate storyboard skill",
+    }
+    revisions_response = client.get(f"/api/chapters/{generated['chapter_id']}/storyboard/revisions")
+    assert [item["revision_id"] for item in revisions_response.json()] == [generated["revision_id"]]

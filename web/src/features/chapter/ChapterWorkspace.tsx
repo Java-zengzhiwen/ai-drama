@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { getChapterStatus, type ChapterStatus } from "../projects/api";
 import { ScriptTab } from "../script/ScriptTab";
 import { getChapter } from "../script/api";
+import { StoryboardTab } from "../storyboard/StoryboardTab";
 import { SourceTab } from "./SourceTab";
 
 type ChapterWorkspaceProps = {
@@ -22,6 +23,7 @@ type ApiError = {
 
 const storyboardBlockedReason = "未确认剧本，不允许生成分镜。";
 const productionBlockedReason = "未确认分镜，不允许进入后续生产步骤。";
+const futureProductionBlockedReason = "后续生产步骤属于后续里程碑，Milestone 1 不开放。";
 
 export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps) {
   const chapterQuery = useQuery({
@@ -121,34 +123,38 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
               label: "剧本",
             },
             {
-              children: <LockedPanel reason={storyboardBlockedReason} title="分镜" />,
-              disabled: true,
+              children: storyboardUnlocked(status) ? (
+                <StoryboardTab chapter={chapter} status={status} />
+              ) : (
+                <LockedPanel reason={storyboardBlockedReason} title="分镜" />
+              ),
+              disabled: !storyboardUnlocked(status),
               key: "storyboard",
-              label: lockedLabel("分镜", storyboardLockReason(status)),
+              label: storyboardUnlocked(status) ? "分镜" : lockedLabel("分镜", storyboardLockReason(status)),
             },
             {
-              children: <LockedPanel reason={productionBlockedReason} title="资料与资产" />,
+              children: <LockedPanel reason={productionLockReason(status)} title="资料与资产" />,
               disabled: true,
               key: "assets",
-              label: lockedLabel("资料与资产", productionBlockedReason),
+              label: lockedLabel("资料与资产", productionLockReason(status)),
             },
             {
-              children: <LockedPanel reason={productionBlockedReason} title="Shot Prompt" />,
+              children: <LockedPanel reason={productionLockReason(status)} title="Shot Prompt" />,
               disabled: true,
               key: "shot-prompt",
-              label: lockedLabel("Shot Prompt", productionBlockedReason),
+              label: lockedLabel("Shot Prompt", productionLockReason(status)),
             },
             {
-              children: <LockedPanel reason={productionBlockedReason} title="Agnes 生成" />,
+              children: <LockedPanel reason={productionLockReason(status)} title="Agnes 生成" />,
               disabled: true,
               key: "agnes",
-              label: lockedLabel("Agnes 生成", productionBlockedReason),
+              label: lockedLabel("Agnes 生成", productionLockReason(status)),
             },
             {
-              children: <LockedPanel reason={productionBlockedReason} title="结果与重跑" />,
+              children: <LockedPanel reason={productionLockReason(status)} title="结果与重跑" />,
               disabled: true,
               key: "results",
-              label: lockedLabel("结果与重跑", productionBlockedReason),
+              label: lockedLabel("结果与重跑", productionLockReason(status)),
             },
           ]}
         />
@@ -237,19 +243,28 @@ function getApiErrorDetails(error: unknown, fallbackMessage: string) {
 
 function LockedReasons({ status }: { status?: ChapterStatus }) {
   const storyboardReason = storyboardLockReason(status);
+  const productionReason = productionLockReason(status);
 
   return (
     <div aria-label="locked tab reasons" style={{ display: "grid", gap: 8 }}>
-      {status?.status !== "storyboard_approved" ? (
+      {!storyboardUnlocked(status) ? (
         <Alert message="分镜已锁定" description={storyboardReason} showIcon type="info" />
       ) : null}
-      <Alert message="后续生产步骤已锁定" description={productionBlockedReason} showIcon type="info" />
+      <Alert message="后续生产步骤已锁定" description={productionReason} showIcon type="info" />
     </div>
   );
 }
 
+function productionLockReason(status?: ChapterStatus) {
+  return status?.status === "storyboard_approved" ? futureProductionBlockedReason : productionBlockedReason;
+}
+
 function storyboardLockReason(status?: ChapterStatus) {
-  return status?.status === "script_approved" ? "分镜编辑将在下一任务实现。" : storyboardBlockedReason;
+  return storyboardUnlocked(status) ? "" : storyboardBlockedReason;
+}
+
+function storyboardUnlocked(status?: ChapterStatus) {
+  return ["script_approved", "storyboard_draft", "storyboard_approved"].includes(status?.status ?? "");
 }
 
 function lockedLabel(label: string, reason: string) {
