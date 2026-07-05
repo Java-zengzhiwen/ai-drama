@@ -19,7 +19,7 @@ from .parser import (
     parse_storyboard_canonical_response,
     parse_storyboard_response,
 )
-from .request import build_runtime_request, build_storyboard_runtime_request
+from .request import build_runtime_request, build_runtime_request_from_inputs, build_storyboard_runtime_request
 from .runtime import RuntimeErrorBase, run_runtime
 from .validators import recursive_freshness_status, run_declared_validators
 from .storyboard_canonical import CONTENT_PROFILE as STORYBOARD_CANONICAL_PROFILE, canonical_storyboard_hash, parse_canonical_json, serialize_canonical_json
@@ -610,16 +610,21 @@ class RuntimeService:
             parent_approval_record_id="",
         )
 
-    def run_acceptance(self, skill, acceptance_root, runtime, model, mock_mode="success"):
-        _validate_skill_input_mode(skill, "input")
-        started = time.time()
-        bundle = load_acceptance_bundle(acceptance_root)
-        artifact_id = bundle.manifest["id"]
-        project_id = bundle.manifest.get("project_id") or artifact_id
-        chapter_id = bundle.manifest.get("chapter_id") or artifact_id
-        self.store.ensure_artifact(artifact_id, "drama_script", project_id, chapter_id)
-        resolved_model = model or (os.environ.get("AI_DRAMA_MODEL") if runtime == "openai-compatible" else model)
-        runtime_request = build_runtime_request(skill, acceptance_root, runtime, resolved_model or "")
+    def _execute_script_request(
+        self,
+        *,
+        skill,
+        artifact_id,
+        project_id,
+        chapter_id,
+        runtime,
+        resolved_model,
+        runtime_request,
+        input_snapshots,
+        validation_root,
+        started,
+        mock_mode,
+    ):
         request_json = runtime_request.to_json()
         request_object_id = self.store.write_text_object(request_json)
         run = self.store.create_run(
@@ -637,13 +642,13 @@ class RuntimeService:
             input_hash=runtime_request.sha256,
             request_hash=runtime_request.sha256,
         )
-        for key, item in bundle.input_files.items():
+        for item in input_snapshots:
             self.store.insert_input_snapshot(
                 run.run_id,
-                logical_type=key,
-                source_relative_path=item.relative_path,
-                source_path=item.path,
-                text=item.text,
+                logical_type=item["logical_type"],
+                source_relative_path=item["source_relative_path"],
+                source_path=item["source_path"],
+                text=item["text"],
             )
         try:
             response = run_runtime(runtime_request, mock_mode=mock_mode)
@@ -711,7 +716,7 @@ class RuntimeService:
             raw_response_object_id=response_object_id,
             parser_version=PARSER_VERSION,
         )
-        validations = run_declared_validators(self.store, skill, revision, bundle.root, repo_root=self.repo_root)
+        validations = run_declared_validators(self.store, skill, revision, validation_root, repo_root=self.repo_root)
         blocking = [item for item in validations if item.required and item.status not in {"PASS"}]
         if blocking:
             validator_ids = ", ".join(item.validator_id for item in blocking)
@@ -722,6 +727,66 @@ class RuntimeService:
                 error_message="required validators did not pass: %s" % validator_ids,
             )
         return RunResult(run=run, revision=revision, validation_results=validations, adapter_request_json=request_json)
+
+    def run_acceptance(self, skill, acceptance_root, runtime, model, mock_mode="success"):
+        _validate_skill_input_mode(skill, "input")
+        started = time.time()
+        bundle = load_acceptance_bundle(acceptance_root)
+        artifact_id = bundle.manifest["id"]
+        project_id = bundle.manifest.get("project_id") or artifact_id
+        chapter_id = bundle.manifest.get("chapter_id") or artifact_id
+        self.store.ensure_artifact(artifact_id, "drama_script", project_id, chapter_id)
+        resolved_model = model or (os.environ.get("AI_DRAMA_MODEL") if runtime == "openai-compatible" else model)
+        runtime_request = build_runtime_request(skill, acceptance_root, runtime, resolved_model or "")
+        return self._execute_script_request(
+            skill=skill,
+            artifact_id=artifact_id,
+            project_id=project_id,
+            chapter_id=chapter_id,
+            runtime=runtime,
+            resolved_model=resolved_model or "",
+            runtime_request=runtime_request,
+            input_snapshots=[
+                {
+                    "logical_type": key,
+                    "source_relative_path": item.relative_path,
+                    "source_path": item.path,
+                    "text": item.text,
+                }
+                for key, item in bundle.input_files.items()
+            ],
+            validation_root=bundle.root,
+            started=started,
+            mock_mode=mock_mode,
+        )
+
+    def run_script_inputs(self, skill, artifact_id, project_id, chapter_id, inputs, runtime, model, mock_mode="success"):
+        _validate_skill_input_mode(skill, "input")
+        started = time.time()
+        self.store.ensure_artifact(artifact_id, "drama_script", project_id, chapter_id)
+        resolved_model = model or (os.environ.get("AI_DRAMA_MODEL") if runtime == "openai-compatible" else model)
+        runtime_request = build_runtime_request_from_inputs(skill, inputs, runtime, resolved_model or "")
+        return self._execute_script_request(
+            skill=skill,
+            artifact_id=artifact_id,
+            project_id=project_id,
+            chapter_id=chapter_id,
+            runtime=runtime,
+            resolved_model=resolved_model or "",
+            runtime_request=runtime_request,
+            input_snapshots=[
+                {
+                    "logical_type": logical_type,
+                    "source_relative_path": "web-inputs/%s.md" % logical_type,
+                    "source_path": Path("web-inputs/%s.md" % logical_type),
+                    "text": text,
+                }
+                for logical_type, text in sorted(inputs.items())
+            ],
+            validation_root=skill.root,
+            started=started,
+            mock_mode=mock_mode,
+        )
 
     def run_storyboard(self, skill, source_revision_id, runtime, model, mock_mode="success"):
         _validate_skill_input_mode(skill, "source_revision")

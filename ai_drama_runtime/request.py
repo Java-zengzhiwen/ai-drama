@@ -106,6 +106,51 @@ def build_runtime_request(skill, acceptance_root, provider, model, timeout_secon
     return RuntimeRequest(payload)
 
 
+def build_runtime_request_from_inputs(skill, inputs, provider, model, timeout_seconds=60):
+    instruction_text = skill.instructions_entry.read_text(encoding="utf-8")
+    profile = (skill.metadata.get("execution_profiles") or [{}])[0]
+    context_files = _unique_file_items(skill.root, skill.context_files + skill.schemas + skill.contracts)
+    normalized_inputs = [
+        {
+            "logical_type": logical_type,
+            "relative_path": "web-inputs/%s.md" % logical_type,
+            "sha256": _sha(content),
+            "content": content,
+        }
+        for logical_type, content in sorted(inputs.items())
+    ]
+    payload = {
+        "request_format_version": REQUEST_FORMAT_VERSION,
+        "skill": {
+            "skill_id": skill.skill_id,
+            "version": skill.version,
+            "package_hash": skill.content_hash,
+            "execution_profile": profile.get("profile_id", "markdown-script-mvp-v1"),
+        },
+        "system_instruction": SYSTEM_INSTRUCTION,
+        "skill_instruction": {
+            "relative_path": skill.instructions_entry.relative_to(skill.root).as_posix(),
+            "sha256": _sha(instruction_text),
+            "content": instruction_text,
+        },
+        "context_files": context_files,
+        "inputs": normalized_inputs,
+        "output_contract": {
+            "profile": profile.get("profile_id", "markdown-script-mvp-v1"),
+            "format": profile.get("output_format", "markdown"),
+            "parser_version": PARSER_VERSION,
+            "supported_artifacts": profile.get("supported_artifacts", ["creator_facing_markdown_script"]),
+            "unsupported_bundle_artifacts": profile.get("unsupported_bundle_artifacts", []),
+        },
+        "runtime_config": {
+            "provider": provider,
+            "model": model or "",
+            "timeout_seconds": timeout_seconds,
+        },
+    }
+    return RuntimeRequest(payload)
+
+
 def _storyboard_inputs_from_source_revision(store, source_revision):
     run = store.get_run(source_revision.run_id)
     snapshots = {item.logical_type: item for item in store.input_snapshots(source_revision.run_id)}
