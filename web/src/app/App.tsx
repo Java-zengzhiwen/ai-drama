@@ -2,20 +2,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Layout, Typography } from "antd";
 import { useState } from "react";
 import { BrowserRouter, Link, Navigate, Route, Routes, useParams } from "react-router-dom";
+import { ChapterWorkspace } from "../features/chapter/ChapterWorkspace";
 import { ProjectDashboardPage } from "../features/projects/ProjectDashboardPage";
 import { ProjectListPage } from "../features/projects/ProjectListPage";
 
 function ChapterWorkspacePage() {
-  const { chapterId, projectId } = useParams();
+  const { chapterId = "", projectId = "" } = useParams();
 
-  return (
-    <section>
-      <Typography.Title level={1}>章节工作区</Typography.Title>
-      <Typography.Text type="secondary">
-        Project {projectId} / Chapter {chapterId}
-      </Typography.Text>
-    </section>
-  );
+  return <ChapterWorkspace chapterId={chapterId} projectId={projectId} />;
 }
 
 function AppShell() {
