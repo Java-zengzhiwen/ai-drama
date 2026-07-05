@@ -10,6 +10,7 @@ from ai_drama_web.schemas.projects import (
     SourceRevisionCreate,
     SourceRevisionRead,
 )
+from ai_drama_web.services.chapter_status import ChapterStatusService
 from ai_drama_web.services.projects import DuplicateChapterPosition, MissingRecord, ProjectService
 from ai_drama_web.store import ProductStore
 
@@ -21,6 +22,13 @@ def get_service(
     runtime_store: RuntimeStore = Depends(get_runtime_store),
 ) -> ProjectService:
     return ProjectService(product_store, runtime_store)
+
+
+def get_chapter_status_service(
+    product_store: ProductStore = Depends(get_product_store),
+    runtime_store: RuntimeStore = Depends(get_runtime_store),
+) -> ChapterStatusService:
+    return ChapterStatusService(product_store, runtime_store)
 
 
 @router.post("/projects", response_model=ProjectRead)
@@ -58,6 +66,17 @@ async def get_chapter(chapter_id: str, service: ProjectService = Depends(get_ser
     except MissingRecord:
         raise HTTPException(status_code=404, detail="chapter not found")
     return ChapterRead.model_validate(chapter).model_copy(update={"source_text": source_text})
+
+
+@router.get("/chapters/{chapter_id}/status")
+async def get_chapter_status(
+    chapter_id: str,
+    service: ChapterStatusService = Depends(get_chapter_status_service),
+):
+    try:
+        return service.get_status(chapter_id)
+    except MissingRecord:
+        raise HTTPException(status_code=404, detail="chapter not found")
 
 
 @router.post("/chapters/{chapter_id}/source-revisions", response_model=SourceRevisionRead)
