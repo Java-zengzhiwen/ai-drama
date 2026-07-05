@@ -788,6 +788,86 @@ class RuntimeService:
             mock_mode=mock_mode,
         )
 
+    def create_manual_revision(self, source_revision_id, content, actor="local-user"):
+        source = self._revision_or_raise(source_revision_id)
+        provider = actor or "local-user"
+        source_dependencies = self.store.revision_dependencies(source.revision_id)
+        if source.artifact_type == "storyboard" and source.content_profile == STORYBOARD_CANONICAL_PROFILE:
+            canonical = parse_canonical_json(content)
+            if not source_dependencies:
+                raise ValueError("storyboard source dependency is missing")
+            parent = self._revision_or_raise(source_dependencies[0].parent_revision_id)
+            expected_source = {
+                "script_artifact_id": parent.artifact_id,
+                "script_revision_id": parent.revision_id,
+                "script_content_hash": parent.content_hash,
+            }
+            if canonical.get("source") != expected_source:
+                raise ValueError("storyboard source metadata does not match stored dependency")
+            content = serialize_canonical_json(canonical).decode("utf-8")
+            content_hash = canonical_storyboard_hash(canonical)
+        else:
+            content_hash = _sha256_text(content)
+        content_object_id = self.store.write_text_object(content)
+        request_object_id = self.store.write_text_object(
+            json.dumps(
+                {
+                    "manual_edit": {
+                        "source_revision_id": source.revision_id,
+                        "actor": provider,
+                    }
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+        )
+        response_object_id = self.store.write_text_object(content)
+        run = self.store.create_run(
+            artifact_id=source.artifact_id,
+            project_id=source.project_id,
+            chapter_id=source.chapter_id,
+            skill_id="manual-editor",
+            skill_version="1",
+            skill_hash="",
+            runtime="manual",
+            provider=provider,
+            model="manual-edit",
+            status="SUCCEEDED",
+            request_object_id=request_object_id,
+            response_object_id=response_object_id,
+            input_hash=content_hash,
+            request_hash=content_hash,
+            duration_ms=0,
+        )
+        revision = self.store.insert_revision(
+            artifact_id=source.artifact_id,
+            artifact_type=source.artifact_type,
+            project_id=source.project_id,
+            chapter_id=source.chapter_id,
+            run_id=run.run_id,
+            skill_id="manual-editor",
+            skill_version="1",
+            skill_package_hash="",
+            runtime_provider="manual",
+            runtime_model="manual-edit",
+            content_object_id=content_object_id,
+            content_hash=content_hash,
+            raw_response_object_id=response_object_id,
+            parser_version=source.parser_version,
+            content_profile=source.content_profile,
+            derivation_type="manual_edit",
+            supersedes_revision_id=source.revision_id,
+        )
+        for dep in source_dependencies:
+            self.store.insert_revision_dependency(
+                child_revision_id=revision.revision_id,
+                parent_revision_id=dep.parent_revision_id,
+                relation_type=dep.relation_type,
+                parent_content_hash=dep.parent_content_hash,
+                parent_approval_record_id=dep.parent_approval_record_id,
+            )
+        return revision
+
     def run_storyboard(self, skill, source_revision_id, runtime, model, mock_mode="success"):
         _validate_skill_input_mode(skill, "source_revision")
         started = time.time()
