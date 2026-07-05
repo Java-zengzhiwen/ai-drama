@@ -1,6 +1,6 @@
 # AI Drama Skill Runtime
 
-Local, single-user, CLI-first runtime for the migrated Script Adaptation skill and the approved Storyboard Workflow MVP.
+Local, single-user runtime for the migrated Script Adaptation skill, approved Storyboard Workflow MVP, and Milestone 1 Web script/storyboard workbench.
 
 Current execution profiles:
 
@@ -12,6 +12,7 @@ Current execution profiles:
 - Discover and validate local Skill Packages through `skill-id@version`.
 - Run the Shengsi Chapter 001 acceptance corpus with `mock` or one-shot `openai-compatible` runtime.
 - Run Storyboard Workflow from an approved source script revision.
+- Run the Milestone 1 Web/API workflow for projects, chapters, source text, scripts, and Canonical Storyboards.
 - Persist immutable input snapshots, normalized requests, raw responses, runs, revisions, validator results, approvals, exports, gate failures, and provenance.
 - Compare revisions, approve/reject revisions, and export the current approved artifact.
 
@@ -19,7 +20,7 @@ This runtime does not claim to run Shot Prompt, LibTV, Agnes, or full downstream
 
 ## Non-Goals
 
-No web UI, API service, agent runtime, workflow engine, registry service, Shot Prompt, LibTV, Agnes, Jianying, queue, vector DB, PostgreSQL, Redis, LangChain, LangGraph, or CrewAI.
+No multi-user product, generic workflow engine, registry service, agent runtime, queue, vector DB, PostgreSQL, Redis, LangChain, LangGraph, CrewAI, Shot Prompt, LibTV, Agnes, Jianying, or full downstream execution.
 
 ## CLI
 
@@ -52,6 +53,10 @@ Storyboard revisions require a current approved source script revision, inherite
 ## Verification
 
 ```bash
+python3 tools/verify_m1_web_workflow.py
 python3 migration/tools/verify_migration.py
 PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' python3 -m pytest -q
+npm --prefix web run test -- --run
+npm --prefix web run build
+npm --prefix web run test:e2e -- tests/m1-workflow.spec.ts
 ```
