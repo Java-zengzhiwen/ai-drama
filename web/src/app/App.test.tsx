@@ -1,9 +1,26 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi, type Mock } from "vitest";
+import { apiClient } from "../api/client";
 import { App } from "./App";
 
+vi.mock("../api/client", () => ({
+  apiClient: {
+    get: vi.fn(),
+    post: vi.fn(),
+  },
+}));
+
+const mockedGet = apiClient.get as unknown as Mock;
+const mockedPost = apiClient.post as unknown as Mock;
+
 describe("App routes", () => {
+  beforeEach(() => {
+    mockedGet.mockResolvedValue({ data: [] });
+    mockedPost.mockReset();
+  });
+
   afterEach(() => {
+    mockedGet.mockReset();
     window.history.replaceState({}, "", "/");
   });
 

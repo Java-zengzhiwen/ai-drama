@@ -2,25 +2,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Layout, Typography } from "antd";
 import { useState } from "react";
 import { BrowserRouter, Link, Navigate, Route, Routes, useParams } from "react-router-dom";
-
-function ProjectListPage() {
-  return (
-    <section>
-      <Typography.Title level={1}>项目列表</Typography.Title>
-    </section>
-  );
-}
-
-function ProjectDashboardPage() {
-  const { projectId } = useParams();
-
-  return (
-    <section>
-      <Typography.Title level={1}>项目看板</Typography.Title>
-      <Typography.Text type="secondary">Project {projectId}</Typography.Text>
-    </section>
-  );
-}
+import { ProjectDashboardPage } from "../features/projects/ProjectDashboardPage";
+import { ProjectListPage } from "../features/projects/ProjectListPage";
 
 function ChapterWorkspacePage() {
   const { chapterId, projectId } = useParams();
