@@ -8,6 +8,7 @@ from ai_drama_runtime.store import RuntimeStore
 from .config import Settings
 from .routers.projects import router as projects_router
 from .routers.scripts import router as scripts_router
+from .routers.storyboards import router as storyboards_router
 from .store import ProductStore
 
 
@@ -38,6 +39,7 @@ def create_app(
     app.state.repo_root = repo_root
     app.include_router(projects_router)
     app.include_router(scripts_router)
+    app.include_router(storyboards_router)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:
