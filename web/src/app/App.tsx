@@ -5,6 +5,7 @@ import { BrowserRouter, Link, Navigate, Route, Routes, useParams } from "react-r
 import { ChapterWorkspace } from "../features/chapter/ChapterWorkspace";
 import { ProjectDashboardPage } from "../features/projects/ProjectDashboardPage";
 import { ProjectListPage } from "../features/projects/ProjectListPage";
+import { AgnesSettingsPage } from "../features/settings/AgnesSettingsPage";
 
 function ChapterWorkspacePage() {
   const { chapterId = "", projectId = "" } = useParams();
@@ -42,6 +43,7 @@ function AppShell() {
             path="/projects/:projectId/chapters/:chapterId"
             element={<ChapterWorkspacePage />}
           />
+          <Route path="/settings/agnes" element={<AgnesSettingsPage />} />
           <Route path="*" element={<Navigate to="/projects" replace />} />
         </Routes>
       </Layout.Content>
