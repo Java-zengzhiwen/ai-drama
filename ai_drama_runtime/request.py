@@ -11,6 +11,7 @@ REQUEST_FORMAT_VERSION = "runtime-request-v1"
 SYSTEM_INSTRUCTION = "Follow the skill package and return only the requested Markdown DramaScript revision."
 STORYBOARD_SYSTEM_INSTRUCTION = "Follow the skill package and return only the requested Markdown Storyboard revision."
 STORYBOARD_CANONICAL_SYSTEM_INSTRUCTION = "Follow the skill package and return only Storyboard Canonical JSON."
+SHOT_PROMPT_CANONICAL_SYSTEM_INSTRUCTION = "Follow the skill package and return only Shot Prompt Canonical JSON."
 
 
 def _sha(text):
@@ -209,6 +210,97 @@ def build_storyboard_runtime_request(skill, store, source_revision, provider, mo
             "renderer_version": profile.get("renderer_version", ""),
             "supported_artifacts": profile.get("supported_artifacts", ["storyboard_markdown"]),
             "unsupported_bundle_artifacts": profile.get("unsupported_bundle_artifacts", []),
+        },
+        "runtime_config": {
+            "provider": provider,
+            "model": model or "",
+            "timeout_seconds": timeout_seconds,
+        },
+    }
+    return RuntimeRequest(payload)
+
+
+def _shot_prompt_inputs_from_source_revision(store, source_revision, requirement_set):
+    from ai_drama_web.store import ProductStore
+
+    product_store = ProductStore(store)
+    storyboard_text = store.read_text(source_revision.content_object_id)
+    storyboard_canonical = json.loads(storyboard_text)
+    profiles = []
+    for record in product_store.list_production_profiles(source_revision.project_id):
+        if record.chapter_id not in {"", source_revision.chapter_id}:
+            continue
+        profiles.append(
+            {
+                "profile_id": record.profile_id,
+                "project_id": record.project_id,
+                "chapter_id": record.chapter_id,
+                "profile_type": record.profile_type,
+                "name": record.name,
+                "payload": json.loads(store.read_text(record.payload_object_id)),
+            }
+        )
+    asset_requirements = {} if requirement_set is None else {
+        key: value
+        for key, value in requirement_set.items()
+        if key != "content_object_id"
+    }
+    ready_items = []
+    for row in asset_requirements.get("payload", {}).get("shot_rows", []):
+        for item in row.get("ready", []):
+            ready = dict(item)
+            ready.setdefault("shot_id", row.get("shot_id", ""))
+            ready_items.append(ready)
+    approval = store.latest_approval(source_revision.revision_id)
+    return {
+        "source_storyboard_revision_id": source_revision.revision_id,
+        "source_storyboard_artifact_id": source_revision.artifact_id,
+        "source_storyboard_content_hash": source_revision.content_hash,
+        "source_storyboard_approval_record_id": approval.record_id if approval else "",
+        "storyboard_canonical": storyboard_canonical,
+        "production_profiles": profiles,
+        "asset_requirements": asset_requirements,
+        "asset_bindings": ready_items,
+    }
+
+
+def build_shot_prompt_runtime_request(
+    skill,
+    store,
+    source_storyboard_revision,
+    asset_requirement_set,
+    provider,
+    model,
+    timeout_seconds=60,
+):
+    instruction_text = skill.instructions_entry.read_text(encoding="utf-8")
+    profile = (skill.metadata.get("execution_profiles") or [{}])[0]
+    context_files = _unique_file_items(skill.root, skill.context_files + skill.schemas + skill.contracts)
+    inputs = _shot_prompt_inputs_from_source_revision(store, source_storyboard_revision, asset_requirement_set)
+    profile_id = profile.get("profile_id", "shot-prompt-canonical-v1")
+    payload = {
+        "request_format_version": REQUEST_FORMAT_VERSION,
+        "skill": {
+            "skill_id": skill.skill_id,
+            "version": skill.version,
+            "package_hash": skill.content_hash,
+            "execution_profile": profile_id,
+        },
+        "system_instruction": SHOT_PROMPT_CANONICAL_SYSTEM_INSTRUCTION,
+        "skill_instruction": {
+            "relative_path": skill.instructions_entry.relative_to(skill.root).as_posix(),
+            "sha256": _sha(instruction_text),
+            "content": instruction_text,
+        },
+        "context_files": context_files,
+        "inputs": inputs,
+        "output_contract": {
+            "profile": profile_id,
+            "format": profile.get("output_format", "json"),
+            "parser_version": profile.get("parser_version", "shot-prompt-canonical-json-v1"),
+            "required_schema_version": profile.get("required_schema_version", "shot-prompt-canonical-v1"),
+            "supported_outputs": profile.get("supported_outputs", ["shot_prompt_set"]),
+            "unsupported_outputs": profile.get("unsupported_outputs", []),
         },
         "runtime_config": {
             "provider": provider,

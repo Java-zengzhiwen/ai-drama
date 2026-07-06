@@ -13,16 +13,19 @@ from .acceptance import load_acceptance_bundle
 from .parser import (
     PARSER_VERSION,
     STORYBOARD_CANONICAL_PARSER_VERSION,
+    SHOT_PROMPT_CANONICAL_PARSER_VERSION,
     STORYBOARD_PARSER_VERSION,
     ParseError,
     parse_script_response,
+    parse_shot_prompt_canonical_response,
     parse_storyboard_canonical_response,
     parse_storyboard_response,
 )
-from .request import build_runtime_request, build_runtime_request_from_inputs, build_storyboard_runtime_request
+from .request import build_runtime_request, build_runtime_request_from_inputs, build_shot_prompt_runtime_request, build_storyboard_runtime_request
 from .runtime import RuntimeErrorBase, run_runtime
 from .validators import recursive_freshness_status, run_declared_validators
 from .storyboard_canonical import CONTENT_PROFILE as STORYBOARD_CANONICAL_PROFILE, canonical_storyboard_hash, parse_canonical_json, serialize_canonical_json
+from .shot_prompt_canonical import CONTENT_PROFILE as SHOT_PROMPT_PROFILE, parse_shot_prompt_json, serialize_shot_prompt_json, shot_prompt_content_hash
 from .storyboard_migration import StoryboardMigrationError, legacy_markdown_to_canonical, write_migration_preview
 from .storyboard_renderer import RENDERER_ID, RENDERER_VERSION, render_storyboard_markdown
 
@@ -867,6 +870,276 @@ class RuntimeService:
                 parent_approval_record_id=dep.parent_approval_record_id,
             )
         return revision
+
+    def _shot_prompt_gate(self, skill, source_revision, source_revision_id, error_code, error_message):
+        target_artifact_id = source_revision.artifact_id if source_revision is not None else ""
+        _gate_failure(
+            self.store,
+            skill=skill,
+            target_artifact_id=target_artifact_id,
+            source_revision_id=source_revision_id,
+            error_code=error_code,
+            error_message=error_message,
+            request_reference=source_revision_id,
+        )
+        raise WorkflowGateError(error_code, error_message, target_artifact_id, source_revision_id, source_revision_id)
+
+    def _latest_ready_asset_requirements(self, source_revision):
+        from ai_drama_web.store import ProductStore
+
+        product_store = ProductStore(self.store)
+        latest = product_store.latest_asset_requirement_set(source_revision.chapter_id)
+        if latest is None:
+            return None
+        payload = latest.get("payload") or {}
+        if latest.get("storyboard_revision_id") != source_revision.revision_id:
+            return None
+        storyboard_hash = payload.get("storyboard_content_hash") or payload.get("source_storyboard_content_hash")
+        if storyboard_hash != source_revision.content_hash:
+            return None
+        if payload.get("status") != "ready":
+            return None
+        return latest
+
+    def _insert_shot_prompt_input_snapshots(self, run, source_revision, runtime_request):
+        inputs = runtime_request.to_dict()["inputs"]
+        snapshot_rows = [
+            (
+                "source_storyboard_revision",
+                source_revision.revision_id,
+                self.store.read_text(source_revision.content_object_id),
+            ),
+            (
+                "storyboard_canonical",
+                source_revision.revision_id,
+                json.dumps(inputs["storyboard_canonical"], ensure_ascii=False, sort_keys=True),
+            ),
+            (
+                "production_profiles",
+                source_revision.project_id,
+                json.dumps(inputs["production_profiles"], ensure_ascii=False, sort_keys=True),
+            ),
+            (
+                "asset_requirements",
+                inputs["asset_requirements"].get("requirement_set_id", ""),
+                json.dumps(inputs["asset_requirements"], ensure_ascii=False, sort_keys=True),
+            ),
+            (
+                "asset_bindings",
+                source_revision.chapter_id,
+                json.dumps(inputs["asset_bindings"], ensure_ascii=False, sort_keys=True),
+            ),
+        ]
+        for logical_type, source_relative_path, text in snapshot_rows:
+            self.store.insert_input_snapshot(
+                run.run_id,
+                logical_type=logical_type,
+                source_relative_path=source_relative_path,
+                source_path=Path(source_relative_path or logical_type),
+                text=text,
+            )
+
+    def run_shot_prompt(self, skill, source_storyboard_revision_id, runtime, model, mock_mode="success"):
+        started = time.time()
+        source_revision = self.store.get_revision(source_storyboard_revision_id)
+        if source_revision is None:
+            _gate_failure(
+                self.store,
+                skill=skill,
+                target_artifact_id="",
+                source_revision_id=source_storyboard_revision_id,
+                error_code="SOURCE_REVISION_NOT_FOUND",
+                error_message="source revision not found",
+                request_reference=source_storyboard_revision_id,
+            )
+            raise WorkflowGateError("SOURCE_REVISION_NOT_FOUND", "source revision not found", request_reference=source_storyboard_revision_id)
+        if source_revision.artifact_type != "storyboard":
+            self._shot_prompt_gate(
+                skill,
+                source_revision,
+                source_storyboard_revision_id,
+                "SOURCE_ARTIFACT_TYPE_INVALID",
+                "source revision is not a storyboard",
+            )
+        if source_revision.content_profile != STORYBOARD_CANONICAL_PROFILE:
+            self._shot_prompt_gate(
+                skill,
+                source_revision,
+                source_storyboard_revision_id,
+                "SOURCE_PROFILE_INVALID",
+                "source revision is not storyboard canonical",
+            )
+        source_run = self.store.get_run(source_revision.run_id)
+        if not source_run:
+            self._shot_prompt_gate(
+                skill,
+                source_revision,
+                source_storyboard_revision_id,
+                "SOURCE_REVISION_NOT_APPROVED",
+                "source revision is not approved",
+            )
+        current = self.store.current_approved(source_revision.artifact_id)
+        if source_revision.approval_status != "approved":
+            if self.store.latest_approval(source_revision.revision_id) and current and current.revision_id != source_revision.revision_id:
+                self._shot_prompt_gate(
+                    skill,
+                    source_revision,
+                    source_storyboard_revision_id,
+                    "SOURCE_REVISION_NOT_CURRENT_APPROVED",
+                    "source revision is not current approved",
+                )
+            self._shot_prompt_gate(
+                skill,
+                source_revision,
+                source_storyboard_revision_id,
+                "SOURCE_REVISION_NOT_APPROVED",
+                "source revision is not approved",
+            )
+        if not current or current.revision_id != source_revision.revision_id:
+            self._shot_prompt_gate(
+                skill,
+                source_revision,
+                source_storyboard_revision_id,
+                "SOURCE_REVISION_NOT_CURRENT_APPROVED",
+                "source revision is not current approved",
+            )
+        if self.revision_freshness(source_revision.revision_id) != "FRESH":
+            self._shot_prompt_gate(
+                skill,
+                source_revision,
+                source_storyboard_revision_id,
+                "SOURCE_REVISION_STALE",
+                "source revision is stale",
+            )
+        asset_requirement_set = self._latest_ready_asset_requirements(source_revision)
+        if asset_requirement_set is None:
+            self._shot_prompt_gate(
+                skill,
+                source_revision,
+                source_storyboard_revision_id,
+                "ASSET_REQUIREMENTS_NOT_READY",
+                "asset requirements are not ready",
+            )
+
+        artifact = self.store.ensure_shot_prompt_artifact(
+            project_id=source_revision.project_id,
+            chapter_id=source_revision.chapter_id,
+            source_storyboard_revision_id=source_revision.revision_id,
+        )
+        resolved_model = model or (os.environ.get("AI_DRAMA_MODEL") if runtime == "openai-compatible" else model)
+        runtime_request = build_shot_prompt_runtime_request(
+            skill,
+            self.store,
+            source_revision,
+            asset_requirement_set,
+            runtime,
+            resolved_model or "",
+        )
+        request_json = runtime_request.to_json()
+        request_object_id = self.store.write_text_object(request_json)
+        run = self.store.create_run(
+            artifact_id=artifact["artifact_id"],
+            project_id=source_revision.project_id,
+            chapter_id=source_revision.chapter_id,
+            skill_id=skill.skill_id,
+            skill_version=skill.version,
+            skill_hash=skill.content_hash,
+            runtime=runtime,
+            provider=runtime,
+            model=resolved_model or "",
+            status="RUNNING",
+            request_object_id=request_object_id,
+            input_hash=runtime_request.sha256,
+            request_hash=runtime_request.sha256,
+        )
+        self._insert_shot_prompt_input_snapshots(run, source_revision, runtime_request)
+        try:
+            response = run_runtime(runtime_request, mock_mode=mock_mode)
+        except RuntimeErrorBase as exc:
+            run = self.store.update_run(
+                run.run_id,
+                status="RUNTIME_FAILED",
+                provider=runtime,
+                model=resolved_model or "",
+                duration_ms=int((time.time() - started) * 1000),
+                error_code=exc.code,
+                error_message=exc.safe_message,
+            )
+            return RunResult(run=run, revision=None, validation_results=[], adapter_request_json=request_json)
+        response_object_id = self.store.write_text_object(response.raw)
+        try:
+            shot_prompt_text = parse_shot_prompt_canonical_response(response.raw)
+        except ParseError as exc:
+            run = self.store.update_run(
+                run.run_id,
+                status="PARSE_FAILED",
+                response_object_id=response_object_id,
+                provider=response.provider,
+                model=response.model,
+                duration_ms=response.duration_ms,
+                usage_status=response.usage.get("usage_status", "NOT_PROVIDED"),
+                prompt_tokens=int(response.usage.get("prompt_tokens") or 0),
+                completion_tokens=int(response.usage.get("completion_tokens") or 0),
+                total_tokens=int(response.usage.get("total_tokens") or 0),
+                usage_raw_object_id=self.store.write_text_object(json.dumps(response.usage.get("raw") or {}, ensure_ascii=False, sort_keys=True)),
+                error_code=exc.code,
+                error_message=str(exc),
+            )
+            return RunResult(run=run, revision=None, validation_results=[], adapter_request_json=request_json)
+        canonical = parse_shot_prompt_json(shot_prompt_text)
+        canonical_text = serialize_shot_prompt_json(canonical).decode("utf-8")
+        content_object_id = self.store.write_text_object(canonical_text)
+        content_hash = shot_prompt_content_hash(canonical)
+        run = self.store.update_run(
+            run.run_id,
+            status="SUCCEEDED",
+            response_object_id=response_object_id,
+            provider=response.provider,
+            model=response.model,
+            duration_ms=response.duration_ms,
+            usage_status=response.usage.get("usage_status", "NOT_PROVIDED"),
+            prompt_tokens=int(response.usage.get("prompt_tokens") or 0),
+            completion_tokens=int(response.usage.get("completion_tokens") or 0),
+            total_tokens=int(response.usage.get("total_tokens") or 0),
+            usage_raw_object_id=self.store.write_text_object(json.dumps(response.usage.get("raw") or {}, ensure_ascii=False, sort_keys=True)),
+        )
+        revision = self.store.insert_revision(
+            artifact_id=artifact["artifact_id"],
+            artifact_type="shot_prompt_set",
+            project_id=source_revision.project_id,
+            chapter_id=source_revision.chapter_id,
+            run_id=run.run_id,
+            skill_id=skill.skill_id,
+            skill_version=skill.version,
+            skill_package_hash=skill.content_hash,
+            runtime_provider=response.provider,
+            runtime_model=response.model,
+            content_object_id=content_object_id,
+            content_hash=content_hash,
+            raw_response_object_id=response_object_id,
+            parser_version=SHOT_PROMPT_CANONICAL_PARSER_VERSION,
+            content_profile=SHOT_PROMPT_PROFILE,
+            derivation_type="model_generation",
+        )
+        approval = self.store.latest_approval(source_revision.revision_id)
+        self.store.insert_revision_dependency(
+            child_revision_id=revision.revision_id,
+            parent_revision_id=source_revision.revision_id,
+            relation_type="derived_from",
+            parent_content_hash=source_revision.content_hash,
+            parent_approval_record_id=approval.record_id if approval else "",
+        )
+        validations = run_declared_validators(self.store, skill, revision, self.repo_root, repo_root=self.repo_root)
+        blocking = [item for item in validations if item.required and item.status != "PASS"]
+        if blocking:
+            validator_ids = ", ".join(item.validator_id for item in blocking)
+            run = self.store.update_run(
+                run.run_id,
+                status="VALIDATION_FAILED",
+                error_code="VALIDATION_REQUIRED_FAILED",
+                error_message="required validators did not pass: %s" % validator_ids,
+            )
+        return RunResult(run=run, revision=revision, validation_results=validations, adapter_request_json=request_json)
 
     def run_storyboard(self, skill, source_revision_id, runtime, model, mock_mode="success"):
         _validate_skill_input_mode(skill, "source_revision")

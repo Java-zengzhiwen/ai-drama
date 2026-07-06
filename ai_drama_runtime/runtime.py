@@ -335,6 +335,67 @@ def _mock_storyboard_canonical(runtime_request):
     }
 
 
+def _mock_shot_prompt_canonical(runtime_request):
+    payload = runtime_request.to_dict()
+    inputs = payload.get("inputs", {})
+    storyboard = inputs.get("storyboard_canonical", {})
+    shots = []
+    def _first_mapping(items):
+        return items[0] if items and isinstance(items[0], dict) else {}
+    def _asset_refs_for_shot(shot_id):
+        refs = []
+        seen = set()
+        for item in inputs.get("asset_bindings", []):
+            if item.get("shot_id") not in {shot_id, ""}:
+                continue
+            asset_id = item.get("asset_id")
+            if asset_id and asset_id not in seen:
+                seen.add(asset_id)
+                refs.append(asset_id)
+        return refs
+    for shot in storyboard.get("shots", []):
+        asset_refs = _asset_refs_for_shot(shot["shot_id"])
+        if not asset_refs:
+            asset_refs = ["mock-asset-ref"]
+        shots.append(
+            {
+                "shot_id": shot["shot_id"],
+                "shot_order": shot["shot_order"],
+                "duration_seconds": shot["duration_seconds"],
+                "scene_id": shot["scene_id"],
+                "character_ids": [
+                    item["character_id"]
+                    for item in shot.get("character_positions", [])
+                ],
+                "prop_ids": ["PROP_JADE"],
+                "asset_refs": asset_refs,
+                "camera": {
+                    "shot_size": shot.get("shot_size", "medium"),
+                    "camera_angle": shot.get("camera_angle", "eye_level"),
+                    "camera_movement": shot.get("camera_movement") or "still",
+                },
+                "action": _first_mapping(shot.get("character_actions", [])).get("action", "perform the storyboard action"),
+                "emotion": _first_mapping(shot.get("emotion_performance", [])).get("emotion", "focused"),
+                "dialogue": shot.get("dialogue", []),
+                "positive_prompt": "Live action %s preserving storyboard action and approved visual references." % shot["shot_id"],
+                "negative_prompt": "cartoon, face drift, costume change, scene layout drift",
+                "continuity_notes": list(shot.get("continuity_in", {}).get("must_preserve", []))
+                + list(shot.get("continuity_out", {}).get("must_preserve", [])),
+                "agnes_video_params": {
+                    "duration_seconds": shot["duration_seconds"],
+                    "aspect_ratio": "16:9",
+                },
+            }
+        )
+    return {
+        "schema_version": "shot-prompt-canonical-v1",
+        "project_id": storyboard.get("project_id", inputs.get("source_storyboard_artifact_id", "mock-project")),
+        "chapter_id": storyboard.get("chapter_id", "mock-chapter"),
+        "source_storyboard_revision_id": inputs.get("source_storyboard_revision_id", ""),
+        "shots": shots,
+    }
+
+
 def run_runtime(runtime_request, mock_mode="success"):
     started = time.time()
     request_json = runtime_request.to_json()
@@ -354,6 +415,8 @@ def run_runtime(runtime_request, mock_mode="success"):
             raw = json.dumps({"script_markdown": _mock_script_three_scene(model)}, ensure_ascii=False)
         elif profile == "storyboard-canonical-v1":
             raw = json.dumps({"storyboard_canonical": _mock_storyboard_canonical(runtime_request)}, ensure_ascii=False, sort_keys=True)
+        elif profile == "shot-prompt-canonical-v1":
+            raw = json.dumps(_mock_shot_prompt_canonical(runtime_request), ensure_ascii=False, sort_keys=True)
         elif profile == "storyboard-markdown-mvp-v1":
             raw = json.dumps({"storyboard_markdown": _mock_storyboard(model)}, ensure_ascii=False)
         else:

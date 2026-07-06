@@ -264,8 +264,10 @@ def test_analyze_canonical_storyboard_reports_missing_assets_and_ready_character
     result = response.json()
     assert result["chapter_id"] == chapter_id
     assert result["storyboard_revision_id"] == setup["revision"].revision_id
+    assert result["storyboard_content_hash"] == setup["revision"].content_hash
     with _open_runtime_store(client) as runtime_store:
         requirement_payload = runtime_store.read_bytes_object(result["content_object_id"])
+    assert json.loads(requirement_payload.decode("utf-8"))["storyboard_content_hash"] == setup["revision"].content_hash
     assert hashlib.sha256(requirement_payload).hexdigest() == result["content_hash"]
     assert result["content_hash"] != setup["revision"].content_hash
     assert result["status"] == "missing_assets"

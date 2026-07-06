@@ -35,7 +35,7 @@ class AssetRequirementService:
         chapter = self._chapter_or_raise(chapter_id)
         revision = self._approved_storyboard_or_raise(chapter_id)
         canonical = self._canonical_storyboard_or_raise(chapter.project_id, chapter.chapter_id, revision)
-        payload = self._analyze_payload(chapter.project_id, chapter.chapter_id, canonical)
+        payload = self._analyze_payload(chapter.project_id, chapter.chapter_id, revision, canonical)
         record = self.product_store.create_asset_requirement_set(
             chapter_id=chapter.chapter_id,
             storyboard_revision_id=revision.revision_id,
@@ -50,7 +50,7 @@ class AssetRequirementService:
             raise AssetRequirementsNotAnalyzed
         return self._read_requirement_set(record)
 
-    def _analyze_payload(self, project_id: str, chapter_id: str, canonical: dict):
+    def _analyze_payload(self, project_id: str, chapter_id: str, revision, canonical: dict):
         profiles = self._profiles(project_id, chapter_id)
         scenes_by_id = {scene["scene_id"]: scene for scene in canonical["scenes"]}
         shot_rows = []
@@ -61,6 +61,7 @@ class AssetRequirementService:
             shot_rows.append(self._shot_row(shot["shot_id"], evaluated))
         return {
             "status": _overall_status([row["status"] for row in shot_rows]),
+            "storyboard_content_hash": revision.content_hash,
             "shot_rows": shot_rows,
             "missing_assets": _flatten(shot_rows, MISSING_ASSETS),
             "asset_generation_in_progress": _flatten(shot_rows, ASSET_GENERATION_IN_PROGRESS),
@@ -154,6 +155,7 @@ class AssetRequirementService:
             "requirement_set_id": record["requirement_set_id"],
             "chapter_id": record["chapter_id"],
             "storyboard_revision_id": record["storyboard_revision_id"],
+            "storyboard_content_hash": payload["storyboard_content_hash"],
             "content_object_id": record["content_object_id"],
             "content_hash": record["content_hash"],
             "created_at": record["created_at"],
