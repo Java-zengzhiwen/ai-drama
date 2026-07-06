@@ -34,6 +34,30 @@ class AssetUploadFields(BaseModel):
         return _not_blank(value)
 
 
+class AssetGenerateImageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset_type: AssetType
+    name: str
+    prompt: str
+    size: str
+    input_asset_ids: list[str] = Field(default_factory=list)
+    input_images: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("name", "prompt", "size")
+    @classmethod
+    def validate_required_text(cls, value: str) -> str:
+        return _not_blank(value)
+
+    @field_validator("input_asset_ids", "input_images")
+    @classmethod
+    def validate_list_items(cls, value: list[str]) -> list[str]:
+        for item in value:
+            _not_blank(item)
+        return value
+
+
 class AssetBindingCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

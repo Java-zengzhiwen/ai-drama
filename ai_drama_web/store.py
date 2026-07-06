@@ -344,6 +344,47 @@ class ProductStore:
         self.conn.commit()
         return self.get_asset(asset_id)
 
+    def create_generated_asset(
+        self,
+        *,
+        project_id,
+        chapter_id,
+        asset_type,
+        name,
+        data,
+        media_type,
+        source_job_id,
+        metadata,
+    ):
+        created_at = now_iso()
+        asset_id = uuid.uuid4().hex
+        object_id = self.runtime.write_bytes_object(data)
+        metadata_object_id = self.runtime.write_text_object(_normalized_json(metadata))
+        self.conn.execute(
+            """
+            INSERT INTO assets
+            (asset_id, project_id, chapter_id, asset_type, name, object_id,
+             media_type, width, height, status, source_type, source_job_id,
+             metadata_object_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 'draft', 'agnes', ?, ?, ?, ?)
+            """,
+            (
+                asset_id,
+                project_id,
+                chapter_id,
+                asset_type,
+                name,
+                object_id,
+                media_type,
+                source_job_id,
+                metadata_object_id,
+                created_at,
+                created_at,
+            ),
+        )
+        self.conn.commit()
+        return self.get_asset(asset_id)
+
     def get_asset(self, asset_id):
         row = self.conn.execute(
             "SELECT * FROM assets WHERE asset_id = ?",

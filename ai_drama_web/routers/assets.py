@@ -2,17 +2,25 @@ import json
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import ValidationError
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_web.dependencies import get_product_store, get_runtime_store
 from ai_drama_web.schemas.assets import (
     AssetBindingCreate,
     AssetBindingRead,
+    AssetGenerateImageRequest,
     AssetRead,
     AssetRejectRequest,
     AssetType,
     AssetUploadFields,
+)
+from ai_drama_web.providers.errors import ProviderError
+from ai_drama_web.providers.fake import FakeGenerationBackend
+from ai_drama_web.services.asset_generation import (
+    AssetGenerationResultFetchFailed,
+    AssetGenerationResultMissing,
+    AssetGenerationService,
 )
 from ai_drama_web.services.assets import (
     AssetAdoptionNotAllowed,
@@ -37,6 +45,18 @@ def get_service(
         runtime_store,
         max_upload_bytes=_max_asset_upload_bytes(request),
     )
+
+
+def get_generation_service(
+    request: Request,
+    product_store: ProductStore = Depends(get_product_store),
+    runtime_store: RuntimeStore = Depends(get_runtime_store),
+) -> AssetGenerationService:
+    backend = getattr(request.app.state, "generation_backend", None)
+    if backend is None:
+        backend = FakeGenerationBackend()
+        request.app.state.generation_backend = backend
+    return AssetGenerationService(product_store, runtime_store, backend)
 
 
 @router.post("/chapters/{chapter_id}/assets", response_model=AssetRead)
@@ -75,6 +95,25 @@ async def upload_asset(
         raise HTTPException(status_code=413, detail="asset upload exceeds configured size limit")
     except AssetUnsupportedMediaType:
         raise HTTPException(status_code=415, detail="unsupported asset media type")
+
+
+@router.post("/chapters/{chapter_id}/assets/generate-image", response_model=AssetRead)
+async def generate_image_asset(
+    chapter_id: str,
+    payload: AssetGenerateImageRequest,
+    service: AssetGenerationService = Depends(get_generation_service),
+):
+    try:
+        return service.generate_image_asset(chapter_id, payload)
+    except MissingRecord:
+        raise HTTPException(status_code=404, detail="chapter or input asset not found")
+    except ProviderError as exc:
+        return JSONResponse(
+            status_code=502,
+            content={"error_code": exc.code, "error_message": "image provider failed"},
+        )
+    except (AssetGenerationResultMissing, AssetGenerationResultFetchFailed, KeyError):
+        raise HTTPException(status_code=502, detail="image generation provider error: unknown_provider_error")
 
 
 @router.get("/chapters/{chapter_id}/assets", response_model=list[AssetRead])
