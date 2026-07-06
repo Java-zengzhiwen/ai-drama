@@ -2,6 +2,36 @@ from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
+class AssetRecord:
+    asset_id: str
+    project_id: str
+    chapter_id: str
+    asset_type: str
+    name: str
+    object_id: str
+    media_type: str
+    width: int
+    height: int
+    status: str
+    source_type: str
+    source_job_id: str
+    metadata_object_id: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class AssetBindingRecord:
+    binding_id: str
+    asset_id: str
+    target_type: str
+    target_id: str
+    role: str
+    is_current: int
+    created_at: str
+
+
+@dataclass(frozen=True)
 class ProjectRecord:
     project_id: str
     name: str

@@ -4,7 +4,14 @@ import uuid
 from ai_drama_runtime.services import NotFound
 from ai_drama_runtime.store import RuntimeStore, now_iso
 
-from .models import ChapterRecord, ChapterSourceRevisionRecord, ProductionProfileRecord, ProjectRecord
+from .models import (
+    AssetBindingRecord,
+    AssetRecord,
+    ChapterRecord,
+    ChapterSourceRevisionRecord,
+    ProductionProfileRecord,
+    ProjectRecord,
+)
 
 
 class ProductStore:
@@ -57,9 +64,72 @@ class ProductStore:
             );
             CREATE INDEX IF NOT EXISTS production_profiles_scope_idx
               ON production_profiles(project_id, chapter_id, profile_type, name);
+            CREATE TABLE IF NOT EXISTS assets (
+              asset_id TEXT PRIMARY KEY,
+              project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
+              chapter_id TEXT NOT NULL DEFAULT '',
+              asset_type TEXT NOT NULL CHECK (asset_type IN ('character_reference','character_outfit','scene_reference','scene_angle','prop_reference','shot_keyframe')),
+              name TEXT NOT NULL,
+              object_id TEXT NOT NULL,
+              media_type TEXT NOT NULL,
+              width INTEGER NOT NULL DEFAULT 0,
+              height INTEGER NOT NULL DEFAULT 0,
+              status TEXT NOT NULL CHECK (status IN ('draft','generating','usable','rejected','failed')),
+              source_type TEXT NOT NULL CHECK (source_type IN ('upload','agnes','derived')),
+              source_job_id TEXT NOT NULL DEFAULT '',
+              metadata_object_id TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS asset_bindings (
+              binding_id TEXT PRIMARY KEY,
+              asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE RESTRICT,
+              target_type TEXT NOT NULL CHECK (target_type IN ('character','scene','prop','shot')),
+              target_id TEXT NOT NULL,
+              role TEXT NOT NULL,
+              is_current INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              UNIQUE(asset_id, target_type, target_id, role)
+            );
+            """
+        )
+        self._ensure_column("asset_bindings", "is_current", "INTEGER NOT NULL DEFAULT 0")
+        self._normalize_current_asset_bindings()
+        self.conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS asset_bindings_current_role_idx
+              ON asset_bindings(target_type, target_id, role)
+              WHERE is_current = 1
             """
         )
         self.conn.commit()
+
+    def _ensure_column(self, table_name, column_name, definition):
+        rows = self.conn.execute("PRAGMA table_info(%s)" % table_name).fetchall()
+        if any(row["name"] == column_name for row in rows):
+            return
+        self.conn.execute("ALTER TABLE %s ADD COLUMN %s %s" % (table_name, column_name, definition))
+
+    def _normalize_current_asset_bindings(self):
+        self.conn.execute(
+            """
+            WITH ranked AS (
+              SELECT
+                binding_id,
+                ROW_NUMBER() OVER (
+                  PARTITION BY target_type, target_id, role
+                  ORDER BY created_at DESC, binding_id DESC
+                ) AS current_rank
+              FROM asset_bindings
+              WHERE is_current = 1
+            )
+            UPDATE asset_bindings
+            SET is_current = 0
+            WHERE binding_id IN (
+              SELECT binding_id FROM ranked WHERE current_rank > 1
+            )
+            """
+        )
 
     def create_project(
         self,
@@ -245,6 +315,142 @@ class ProductStore:
         self.conn.commit()
         return cursor.rowcount > 0
 
+    def create_uploaded_asset(self, *, project_id, chapter_id, asset_type, name, data, media_type, metadata):
+        created_at = now_iso()
+        asset_id = uuid.uuid4().hex
+        object_id = self.runtime.write_bytes_object(data)
+        metadata_object_id = self.runtime.write_text_object(_normalized_json(metadata))
+        self.conn.execute(
+            """
+            INSERT INTO assets
+            (asset_id, project_id, chapter_id, asset_type, name, object_id,
+             media_type, width, height, status, source_type, source_job_id,
+             metadata_object_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 'draft', 'upload', '', ?, ?, ?)
+            """,
+            (
+                asset_id,
+                project_id,
+                chapter_id,
+                asset_type,
+                name,
+                object_id,
+                media_type,
+                metadata_object_id,
+                created_at,
+                created_at,
+            ),
+        )
+        self.conn.commit()
+        return self.get_asset(asset_id)
+
+    def get_asset(self, asset_id):
+        row = self.conn.execute(
+            "SELECT * FROM assets WHERE asset_id = ?",
+            (asset_id,),
+        ).fetchone()
+        return None if row is None else AssetRecord(**dict(row))
+
+    def list_assets_for_chapter(self, chapter_id):
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM assets
+            WHERE chapter_id = ?
+            ORDER BY created_at ASC, asset_id ASC
+            """,
+            (chapter_id,),
+        ).fetchall()
+        return [AssetRecord(**dict(row)) for row in rows]
+
+    def update_asset_status(self, asset_id, status, *, metadata=None):
+        updated_at = now_iso()
+        metadata_object_id = None if metadata is None else self.runtime.write_text_object(_normalized_json(metadata))
+        if metadata_object_id is not None:
+            cursor = self.conn.execute(
+                """
+                UPDATE assets
+                SET status = ?, metadata_object_id = ?, updated_at = ?
+                WHERE asset_id = ?
+                """,
+                (status, metadata_object_id, updated_at, asset_id),
+            )
+        else:
+            cursor = self.conn.execute(
+                """
+                UPDATE assets
+                SET status = ?, updated_at = ?
+                WHERE asset_id = ?
+                """,
+                (status, updated_at, asset_id),
+            )
+        self.conn.commit()
+        if cursor.rowcount == 0:
+            return None
+        return self.get_asset(asset_id)
+
+    def create_asset_binding(self, *, asset_id, target_type, target_id, role, is_current=False):
+        created_at = now_iso()
+        binding_id = uuid.uuid4().hex
+        current_value = 1 if is_current else 0
+        with self.conn:
+            if current_value:
+                self.conn.execute(
+                    """
+                    UPDATE asset_bindings
+                    SET is_current = 0
+                    WHERE target_type = ? AND target_id = ? AND role = ? AND is_current = 1
+                    """,
+                    (target_type, target_id, role),
+                )
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO asset_bindings
+                (binding_id, asset_id, target_type, target_id, role, is_current, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (binding_id, asset_id, target_type, target_id, role, current_value, created_at),
+            )
+            self.conn.execute(
+                """
+                UPDATE asset_bindings
+                SET is_current = ?
+                WHERE asset_id = ? AND target_type = ? AND target_id = ? AND role = ?
+                """,
+                (current_value, asset_id, target_type, target_id, role),
+            )
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM asset_bindings
+            WHERE asset_id = ? AND target_type = ? AND target_id = ? AND role = ?
+            """,
+            (asset_id, target_type, target_id, role),
+        ).fetchone()
+        return AssetBindingRecord(**dict(row))
+
+    def asset_has_current_binding(self, asset_id):
+        row = self.conn.execute(
+            """
+            SELECT 1
+            FROM asset_bindings
+            WHERE asset_id = ? AND is_current = 1
+            LIMIT 1
+            """,
+            (asset_id,),
+        ).fetchone()
+        return row is not None
+
+    def clear_current_asset_bindings(self, asset_id):
+        self.conn.execute(
+            """
+            UPDATE asset_bindings
+            SET is_current = 0
+            WHERE asset_id = ? AND is_current = 1
+            """,
+            (asset_id,),
+        )
+        self.conn.commit()
 
 def _normalized_json(payload):
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
