@@ -49,6 +49,14 @@ async def get_project(project_id: str, service: ProjectService = Depends(get_ser
         raise HTTPException(status_code=404, detail="project not found")
 
 
+@router.get("/projects/{project_id}/chapters", response_model=list[ChapterRead])
+async def list_chapters(project_id: str, service: ProjectService = Depends(get_service)):
+    try:
+        return service.list_chapters(project_id)
+    except MissingRecord:
+        raise HTTPException(status_code=404, detail="project not found")
+
+
 @router.post("/projects/{project_id}/chapters", response_model=ChapterRead)
 async def create_chapter(project_id: str, payload: ChapterCreate, service: ProjectService = Depends(get_service)):
     try:

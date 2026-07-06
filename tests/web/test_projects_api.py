@@ -1,3 +1,8 @@
+from fastapi.testclient import TestClient
+
+from ai_drama_web.app import create_app
+
+
 def test_create_project_chapter_and_source(client):
     project_response = client.post(
         "/api/projects",
@@ -38,6 +43,68 @@ def test_create_project_chapter_and_source(client):
     fetched_chapter = client.get(f"/api/chapters/{chapter['chapter_id']}")
     assert fetched_chapter.status_code == 200
     assert fetched_chapter.json()["source_text"] == "第一章正文"
+
+
+def test_list_project_chapters_returns_persisted_chapters_in_position_order(client):
+    project = client.post("/api/projects", json={"name": "生死"}).json()
+    other_project = client.post("/api/projects", json={"name": "旁支"}).json()
+    second = client.post(
+        f"/api/projects/{project['project_id']}/chapters",
+        json={"title": "第二章", "position": 2},
+    ).json()
+    first = client.post(
+        f"/api/projects/{project['project_id']}/chapters",
+        json={"title": "第一章", "position": 1},
+    ).json()
+    client.post(
+        f"/api/projects/{other_project['project_id']}/chapters",
+        json={"title": "外部章节", "position": 1},
+    )
+
+    response = client.get(f"/api/projects/{project['project_id']}/chapters")
+
+    assert response.status_code == 200
+    chapters = response.json()
+    assert [chapter["chapter_id"] for chapter in chapters] == [first["chapter_id"], second["chapter_id"]]
+    assert all(chapter["project_id"] == project["project_id"] for chapter in chapters)
+
+
+def test_list_project_chapters_returns_404_for_missing_project(client):
+    response = client.get("/api/projects/missing/chapters")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "project not found"
+
+
+def test_created_chapter_is_immediately_visible_in_project_chapter_list(client):
+    project = client.post("/api/projects", json={"name": "生死"}).json()
+    chapter = client.post(
+        f"/api/projects/{project['project_id']}/chapters",
+        json={"title": "第一章", "position": 1},
+    ).json()
+
+    response = client.get(f"/api/projects/{project['project_id']}/chapters")
+
+    assert response.status_code == 200
+    assert [item["chapter_id"] for item in response.json()] == [chapter["chapter_id"]]
+
+
+def test_project_chapters_are_discovered_after_app_recreate(tmp_path):
+    data_root = tmp_path / "runtime-data"
+    app = create_app(data_root=data_root, skills_root="skills")
+    with TestClient(app) as client:
+        project = client.post("/api/projects", json={"name": "生死"}).json()
+        chapter = client.post(
+            f"/api/projects/{project['project_id']}/chapters",
+            json={"title": "第一章", "position": 1},
+        ).json()
+
+    recreated_app = create_app(data_root=data_root, skills_root="skills")
+    with TestClient(recreated_app) as client:
+        response = client.get(f"/api/projects/{project['project_id']}/chapters")
+
+    assert response.status_code == 200
+    assert [item["chapter_id"] for item in response.json()] == [chapter["chapter_id"]]
 
 
 def test_project_chapter_source_validation_rejects_blank_values(client):

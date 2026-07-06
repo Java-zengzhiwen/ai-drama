@@ -27,7 +27,23 @@ def _expect_status(response, status_code: int):
     return response.json()
 
 
-def _run_workflow(client: TestClient) -> None:
+def _verify_chapter_discovery_contracts() -> None:
+    store_text = (REPO_ROOT / "ai_drama_web" / "store.py").read_text(encoding="utf-8")
+    router_text = (REPO_ROOT / "ai_drama_web" / "routers" / "projects.py").read_text(encoding="utf-8")
+    dashboard_text = (
+        REPO_ROOT / "web" / "src" / "features" / "projects" / "ProjectDashboardPage.tsx"
+    ).read_text(encoding="utf-8")
+    e2e_text = (REPO_ROOT / "web" / "tests" / "m1-workflow.spec.ts").read_text(encoding="utf-8")
+
+    assert "def list_chapters(" in store_text
+    assert '@router.get("/projects/{project_id}/chapters"' in router_text
+    assert "queryFn: async () => []" not in dashboard_text
+    assert "listChapters(projectId)" in dashboard_text
+    assert 'page.reload()' in e2e_text
+    assert 'getByRole("link", { name: "第一章" })' in e2e_text
+
+
+def _run_workflow(client: TestClient) -> tuple[str, str]:
     project = _expect_status(
         client.post(
             "/api/projects",
@@ -48,6 +64,8 @@ def _run_workflow(client: TestClient) -> None:
         ),
         200,
     )
+    discovered_chapters = _expect_status(client.get(f"/api/projects/{project['project_id']}/chapters"), 200)
+    assert [item["chapter_id"] for item in discovered_chapters] == [chapter["chapter_id"]]
 
     _expect_status(
         client.post(
@@ -74,13 +92,20 @@ def _run_workflow(client: TestClient) -> None:
 
     final_status = _expect_status(client.get(f"/api/chapters/{chapter['chapter_id']}/status"), 200)
     assert final_status["status"] == "storyboard_approved"
+    return project["project_id"], chapter["chapter_id"]
 
 
 def main() -> int:
+    _verify_chapter_discovery_contracts()
     with tempfile.TemporaryDirectory(prefix="ai-drama-m1-web-") as tmp:
-        app = create_app(data_root=Path(tmp) / "runtime-data", skills_root="skills")
+        data_root = Path(tmp) / "runtime-data"
+        app = create_app(data_root=data_root, skills_root="skills")
         with TestClient(app) as client:
-            _run_workflow(client)
+            project_id, chapter_id = _run_workflow(client)
+        recreated_app = create_app(data_root=data_root, skills_root="skills")
+        with TestClient(recreated_app) as client:
+            discovered_chapters = _expect_status(client.get(f"/api/projects/{project_id}/chapters"), 200)
+            assert [item["chapter_id"] for item in discovered_chapters] == [chapter_id]
     print("M1_WEB_WORKFLOW_PASS")
     return 0
 

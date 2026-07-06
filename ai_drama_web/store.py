@@ -1,5 +1,6 @@
 import uuid
 
+from ai_drama_runtime.services import NotFound
 from ai_drama_runtime.store import RuntimeStore, now_iso
 
 from .models import ChapterRecord, ChapterSourceRevisionRecord, ProjectRecord
@@ -132,6 +133,20 @@ class ProductStore:
     def get_chapter(self, chapter_id):
         row = self.conn.execute("SELECT * FROM chapters WHERE chapter_id = ?", (chapter_id,)).fetchone()
         return None if row is None else ChapterRecord(**dict(row))
+
+    def list_chapters(self, project_id):
+        if self.get_project(project_id) is None:
+            raise NotFound("project not found: %s" % project_id)
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM chapters
+            WHERE project_id = ?
+            ORDER BY position ASC, created_at ASC, chapter_id ASC
+            """,
+            (project_id,),
+        ).fetchall()
+        return [ChapterRecord(**dict(row)) for row in rows]
 
     def get_source_revision(self, source_revision_id):
         row = self.conn.execute(

@@ -1,5 +1,6 @@
 import sqlite3
 
+from ai_drama_runtime.services import NotFound
 from ai_drama_runtime.store import RuntimeStore
 
 from ai_drama_web.models import ChapterRecord, ProjectRecord
@@ -39,6 +40,12 @@ class ProjectService:
             return self.product_store.create_chapter(project_id, data.title, data.position)
         except sqlite3.IntegrityError as exc:
             raise DuplicateChapterPosition from exc
+
+    def list_chapters(self, project_id):
+        try:
+            return self.product_store.list_chapters(project_id)
+        except NotFound as exc:
+            raise MissingRecord from exc
 
     def get_chapter(self, chapter_id) -> tuple[ChapterRecord, str]:
         chapter = self.product_store.get_chapter(chapter_id)

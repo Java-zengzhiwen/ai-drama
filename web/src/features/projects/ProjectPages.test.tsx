@@ -79,7 +79,7 @@ describe("project pages", () => {
     expect(screen.queryByText("待添加章节")).not.toBeInTheDocument();
   });
 
-  test("loads a project dashboard and creates a chapter in local dashboard state", async () => {
+  test("loads a project dashboard with persisted chapters from the API", async () => {
     mockedGet.mockImplementation(async (url: string) => {
       if (url === "/projects/project-1") {
         return {
@@ -94,6 +94,77 @@ describe("project pages", () => {
             updated_at: "2026-07-05T10:00:00Z",
           },
         };
+      }
+      if (url === "/projects/project-1/chapters") {
+        return {
+          data: [
+            {
+              chapter_id: "chapter-1",
+              project_id: "project-1",
+              title: "第一章",
+              position: 1,
+              current_source_revision_id: "",
+              created_at: "2026-07-05T10:05:00Z",
+              updated_at: "2026-07-05T10:05:00Z",
+              source_text: "",
+            },
+          ],
+        };
+      }
+      if (url === "/chapters/chapter-1/status") {
+        return {
+          data: {
+            status: "source_empty",
+            blocking_reason: "暂无小说原文",
+            next_action: "add_source",
+          },
+        };
+      }
+      throw new Error(`unexpected GET ${url}`);
+    });
+    window.history.replaceState({}, "", "/projects/project-1");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "生死" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "第一章" })).toHaveAttribute(
+      "href",
+      "/projects/project-1/chapters/chapter-1",
+    );
+    expect(await screen.findByText("source_empty")).toBeInTheDocument();
+    expect(mockedGet).toHaveBeenCalledWith("/projects/project-1/chapters");
+  });
+
+  test("refetches project chapters after creating a chapter", async () => {
+    const chapter = {
+      chapter_id: "chapter-1",
+      project_id: "project-1",
+      title: "第一章",
+      position: 1,
+      current_source_revision_id: "",
+      created_at: "2026-07-05T10:05:00Z",
+      updated_at: "2026-07-05T10:05:00Z",
+      source_text: "",
+    };
+    let chapterListCalls = 0;
+    mockedGet.mockImplementation(async (url: string) => {
+      if (url === "/projects/project-1") {
+        return {
+          data: {
+            project_id: "project-1",
+            name: "生死",
+            description: "古装重生短剧",
+            series_canon: "明代商贾世界",
+            characters_context: "沈清荷、沈清莲",
+            production_brief: "真人写实，16:9",
+            created_at: "2026-07-05T10:00:00Z",
+            updated_at: "2026-07-05T10:00:00Z",
+          },
+        };
+      }
+      if (url === "/projects/project-1/chapters") {
+        chapterListCalls += 1;
+        return { data: chapterListCalls === 1 ? [] : [chapter] };
       }
       if (url === "/chapters/chapter-1/status") {
         return {
@@ -128,7 +199,7 @@ describe("project pages", () => {
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "生死" })).toBeInTheDocument();
-    expect(screen.getByText("当前后端暂无章节列表接口，本页仅显示本次会话新建的章节。")).toBeInTheDocument();
+    expect(await screen.findByText("暂无章节。添加章节后开始制作。")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("章节标题"), { target: { value: "第一章" } });
     fireEvent.change(screen.getByLabelText("章节序号"), { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "添加章节" }));
@@ -145,9 +216,10 @@ describe("project pages", () => {
     );
     expect(await screen.findByText("source_empty")).toBeInTheDocument();
     expect(screen.getByText("add_source")).toBeInTheDocument();
+    await waitFor(() => expect(chapterListCalls).toBeGreaterThanOrEqual(2));
   });
 
-  test("explains that direct dashboard loads do not include existing chapters", async () => {
+  test("shows persisted chapters after the project dashboard remounts", async () => {
     mockedGet.mockImplementation(async (url: string) => {
       if (url === "/projects/project-1") {
         return {
@@ -163,17 +235,46 @@ describe("project pages", () => {
           },
         };
       }
+      if (url === "/projects/project-1/chapters") {
+        return {
+          data: [
+            {
+              chapter_id: "chapter-1",
+              project_id: "project-1",
+              title: "第一章",
+              position: 1,
+              current_source_revision_id: "",
+              created_at: "2026-07-05T10:05:00Z",
+              updated_at: "2026-07-05T10:05:00Z",
+              source_text: "",
+            },
+          ],
+        };
+      }
+      if (url === "/chapters/chapter-1/status") {
+        return {
+          data: {
+            status: "source_empty",
+            blocking_reason: "暂无小说原文",
+            next_action: "add_source",
+          },
+        };
+      }
       throw new Error(`unexpected GET ${url}`);
     });
     window.history.replaceState({}, "", "/projects/project-1");
 
+    const firstRender = render(<App />);
+    expect(await screen.findByRole("link", { name: "第一章" })).toBeInTheDocument();
+    firstRender.unmount();
+
     render(<App />);
 
     expect(await screen.findByRole("heading", { name: "生死" })).toBeInTheDocument();
-    expect(screen.getByText("当前后端暂无章节列表接口，本页仅显示本次会话新建的章节。")).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "第一章" })).toBeInTheDocument();
   });
 
-  test("shows chapter status and next action for created chapters", async () => {
+  test("shows an error when project chapters fail to load", async () => {
     mockedGet.mockImplementation(async (url: string) => {
       if (url === "/projects/project-1") {
         return {
@@ -189,6 +290,77 @@ describe("project pages", () => {
           },
         };
       }
+      if (url === "/projects/project-1/chapters") {
+        throw new Error("chapters unavailable");
+      }
+      throw new Error(`unexpected GET ${url}`);
+    });
+    window.history.replaceState({}, "", "/projects/project-1");
+
+    render(<App />);
+
+    expect(await screen.findByText("章节列表加载失败。请重试。")).toBeInTheDocument();
+  });
+
+  test("shows the empty state when the project has no chapters", async () => {
+    mockedGet.mockImplementation(async (url: string) => {
+      if (url === "/projects/project-1") {
+        return {
+          data: {
+            project_id: "project-1",
+            name: "生死",
+            description: "",
+            series_canon: "",
+            characters_context: "",
+            production_brief: "",
+            created_at: "2026-07-05T10:00:00Z",
+            updated_at: "2026-07-05T10:00:00Z",
+          },
+        };
+      }
+      if (url === "/projects/project-1/chapters") {
+        return { data: [] };
+      }
+      throw new Error(`unexpected GET ${url}`);
+    });
+    window.history.replaceState({}, "", "/projects/project-1");
+
+    render(<App />);
+
+    expect(await screen.findByText("暂无章节。添加章节后开始制作。")).toBeInTheDocument();
+  });
+
+  test("shows chapter status and next action for created chapters", async () => {
+    const chapter = {
+      chapter_id: "chapter-1",
+      project_id: "project-1",
+      title: "第一章",
+      position: 1,
+      current_source_revision_id: "source-1",
+      created_at: "2026-07-05T10:05:00Z",
+      updated_at: "2026-07-05T10:05:00Z",
+      source_text: "正文",
+    };
+    let chapterListCalls = 0;
+    mockedGet.mockImplementation(async (url: string) => {
+      if (url === "/projects/project-1") {
+        return {
+          data: {
+            project_id: "project-1",
+            name: "生死",
+            description: "",
+            series_canon: "",
+            characters_context: "",
+            production_brief: "",
+            created_at: "2026-07-05T10:00:00Z",
+            updated_at: "2026-07-05T10:00:00Z",
+          },
+        };
+      }
+      if (url === "/projects/project-1/chapters") {
+        chapterListCalls += 1;
+        return { data: chapterListCalls === 1 ? [] : [chapter] };
+      }
       if (url === "/chapters/chapter-1/status") {
         return {
           data: {
@@ -201,16 +373,7 @@ describe("project pages", () => {
       throw new Error(`unexpected GET ${url}`);
     });
     mockedPost.mockResolvedValue({
-      data: {
-        chapter_id: "chapter-1",
-        project_id: "project-1",
-        title: "第一章",
-        position: 1,
-        current_source_revision_id: "source-1",
-        created_at: "2026-07-05T10:05:00Z",
-        updated_at: "2026-07-05T10:05:00Z",
-        source_text: "正文",
-      },
+      data: chapter,
     });
     window.history.replaceState({}, "", "/projects/project-1");
 
