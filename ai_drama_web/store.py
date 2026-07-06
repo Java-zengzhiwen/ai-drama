@@ -1,9 +1,10 @@
+import json
 import uuid
 
 from ai_drama_runtime.services import NotFound
 from ai_drama_runtime.store import RuntimeStore, now_iso
 
-from .models import ChapterRecord, ChapterSourceRevisionRecord, ProjectRecord
+from .models import ChapterRecord, ChapterSourceRevisionRecord, ProductionProfileRecord, ProjectRecord
 
 
 class ProductStore:
@@ -44,6 +45,18 @@ class ProductStore:
               created_at TEXT NOT NULL,
               UNIQUE(chapter_id, number)
             );
+            CREATE TABLE IF NOT EXISTS production_profiles (
+              profile_id TEXT PRIMARY KEY,
+              project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
+              chapter_id TEXT NOT NULL DEFAULT '',
+              profile_type TEXT NOT NULL CHECK (profile_type IN ('character','scene','prop','style')),
+              name TEXT NOT NULL,
+              payload_object_id TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS production_profiles_scope_idx
+              ON production_profiles(project_id, chapter_id, profile_type, name);
             """
         )
         self.conn.commit()
@@ -154,3 +167,84 @@ class ProductStore:
             (source_revision_id,),
         ).fetchone()
         return None if row is None else ChapterSourceRevisionRecord(**dict(row))
+
+    def create_production_profile(self, *, project_id, chapter_id, profile_type, name, payload):
+        created_at = now_iso()
+        profile_id = uuid.uuid4().hex
+        payload_object_id = self.runtime.write_text_object(_normalized_json(payload))
+        self.conn.execute(
+            """
+            INSERT INTO production_profiles
+            (profile_id, project_id, chapter_id, profile_type, name,
+             payload_object_id, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                profile_id,
+                project_id,
+                chapter_id,
+                profile_type,
+                name,
+                payload_object_id,
+                created_at,
+                created_at,
+            ),
+        )
+        self.conn.commit()
+        return self.get_production_profile(profile_id)
+
+    def get_production_profile(self, profile_id):
+        row = self.conn.execute(
+            "SELECT * FROM production_profiles WHERE profile_id = ?",
+            (profile_id,),
+        ).fetchone()
+        return None if row is None else ProductionProfileRecord(**dict(row))
+
+    def list_production_profiles(self, project_id, *, chapter_id=None, profile_type=None):
+        conditions = ["project_id = ?"]
+        params = [project_id]
+        if chapter_id is not None:
+            conditions.append("chapter_id = ?")
+            params.append(chapter_id)
+        if profile_type is not None:
+            conditions.append("profile_type = ?")
+            params.append(profile_type)
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM production_profiles
+            WHERE %s
+            ORDER BY chapter_id ASC, profile_type ASC, name ASC, created_at ASC, profile_id ASC
+            """
+            % " AND ".join(conditions),
+            params,
+        ).fetchall()
+        return [ProductionProfileRecord(**dict(row)) for row in rows]
+
+    def update_production_profile_payload(self, profile_id, *, name, payload):
+        updated_at = now_iso()
+        payload_object_id = self.runtime.write_text_object(_normalized_json(payload))
+        cursor = self.conn.execute(
+            """
+            UPDATE production_profiles
+            SET name = ?, payload_object_id = ?, updated_at = ?
+            WHERE profile_id = ?
+            """,
+            (name, payload_object_id, updated_at, profile_id),
+        )
+        self.conn.commit()
+        if cursor.rowcount == 0:
+            return None
+        return self.get_production_profile(profile_id)
+
+    def delete_production_profile(self, profile_id):
+        cursor = self.conn.execute(
+            "DELETE FROM production_profiles WHERE profile_id = ?",
+            (profile_id,),
+        )
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+
+def _normalized_json(payload):
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from ai_drama_runtime.store import RuntimeStore
 
 from .config import Settings
+from .routers.profiles import router as profiles_router
 from .routers.projects import router as projects_router
 from .routers.scripts import router as scripts_router
 from .routers.storyboards import router as storyboards_router
@@ -38,6 +39,7 @@ def create_app(
     app.state.settings = settings
     app.state.repo_root = repo_root
     app.include_router(projects_router)
+    app.include_router(profiles_router)
     app.include_router(scripts_router)
     app.include_router(storyboards_router)
 

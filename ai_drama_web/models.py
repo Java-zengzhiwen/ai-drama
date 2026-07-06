@@ -32,3 +32,15 @@ class ChapterSourceRevisionRecord:
     object_id: str
     content_hash: str
     created_at: str
+
+
+@dataclass(frozen=True)
+class ProductionProfileRecord:
+    profile_id: str
+    project_id: str
+    chapter_id: str
+    profile_type: str
+    name: str
+    payload_object_id: str
+    created_at: str
+    updated_at: str
