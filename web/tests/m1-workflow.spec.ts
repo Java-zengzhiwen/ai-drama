@@ -39,6 +39,12 @@ if (runningInVitest) {
     await page.getByLabel("章节标题").fill("第一章");
     await page.getByLabel("章节序号").fill("1");
     await page.getByRole("button", { name: "添加章节" }).click();
+    await expect(page.getByRole("link", { name: "第一章" })).toBeVisible();
+    await page.getByRole("link", { name: "项目" }).click();
+    await page.getByRole("link", { name: `M1 验证项目 ${unique}` }).click();
+    await expect(page.getByRole("link", { name: "第一章" })).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("link", { name: "第一章" })).toBeVisible();
     await page.getByRole("link", { name: "第一章" }).click();
 
     await page.getByLabel("小说原文").fill("沈清荷醒来后发现自己回到成亲前，她决定重新查账。");

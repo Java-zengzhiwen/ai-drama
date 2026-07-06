@@ -133,6 +133,19 @@ class ProductStore:
         row = self.conn.execute("SELECT * FROM chapters WHERE chapter_id = ?", (chapter_id,)).fetchone()
         return None if row is None else ChapterRecord(**dict(row))
 
+    def list_chapters(self, project_id):
+        if self.get_project(project_id) is None:
+            raise KeyError(f"project not found: {project_id}")
+        rows = self.conn.execute(
+            """
+            SELECT * FROM chapters
+            WHERE project_id = ?
+            ORDER BY position ASC, created_at ASC, chapter_id ASC
+            """,
+            (project_id,),
+        ).fetchall()
+        return [ChapterRecord(**dict(row)) for row in rows]
+
     def get_source_revision(self, source_revision_id):
         row = self.conn.execute(
             "SELECT * FROM chapter_source_revisions WHERE source_revision_id = ?",

@@ -40,6 +40,38 @@ def test_create_project_chapter_and_source(client):
     assert fetched_chapter.json()["source_text"] == "第一章正文"
 
 
+def test_project_chapters_can_be_listed_in_position_order_without_cross_project_leakage(client):
+    project = client.post("/api/projects", json={"name": "生死"}).json()
+    other_project = client.post("/api/projects", json={"name": "旁支"}).json()
+    third = client.post(
+        f"/api/projects/{project['project_id']}/chapters",
+        json={"title": "第三章", "position": 3},
+    ).json()
+    first = client.post(
+        f"/api/projects/{project['project_id']}/chapters",
+        json={"title": "第一章", "position": 1},
+    ).json()
+    second = client.post(
+        f"/api/projects/{project['project_id']}/chapters",
+        json={"title": "第二章", "position": 2},
+    ).json()
+    client.post(
+        f"/api/projects/{other_project['project_id']}/chapters",
+        json={"title": "其他项目第一章", "position": 1},
+    )
+
+    response = client.get(f"/api/projects/{project['project_id']}/chapters")
+
+    assert response.status_code == 200
+    chapters = response.json()
+    assert [chapter["chapter_id"] for chapter in chapters] == [
+        first["chapter_id"],
+        second["chapter_id"],
+        third["chapter_id"],
+    ]
+    assert {chapter["project_id"] for chapter in chapters} == {project["project_id"]}
+
+
 def test_project_chapter_source_validation_rejects_blank_values(client):
     assert client.post("/api/projects", json={"name": " "}).status_code == 422
 
@@ -74,6 +106,7 @@ def test_project_chapter_source_validation_rejects_blank_values(client):
 
 def test_missing_records_return_404(client):
     assert client.get("/api/projects/missing").status_code == 404
+    assert client.get("/api/projects/missing/chapters").status_code == 404
     assert (
         client.post(
             "/api/projects/missing/chapters",

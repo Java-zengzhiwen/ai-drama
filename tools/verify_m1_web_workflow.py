@@ -48,6 +48,8 @@ def _run_workflow(client: TestClient) -> None:
         ),
         200,
     )
+    discovered_chapters = _expect_status(client.get(f"/api/projects/{project['project_id']}/chapters"), 200)
+    assert [item["chapter_id"] for item in discovered_chapters] == [chapter["chapter_id"]]
 
     _expect_status(
         client.post(

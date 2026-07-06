@@ -40,6 +40,12 @@ class ProjectService:
         except sqlite3.IntegrityError as exc:
             raise DuplicateChapterPosition from exc
 
+    def list_chapters(self, project_id):
+        try:
+            return self.product_store.list_chapters(project_id)
+        except KeyError as exc:
+            raise MissingRecord from exc
+
     def get_chapter(self, chapter_id) -> tuple[ChapterRecord, str]:
         chapter = self.product_store.get_chapter(chapter_id)
         if chapter is None:

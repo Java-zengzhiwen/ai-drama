@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Input, InputNumber, Skeleton, Typography } from "antd";
 import { type FormEvent, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { createChapter, getChapterStatus, getProject, type ChapterRead } from "./api";
+import { createChapter, getChapterStatus, getProject, listProjectChapters, type ChapterRead } from "./api";
 
 export function ProjectDashboardPage() {
   const { projectId = "" } = useParams();
@@ -16,10 +16,8 @@ export function ProjectDashboardPage() {
   });
   const chaptersQuery = useQuery({
     enabled: Boolean(projectId),
-    initialData: [] as ChapterRead[],
     queryKey: ["project-chapters", projectId],
-    queryFn: async () => [],
-    staleTime: Infinity,
+    queryFn: () => listProjectChapters(projectId),
   });
   const createChapterMutation = useMutation({
     mutationFn: () =>
@@ -27,11 +25,8 @@ export function ProjectDashboardPage() {
         title: chapterTitle.trim(),
         position: chapterPosition,
       }),
-    onSuccess: (chapter) => {
-      queryClient.setQueryData<ChapterRead[]>(["project-chapters", projectId], (current = []) => [
-        ...current,
-        chapter,
-      ]);
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["project-chapters", projectId] });
       setChapterTitle("");
       setChapterPosition((current) => current + 1);
     },
@@ -59,7 +54,7 @@ export function ProjectDashboardPage() {
 
   const project = projectQuery.data;
   const isSubmitting = createChapterMutation.isPending;
-  const chapters = chaptersQuery.data;
+  const chapters = chaptersQuery.data ?? [];
 
   return (
     <section aria-labelledby="project-dashboard-title">
@@ -130,10 +125,17 @@ export function ProjectDashboardPage() {
           ) : null}
         </form>
 
-        {chapters.length === 0 ? (
-          <Typography.Text type="secondary">
-            当前后端暂无章节列表接口，本页仅显示本次会话新建的章节。
-          </Typography.Text>
+        {chaptersQuery.isLoading ? (
+          <Skeleton active paragraph={{ rows: 3 }} title={false} />
+        ) : chaptersQuery.isError ? (
+          <Alert
+            action={<Button onClick={() => void chaptersQuery.refetch()}>重试</Button>}
+            message="章节列表加载失败。请重试。"
+            showIcon
+            type="error"
+          />
+        ) : chapters.length === 0 ? (
+          <Typography.Text type="secondary">暂无章节。添加章节后开始制作。</Typography.Text>
         ) : (
           <div style={{ overflowX: "auto" }}>
             <table

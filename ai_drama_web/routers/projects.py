@@ -59,6 +59,14 @@ async def create_chapter(project_id: str, payload: ChapterCreate, service: Proje
         raise HTTPException(status_code=409, detail="duplicate chapter position")
 
 
+@router.get("/projects/{project_id}/chapters", response_model=list[ChapterRead])
+async def list_project_chapters(project_id: str, service: ProjectService = Depends(get_service)):
+    try:
+        return service.list_chapters(project_id)
+    except MissingRecord:
+        raise HTTPException(status_code=404, detail="project not found")
+
+
 @router.get("/chapters/{chapter_id}", response_model=ChapterRead)
 async def get_chapter(chapter_id: str, service: ProjectService = Depends(get_service)):
     try:

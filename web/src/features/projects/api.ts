@@ -54,6 +54,11 @@ export async function createChapter(projectId: string, payload: ChapterCreate): 
   return response.data;
 }
 
+export async function listProjectChapters(projectId: string): Promise<ChapterRead[]> {
+  const response = await apiClient.get<ChapterRead[]>(`/projects/${projectId}/chapters`);
+  return response.data;
+}
+
 export async function getChapterStatus(chapterId: string): Promise<ChapterStatus> {
   const response = await apiClient.get<ChapterStatus>(`/chapters/${chapterId}/status`);
   return response.data;
