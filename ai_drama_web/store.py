@@ -84,6 +84,8 @@ class ProductStore:
             CREATE TABLE IF NOT EXISTS asset_bindings (
               binding_id TEXT PRIMARY KEY,
               asset_id TEXT NOT NULL REFERENCES assets(asset_id) ON DELETE RESTRICT,
+              project_id TEXT NOT NULL DEFAULT '',
+              chapter_id TEXT NOT NULL DEFAULT '',
               target_type TEXT NOT NULL CHECK (target_type IN ('character','scene','prop','shot')),
               target_id TEXT NOT NULL,
               role TEXT NOT NULL,
@@ -91,14 +93,26 @@ class ProductStore:
               created_at TEXT NOT NULL,
               UNIQUE(asset_id, target_type, target_id, role)
             );
+            CREATE TABLE IF NOT EXISTS asset_requirement_sets (
+              requirement_set_id TEXT PRIMARY KEY,
+              chapter_id TEXT NOT NULL REFERENCES chapters(chapter_id) ON DELETE RESTRICT,
+              storyboard_revision_id TEXT NOT NULL,
+              content_object_id TEXT NOT NULL,
+              content_hash TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
             """
         )
         self._ensure_column("asset_bindings", "is_current", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("asset_bindings", "project_id", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("asset_bindings", "chapter_id", "TEXT NOT NULL DEFAULT ''")
+        self._backfill_asset_binding_scope()
         self._normalize_current_asset_bindings()
+        self.conn.execute("DROP INDEX IF EXISTS asset_bindings_current_role_idx")
         self.conn.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS asset_bindings_current_role_idx
-              ON asset_bindings(target_type, target_id, role)
+              ON asset_bindings(project_id, chapter_id, target_type, target_id, role)
               WHERE is_current = 1
             """
         )
@@ -117,7 +131,7 @@ class ProductStore:
               SELECT
                 binding_id,
                 ROW_NUMBER() OVER (
-                  PARTITION BY target_type, target_id, role
+                  PARTITION BY project_id, chapter_id, target_type, target_id, role
                   ORDER BY created_at DESC, binding_id DESC
                 ) AS current_rank
               FROM asset_bindings
@@ -128,6 +142,21 @@ class ProductStore:
             WHERE binding_id IN (
               SELECT binding_id FROM ranked WHERE current_rank > 1
             )
+            """
+        )
+
+    def _backfill_asset_binding_scope(self):
+        self.conn.execute(
+            """
+            UPDATE asset_bindings
+            SET
+              project_id = (
+                SELECT assets.project_id FROM assets WHERE assets.asset_id = asset_bindings.asset_id
+              ),
+              chapter_id = (
+                SELECT assets.chapter_id FROM assets WHERE assets.asset_id = asset_bindings.asset_id
+              )
+            WHERE project_id = '' OR chapter_id = ''
             """
         )
 
@@ -431,6 +460,9 @@ class ProductStore:
         return self.get_asset(asset_id)
 
     def create_asset_binding(self, *, asset_id, target_type, target_id, role, is_current=False):
+        asset = self.get_asset(asset_id)
+        if asset is None:
+            return None
         created_at = now_iso()
         binding_id = uuid.uuid4().hex
         current_value = 1 if is_current else 0
@@ -440,25 +472,36 @@ class ProductStore:
                     """
                     UPDATE asset_bindings
                     SET is_current = 0
-                    WHERE target_type = ? AND target_id = ? AND role = ? AND is_current = 1
+                    WHERE project_id = ? AND chapter_id = ?
+                      AND target_type = ? AND target_id = ? AND role = ? AND is_current = 1
                     """,
-                    (target_type, target_id, role),
+                    (asset.project_id, asset.chapter_id, target_type, target_id, role),
                 )
             self.conn.execute(
                 """
                 INSERT OR IGNORE INTO asset_bindings
-                (binding_id, asset_id, target_type, target_id, role, is_current, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (binding_id, asset_id, project_id, chapter_id, target_type, target_id, role, is_current, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (binding_id, asset_id, target_type, target_id, role, current_value, created_at),
+                (
+                    binding_id,
+                    asset_id,
+                    asset.project_id,
+                    asset.chapter_id,
+                    target_type,
+                    target_id,
+                    role,
+                    current_value,
+                    created_at,
+                ),
             )
             self.conn.execute(
                 """
                 UPDATE asset_bindings
-                SET is_current = ?
+                SET is_current = ?, project_id = ?, chapter_id = ?
                 WHERE asset_id = ? AND target_type = ? AND target_id = ? AND role = ?
                 """,
-                (current_value, asset_id, target_type, target_id, role),
+                (current_value, asset.project_id, asset.chapter_id, asset_id, target_type, target_id, role),
             )
         row = self.conn.execute(
             """
@@ -492,6 +535,76 @@ class ProductStore:
             (asset_id,),
         )
         self.conn.commit()
+
+    def asset_bindings_for_requirement(self, *, project_id, chapter_id, target_type, target_id, role, asset_type):
+        rows = self.conn.execute(
+            """
+            SELECT
+              assets.asset_id,
+              assets.asset_type,
+              assets.status,
+              assets.chapter_id,
+              asset_bindings.binding_id,
+              asset_bindings.target_type,
+              asset_bindings.target_id,
+              asset_bindings.role,
+              asset_bindings.is_current,
+              asset_bindings.created_at
+            FROM asset_bindings
+            JOIN assets ON assets.asset_id = asset_bindings.asset_id
+            WHERE assets.project_id = ?
+              AND asset_bindings.target_type = ?
+              AND asset_bindings.target_id = ?
+              AND asset_bindings.role = ?
+              AND assets.asset_type = ?
+              AND assets.chapter_id IN ('', ?)
+            ORDER BY asset_bindings.is_current DESC, assets.updated_at DESC, asset_bindings.created_at DESC, assets.asset_id ASC
+            """,
+            (project_id, target_type, target_id, role, asset_type, chapter_id),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def create_asset_requirement_set(self, *, chapter_id, storyboard_revision_id, payload):
+        created_at = now_iso()
+        requirement_set_id = uuid.uuid4().hex
+        content_text = _normalized_json(payload)
+        content_object_id = self.runtime.write_text_object(content_text)
+        content_hash = content_object_id
+        self.conn.execute(
+            """
+            INSERT INTO asset_requirement_sets
+            (requirement_set_id, chapter_id, storyboard_revision_id, content_object_id, content_hash, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (requirement_set_id, chapter_id, storyboard_revision_id, content_object_id, content_hash, created_at),
+        )
+        self.conn.commit()
+        return {
+            "requirement_set_id": requirement_set_id,
+            "chapter_id": chapter_id,
+            "storyboard_revision_id": storyboard_revision_id,
+            "content_object_id": content_object_id,
+            "content_hash": content_hash,
+            "created_at": created_at,
+            "payload": payload,
+        }
+
+    def latest_asset_requirement_set(self, chapter_id):
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM asset_requirement_sets
+            WHERE chapter_id = ?
+            ORDER BY created_at DESC, requirement_set_id DESC
+            LIMIT 1
+            """,
+            (chapter_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        data["payload"] = json.loads(self.runtime.read_text(data["content_object_id"]))
+        return data
 
 def _normalized_json(payload):
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

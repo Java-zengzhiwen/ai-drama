@@ -24,6 +24,8 @@ class AssetRecord:
 class AssetBindingRecord:
     binding_id: str
     asset_id: str
+    project_id: str
+    chapter_id: str
     target_type: str
     target_id: str
     role: str

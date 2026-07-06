@@ -1,5 +1,12 @@
 import json
 
+from ai_drama_runtime.storyboard_canonical import (
+    CONTENT_PROFILE,
+    CanonicalStoryboardError,
+    canonical_storyboard_hash,
+    parse_canonical_json,
+    validate_storyboard_canonical,
+)
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_web.models import AssetBindingRecord, AssetRecord
 from ai_drama_web.schemas.assets import AssetUploadFields
@@ -109,7 +116,8 @@ class AssetService:
 
     def _require_target_scope(self, asset: AssetRecord, target_type: str, target_id: str):
         if target_type == "shot":
-            raise MissingRecord
+            self._require_shot_target_scope(asset, target_id)
+            return
         if target_type not in PROFILE_TARGET_TYPES:
             return
         profile = self.product_store.get_production_profile(target_id)
@@ -118,6 +126,26 @@ class AssetService:
         if profile.project_id != asset.project_id:
             raise MissingRecord
         if profile.chapter_id and profile.chapter_id != asset.chapter_id:
+            raise MissingRecord
+
+    def _require_shot_target_scope(self, asset: AssetRecord, target_id: str):
+        if asset.asset_type != "shot_keyframe":
+            raise MissingRecord
+        revision = self.runtime_store.current_approved(f"{asset.chapter_id}:script:storyboard")
+        if revision is None or revision.content_profile != CONTENT_PROFILE:
+            raise MissingRecord
+        try:
+            canonical = parse_canonical_json(self.runtime_store.read_text(revision.content_object_id))
+            validate_storyboard_canonical(canonical)
+        except CanonicalStoryboardError as exc:
+            raise MissingRecord from exc
+        if canonical.get("project_id") != asset.project_id or canonical.get("chapter_id") != asset.chapter_id:
+            raise MissingRecord
+        if canonical.get("source", {}).get("script_artifact_id") != f"{asset.chapter_id}:script":
+            raise MissingRecord
+        if canonical_storyboard_hash(canonical) != revision.content_hash:
+            raise MissingRecord
+        if target_id not in {shot["shot_id"] for shot in canonical.get("shots", [])}:
             raise MissingRecord
 
     def _read_asset(self, record: AssetRecord):
