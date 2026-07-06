@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>M2 Asset Detail Review Prototype</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --surface: #fff;
+      --subtle: #f9fafc;
+      --line: #d9dee8;
+      --line-strong: #b8c0cc;
+      --text: #1f2937;
+      --muted: #5f6b7a;
+      --soft: #8a94a3;
+      --blue: #2563eb;
+      --green: #16a34a;
+      --amber: #d97706;
+      --red: #dc2626;
+      --blocked-bg: #fff1f2;
+      --blocked-line: #fca5a5;
+      --blue-bg: #eef6ff;
+      --green-bg: #f0fdf4;
+      --amber-bg: #fff7ed;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .62; }
+    .app { min-height: 100vh; display: grid; grid-template-rows: 56px 1fr; }
+    .topbar {
+      display: flex; align-items: center; gap: 16px; padding: 0 20px;
+      background: var(--surface); border-bottom: 1px solid var(--line);
+    }
+    .menu { border: 0; background: transparent; font-size: 20px; padding: 4px; }
+    .brand { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+    .brand-mark { width: 24px; height: 24px; border-radius: 5px; background: #111827; display: inline-block; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 9px; font-size: 12px; border: 1px solid var(--line); color: var(--muted); background: var(--surface); white-space: nowrap; }
+    .dot { width: 7px; height: 7px; border-radius: 999px; background: var(--soft); }
+    .success .dot { background: var(--green); }
+    .warning .dot { background: var(--amber); }
+    .danger .dot { background: var(--red); }
+    .focus .dot { background: var(--blue); }
+    .top-actions { margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--muted); }
+    .shell { display: grid; grid-template-columns: 252px minmax(0, 1fr); min-height: 0; }
+    .sidebar { background: var(--surface); border-right: 1px solid var(--line); min-width: 0; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+    .side-tabs { display: flex; gap: 18px; border-bottom: 1px solid var(--line); margin: -14px -14px 0; padding: 0 14px; }
+    .side-tabs button { border: 0; background: transparent; padding: 13px 0 11px; color: var(--muted); border-bottom: 2px solid transparent; }
+    .side-tabs button.active { color: var(--blue); border-bottom-color: var(--blue); font-weight: 650; }
+    .search { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+    .side-title { font-size: 12px; text-transform: uppercase; letter-spacing: .02em; color: var(--muted); margin: 8px 0 4px; }
+    .chapter { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 8px; border-radius: 6px; border: 1px solid transparent; }
+    .chapter.active { background: #eef4ff; border-color: #bfd2ff; }
+    .chapter small { color: var(--muted); }
+    .main { min-width: 0; overflow: hidden; display: flex; flex-direction: column; }
+    .progress {
+      display: grid; grid-template-columns: repeat(7, minmax(110px, 1fr)); gap: 8px;
+      padding: 12px 18px; background: var(--surface); border-bottom: 1px solid var(--line);
+    }
+    .step { color: var(--muted); min-width: 0; }
+    .step strong { display: block; color: var(--text); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .step.done strong { color: var(--green); }
+    .step.current strong { color: var(--blue); }
+    .step.locked strong { color: var(--soft); }
+    .tabs, .subtabs {
+      display: flex; gap: 18px; padding: 0 18px; background: var(--surface); border-bottom: 1px solid var(--line);
+      overflow-x: auto;
+    }
+    .tabs button, .subtabs button { border: 0; background: transparent; padding: 13px 2px 11px; color: var(--muted); border-bottom: 2px solid transparent; white-space: nowrap; }
+    .tabs button.active, .subtabs button.active { color: var(--blue); border-bottom-color: var(--blue); font-weight: 650; }
+    .tabs button:disabled { color: var(--soft); }
+    .toolbar { display: flex; align-items: center; gap: 10px; padding: 12px 18px; background: var(--surface); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+    .toolbar select, .toolbar input { border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; background: #fff; min-width: 140px; }
+    .content { padding: 16px 18px; overflow: auto; min-height: 0; }
+    .view { display: none; }
+    .view.active { display: block; }
+    .btn, .primary, .danger-btn, .link-btn {
+      border: 1px solid var(--line); background: var(--surface); color: var(--text);
+      border-radius: 6px; padding: 7px 11px;
+    }
+    .primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .danger-btn { border-color: var(--blocked-line); color: var(--red); background: #fff; }
+    .link-btn { border: 0; color: var(--blue); padding: 0; background: transparent; }
+    .state { border-radius: 999px; padding: 2px 7px; font-size: 12px; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+    .state.ok { background: #dcfce7; color: #166534; }
+    .state.wait { background: #fef3c7; color: #92400e; }
+    .state.err { background: #fee2e2; color: #991b1b; }
+    .state.info { background: #dbeafe; color: #1d4ed8; }
+    .banner { border: 1px solid #fed7aa; background: var(--amber-bg); color: #9a3412; border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; display: flex; justify-content: space-between; gap: 12px; }
+    .banner.blocked { border-color: var(--blocked-line); background: var(--blocked-bg); color: #991b1b; }
+    .banner.ok { border-color: #bbf7d0; background: var(--green-bg); color: #166534; }
+    .split { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 16px; align-items: start; }
+    .surface { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+    .section-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+    .section-title h2, .section-title h3 { margin: 0; font-size: 15px; }
+    .preview-wrap { padding: 14px; }
+    .large-preview { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); background: var(--subtle); display: block; }
+    .preview-controls { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+    .versions { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 10px; padding: 14px; }
+    .version { border: 1px solid var(--line); border-radius: 6px; padding: 6px; background: #fff; position: relative; }
+    .version.active { border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--blue); }
+    .version img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; border-radius: 4px; }
+    .version-footer { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin-top: 6px; font-size: 12px; }
+    .inspector { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+    .panel { padding: 14px; border-bottom: 1px solid var(--line); }
+    .panel:last-child { border-bottom: 0; }
+    .panel h3 { margin: 0 0 10px; font-size: 15px; }
+    .meta { display: grid; grid-template-columns: 112px 1fr; gap: 8px 12px; font-size: 13px; }
+    .meta dt { color: var(--muted); }
+    .meta dd { margin: 0; min-width: 0; }
+    .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; font-size: 13px; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); }
+    th, td { border-bottom: 1px solid var(--line); padding: 10px 12px; text-align: left; vertical-align: top; }
+    th { background: var(--subtle); font-size: 12px; color: var(--muted); font-weight: 650; position: sticky; top: 0; }
+    tr.active-row td { background: var(--blue-bg); }
+    .asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 12px; }
+    .asset-card { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+    .asset-card.active { border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--blue); }
+    .asset-card img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; }
+    .asset-card .body { padding: 9px; display: grid; gap: 6px; }
+    .thumb-strip { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .thumb-strip img { width: 54px; height: 54px; object-fit: cover; border-radius: 5px; border: 1px solid var(--line); }
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    label.field { display: grid; gap: 5px; color: var(--text); }
+    label.field span { color: var(--muted); font-size: 12px; }
+    label.field input, label.field textarea, label.field select { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 8px; background: #fff; }
+    label.field textarea { min-height: 72px; resize: vertical; }
+    .empty, .loading-state { display: grid; place-items: center; min-height: 240px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+    .loading-state span { height: 12px; width: 180px; border-radius: 999px; background: linear-gradient(90deg, #e5e7eb, #f3f4f6, #e5e7eb); display: block; margin: 8px; }
+    .prompt-layout { display: grid; grid-template-columns: 320px minmax(0, 1fr) 340px; gap: 14px; }
+    .prompt-editor { display: grid; gap: 12px; }
+    .code { background: #111827; color: #d1d5db; border-radius: 6px; padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow: auto; }
+    .footer-note { color: var(--muted); font-size: 12px; margin-top: 12px; }
+    @media (max-width: 1180px) {
+      .shell { grid-template-columns: 220px minmax(0, 1fr); }
+      .progress { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+      .split, .prompt-layout { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <button class="menu" aria-label="展开导航">☰</button>
+      <div class="brand"><span class="brand-mark"></span>龙城迷雾</div>
+      <span class="pill success"><span class="dot"></span>进行中</span>
+      <span class="pill">悬疑 / 12集 / 单集45分钟</span>
+      <div class="top-actions">
+        <span class="pill danger"><span class="dot"></span>3 个资产待审查</span>
+        <span>导演</span>
+      </div>
+    </header>
+
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="side-tabs">
+          <button class="active">项目</button>
+          <button>资源库</button>
+        </div>
+        <input class="search" placeholder="搜索章节或内容">
+        <div>
+          <div class="side-title">项目概览</div>
+          <div style="display:grid;gap:8px">
+            <div class="chapter"><span>全剧进度</span><span>90%</span></div>
+            <div class="chapter active"><span>第1集 雾起龙城<br><small>资料与资产</small></span><span class="state info">进行中</span></div>
+            <div class="chapter"><span>第2集 夜色追踪<br><small>剧本中</small></span><span class="state">未开始</span></div>
+            <div class="chapter"><span>第3集 局中局<br><small>原文中</small></span><span class="state">未开始</span></div>
+            <div class="chapter"><span>第4集 真相渐近<br><small>未开始</small></span><span class="state">未开始</span></div>
+          </div>
+        </div>
+        <div class="banner blocked" style="margin-top:auto">
+          <span>Shot Prompt 已阻止：1 个角色参考资产未采用。</span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <section class="progress" aria-label="workflow rail">
+          <div class="step done"><strong>原文完成</strong><span>2025-05-18</span></div>
+          <div class="step done"><strong>剧本已确认</strong><span>2025-05-19</span></div>
+          <div class="step done"><strong>分镜已确认</strong><span>2025-05-19</span></div>
+          <div class="step current"><strong>资料与资产</strong><span>当前步骤</span></div>
+          <div class="step locked"><strong>Shot Prompt</strong><span>等待资产 ready</span></div>
+          <div class="step locked"><strong>Agnes 生成</strong><span>锁定</span></div>
+          <div class="step locked"><strong>结果与重跑</strong><span>锁定</span></div>
+        </section>
+
+        <nav class="tabs" aria-label="chapter tabs">
+          <button>原文</button>
+          <button>剧本</button>
+          <button>分镜</button>
+          <button class="active">资料与资产</button>
+          <button>Shot Prompt</button>
+          <button disabled>Agnes 生成 已锁定</button>
+          <button disabled>结果与重跑 已锁定</button>
+        </nav>
+        <nav class="subtabs" aria-label="M2 subnav">
+          <button data-view="assets">资产预览</button>
+          <button data-view="detail" class="active">资产详情</button>
+          <button data-view="profiles">Profiles</button>
+          <button data-view="requirements">缺失需求</button>
+          <button data-view="prompts">Shot Prompt</button>
+          <button data-view="states">状态样例</button>
+        </nav>
+
+        <section class="toolbar">
+          <select>
+            <option>全部资产类型</option>
+            <option>character_reference</option>
+            <option>character_outfit</option>
+            <option>scene_reference</option>
+            <option>scene_angle</option>
+            <option>prop_reference</option>
+            <option>shot_keyframe</option>
+          </select>
+          <select>
+            <option>全部绑定目标</option>
+            <option>人物 Profile</option>
+            <option>场景 Profile</option>
+            <option>道具 Profile</option>
+            <option>镜头</option>
+          </select>
+          <select>
+            <option>全部状态</option>
+            <option>usable</option>
+            <option>rejected</option>
+            <option>generating</option>
+            <option>failed</option>
+          </select>
+          <input placeholder="搜索资产、人物、镜头">
+          <button class="btn">上传图片</button>
+          <button class="primary">Agnes 生成图片</button>
+        </section>
+
+        <section class="content">
+          <div class="view" id="assets">
+            <div class="banner">
+              <span>资产总览以图片为主。需要精审时进入资产详情页判断身份、服装和场景一致性。</span>
+              <button class="btn" data-view-target="detail">打开当前资产</button>
+            </div>
+            <div class="asset-grid">
+              <article class="asset-card active">
+                <img src="asset-character-reference.png" alt="人物正面参考">
+                <div class="body"><strong>廖江 正面参考 v3</strong><span class="state ok">usable</span><small>character_reference / 当前采用</small></div>
+              </article>
+              <article class="asset-card">
+                <img src="asset-character-outfit.png" alt="人物服装参考">
+                <div class="body"><strong>廖江 黑色夹克 v2</strong><span class="state ok">usable</span><small>character_outfit</small></div>
+              </article>
+              <article class="asset-card">
+                <img src="asset-scene-reference.png" alt="场景参考">
+                <div class="body"><strong>旧仓库主场景</strong><span class="state ok">usable</span><small>scene_reference</small></div>
+              </article>
+              <article class="asset-card">
+                <img src="asset-scene-angle.png" alt="场景机位">
+                <div class="body"><strong>旧仓库门口机位</strong><span class="state wait">asset_review_required</span><small>scene_angle</small></div>
+              </article>
+              <article class="asset-card">
+                <img src="asset-prop-reference.png" alt="道具参考">
+                <div class="body"><strong>匿名信与铜钥匙</strong><span class="state err">rejected</span><small>prop_reference</small></div>
+              </article>
+              <article class="asset-card">
+                <img src="asset-shot-keyframe.png" alt="镜头关键帧">
+                <div class="body"><strong>1-03 推门关键帧</strong><span class="state wait">generating</span><small>shot_keyframe</small></div>
+              </article>
+            </div>
+          </div>
+
+          <div class="view active" id="detail">
+            <div class="split">
+              <div style="display:grid;gap:16px;min-width:0">
+                <div class="surface">
+                  <div class="section-title">
+                    <h2>资料与资产 / 廖江 正面参考 v3</h2>
+                    <span class="state info">character_reference</span>
+                  </div>
+                  <div class="preview-wrap">
+                    <img class="large-preview" src="asset-character-reference.png" alt="廖江正面参考大图">
+                    <div class="preview-controls">
+                      <button class="btn">适应窗口</button>
+                      <button class="btn">100%</button>
+                      <button class="btn">上一个</button>
+                      <button class="btn">下一个</button>
+                      <span class="footer-note">仅预览，不提供裁切、图层、画笔或专业图片编辑。</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="surface">
+                  <div class="section-title">
+                    <h3>版本对比</h3>
+                    <span class="muted">共 4 个版本</span>
+                  </div>
+                  <div class="versions">
+                    <div class="version"><img src="asset-character-reference.png" alt="v1"><div class="version-footer"><strong>v1</strong><span class="state ok">可用</span></div></div>
+                    <div class="version"><img src="asset-character-reference.png" alt="v2"><div class="version-footer"><strong>v2</strong><span class="state ok">可用</span></div></div>
+                    <div class="version active"><img src="asset-character-reference.png" alt="v3"><div class="version-footer"><strong>v3</strong><span class="state info">当前采用</span></div></div>
+                    <div class="version"><img src="asset-character-reference.png" alt="v4"><div class="version-footer"><strong>v4</strong><span class="state err">已拒绝</span></div></div>
+                  </div>
+                </div>
+
+                <div class="surface">
+                  <div class="section-title">
+                    <h3>相关缺失需求</h3>
+                    <button class="btn" data-view-target="requirements">打开缺失需求</button>
+                  </div>
+                  <table>
+                    <thead><tr><th>镜头号</th><th>场景/机位</th><th>角色</th><th>需求类型</th><th>需求状态</th><th>Shot Prompt</th></tr></thead>
+                    <tbody>
+                      <tr><td>1-03</td><td>中全 / 肩扛</td><td>廖江</td><td>角色参考（正面/近景）</td><td><span class="state err">缺失中</span></td><td><button class="link-btn" data-view-target="prompts">前往 Shot Prompt</button></td></tr>
+                      <tr><td>1-05</td><td>特写 / 仰角</td><td>廖江</td><td>角色参考（正面/近景）</td><td><span class="state err">缺失中</span></td><td><button class="link-btn" data-view-target="prompts">前往 Shot Prompt</button></td></tr>
+                      <tr><td>1-08</td><td>近景 / 手持</td><td>廖江</td><td>角色参考（正面/近景）</td><td><span class="state err">缺失中</span></td><td><button class="link-btn" data-view-target="prompts">前往 Shot Prompt</button></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <aside class="inspector" aria-label="asset inspector">
+                <div class="panel">
+                  <div class="banner blocked" style="margin:0">
+                    <span>该资产不会用于 Shot Prompt，相关需求保持缺失。</span>
+                  </div>
+                </div>
+                <div class="panel">
+                  <h3>资产信息</h3>
+                  <dl class="meta">
+                    <dt>资产 ID</dt><dd>ASSET-CR-000128</dd>
+                    <dt>资产类型</dt><dd>character_reference</dd>
+                    <dt>创建时间</dt><dd>2025-05-19 14:32</dd>
+                    <dt>生成方式</dt><dd>Agnes 图生图</dd>
+                    <dt>Profile</dt><dd>廖江（警探）</dd>
+                    <dt>绑定 Shot</dt><dd>1-03, 1-05, 1-08, 1-12</dd>
+                  </dl>
+                </div>
+                <div class="panel">
+                  <h3>资产状态</h3>
+                  <div style="display:grid;gap:10px">
+                    <span><span class="state ok">usable</span> 当前资产通过人工审查</span>
+                    <label class="field"><span>拒绝原因（不用时填写）</span><textarea placeholder="说明拒绝原因，便于后续优化。"></textarea></label>
+                    <div class="actions">
+                      <button class="primary">标记可用</button>
+                      <button class="danger-btn">拒绝</button>
+                      <button class="primary">设为当前采用</button>
+                      <button class="btn" data-view-target="assets">返回资产列表</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="panel">
+                  <h3>连续性检查</h3>
+                  <div class="checks">
+                    <span class="state ok">身份一致性 通过</span>
+                    <span class="state ok">服装一致性 通过</span>
+                    <span class="state ok">场景一致性 通过</span>
+                    <span class="state ok">道具可读性 通过</span>
+                    <span class="state ok">分镜关键帧适配 通过</span>
+                    <span class="state ok">人脸清晰 通过</span>
+                  </div>
+                </div>
+                <div class="panel">
+                  <h3>生成参数（参考）</h3>
+                  <dl class="meta">
+                    <dt>正向 Prompt</dt><dd>清晰的中国男性，30-35岁，短发，轻微胡茬，表情严肃，深色夹克，室内昏暗环境，电影光...</dd>
+                    <dt>参考图</dt><dd><span class="thumb-strip"><img src="asset-character-reference.png" alt=""><img src="asset-character-outfit.png" alt=""></span></dd>
+                    <dt>尺寸</dt><dd>1024 x 1365 (3:4)</dd>
+                    <dt>Seed</dt><dd>284512</dd>
+                    <dt>风格强度</dt><dd>0.65</dd>
+                  </dl>
+                </div>
+              </aside>
+            </div>
+          </div>
+
+          <div class="view" id="profiles">
+            <div class="split">
+              <div class="surface">
+                <div class="section-title"><h2>Production Profiles</h2><button class="primary">创建 Profile</button></div>
+                <table>
+                  <thead><tr><th>profile_type</th><th>name</th><th>bound_assets</th><th>continuity_status</th><th>updated_at</th></tr></thead>
+                  <tbody>
+                    <tr class="active-row"><td>Character</td><td>廖江</td><td>3</td><td><span class="state wait">editing</span></td><td>2025-05-19</td></tr>
+                    <tr><td>Scene</td><td>旧仓库</td><td>2</td><td><span class="state ok">saved</span></td><td>2025-05-19</td></tr>
+                    <tr><td>Prop</td><td>匿名信</td><td>1</td><td><span class="state err">validation_error</span></td><td>2025-05-18</td></tr>
+                    <tr><td>Style</td><td>低饱和悬疑写实</td><td>0</td><td><span class="state ok">saved</span></td><td>2025-05-18</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <aside class="inspector">
+                <div class="panel">
+                  <h3>Character Profile 编辑</h3>
+                  <div class="form-grid">
+                    <label class="field"><span>名称</span><input value="廖江"></label>
+                    <label class="field"><span>身份说明</span><input value="三十多岁警探，谨慎、压抑"></label>
+                    <label class="field"><span>连续性说明</span><textarea>短发，轻微胡茬，眼神疲惫但敏锐。全章保持深色夹克与低饱和肤色。</textarea></label>
+                    <label class="field"><span>服装说明</span><textarea>黑色工作夹克，深色衬衫，避免更换为制服或西装。</textarea></label>
+                  </div>
+                  <div class="banner blocked">validation_error：参考资产必须至少有一个 usable 且当前采用的 character_reference。</div>
+                  <div class="actions"><button class="primary">保存 Profile</button><button class="danger-btn">删除 Profile</button></div>
+                </div>
+                <div class="panel">
+                  <h3>删除确认</h3>
+                  <p>删除 Profile 后，已上传资产保留，但相关资产需求会重新变为 missing_assets。</p>
+                  <div class="actions"><button class="btn">取消</button><button class="danger-btn">确认删除</button></div>
+                </div>
+              </aside>
+            </div>
+          </div>
+
+          <div class="view" id="requirements">
+            <div class="banner blocked">
+              <span>资产需求分析发现 5 个缺失项。完成必要资产后才允许 Shot Prompt 标记 ready。</span>
+              <button class="primary">重新分析资产需求</button>
+            </div>
+            <table>
+              <thead><tr><th>shot_id</th><th>人物资产</th><th>服装资产</th><th>场景资产</th><th>道具资产</th><th>Shot Keyframe</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody>
+                <tr><td>1-01</td><td><span class="state ok">ready</span></td><td><span class="state ok">ready</span></td><td><span class="state ok">ready</span></td><td>-</td><td><span class="state wait">需要生成</span></td><td><span class="state wait">asset_generation_in_progress</span></td><td><button class="link-btn" data-view-target="assets">查看资产</button></td></tr>
+                <tr class="active-row"><td>1-03</td><td><span class="state err">缺少人物参考</span></td><td><span class="state ok">ready</span></td><td><span class="state ok">ready</span></td><td><span class="state err">道具被拒绝</span></td><td><span class="state err">missing</span></td><td><span class="state err">missing_assets</span></td><td><button class="link-btn" data-view-target="detail">创建/审查资产</button></td></tr>
+                <tr><td>1-05</td><td><span class="state wait">review_required</span></td><td><span class="state ok">ready</span></td><td><span class="state ok">ready</span></td><td>-</td><td><span class="state ok">ready</span></td><td><span class="state wait">asset_review_required</span></td><td><button class="link-btn" data-view-target="detail">打开审查</button></td></tr>
+                <tr><td>1-08</td><td><span class="state ok">ready</span></td><td><span class="state ok">ready</span></td><td><span class="state err">缺少 scene_angle</span></td><td>-</td><td><span class="state ok">ready</span></td><td><span class="state err">missing_assets</span></td><td><button class="link-btn" data-view-target="assets">生成场景机位</button></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="view" id="prompts">
+            <div class="prompt-layout">
+              <div class="surface">
+                <div class="section-title"><h3>镜头列表</h3><span class="state err">blocked_by_assets</span></div>
+                <table>
+                  <thead><tr><th>shot</th><th>status</th></tr></thead>
+                  <tbody>
+                    <tr><td>1-01</td><td><span class="state wait">draft</span></td></tr>
+                    <tr class="active-row"><td>1-03</td><td><span class="state err">blocked_by_assets</span></td></tr>
+                    <tr><td>1-05</td><td><span class="state ok">ready</span></td></tr>
+                    <tr><td>1-08</td><td><span class="state wait">needs_revision</span></td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="prompt-editor">
+                <div class="surface panel">
+                  <h3>正向 Prompt</h3>
+                  <label class="field"><span>positive_prompt</span><textarea>廖江站在旧仓库门口，深色夹克，表情警觉，暖色吊灯照亮侧脸，镜头肩扛中全景...</textarea></label>
+                </div>
+                <div class="surface panel">
+                  <h3>负向 Prompt</h3>
+                  <label class="field"><span>negative_prompt</span><textarea>禁止换脸，禁止改变服装，禁止现代警服，禁止场景变成办公室，禁止道具文字乱码...</textarea></label>
+                </div>
+                <div class="surface panel">
+                  <h3>continuity_notes 与 asset_refs</h3>
+                  <label class="field"><span>continuity_notes</span><textarea>接 1-02，人物从画面左侧进入，保持旧仓库灯位与黑色夹克。</textarea></label>
+                  <div class="thumb-strip">
+                    <img src="asset-character-reference.png" alt=""><img src="asset-character-outfit.png" alt=""><img src="asset-scene-angle.png" alt=""><img src="asset-prop-reference.png" alt="">
+                  </div>
+                </div>
+              </div>
+              <aside class="inspector">
+                <div class="panel">
+                  <h3>Agnes 参数预览</h3>
+                  <pre class="code">model: agnes-video
+duration_seconds: 6
+input_images: 4
+mode: image_to_video
+camera: shoulder handheld</pre>
+                </div>
+                <div class="panel">
+                  <div class="banner blocked">缺少 usable 的 prop_reference，不能标记 ready。</div>
+                  <div class="actions"><button class="primary">全章生成</button><button class="btn">单镜重新生成</button><button class="btn">保存新 Revision</button><button class="primary" disabled>标记 ready</button></div>
+                </div>
+              </aside>
+            </div>
+          </div>
+
+          <div class="view" id="states">
+            <div class="surface">
+              <div class="section-title"><h2>状态样例</h2><span>Profiles / Assets / Requirements / Prompts</span></div>
+              <div style="display:grid;gap:16px;padding:14px">
+                <div class="empty">empty：暂无资产。上传或通过 Agnes 生成图片后开始绑定。</div>
+                <div class="loading-state"><span></span><span style="width:240px"></span><span style="width:160px"></span>loading：保留导航、Workflow Rail 和当前 Tab。</div>
+                <div class="banner blocked">validation_error：Profile 名称不能为空，且必须绑定 usable 参考资产。</div>
+                <div class="banner ok">saved：资料与资产已保存，相关需求状态已更新。</div>
+                <div class="banner blocked">delete_confirmation：删除 Profile 后资产保留，需求会重新标记缺失。</div>
+                <div class="banner blocked">generation_failed：Agnes 图片生成失败。可调整参考图或 Prompt 后重试。</div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    const viewButtons = document.querySelectorAll('[data-view]');
+    const targetButtons = document.querySelectorAll('[data-view-target]');
+    const views = document.querySelectorAll('.view');
+
+    function showView(id) {
+      views.forEach((view) => view.classList.toggle('active', view.id === id));
+      viewButtons.forEach((button) => button.classList.toggle('active', button.dataset.view === id));
+    }
+
+    viewButtons.forEach((button) => {
+      button.addEventListener('click', () => showView(button.dataset.view));
+    });
+
+    targetButtons.forEach((button) => {
+      button.addEventListener('click', () => showView(button.dataset.viewTarget));
+    });
+  </script>
+</body>
+</html>
