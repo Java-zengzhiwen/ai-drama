@@ -10,7 +10,7 @@ from ai_drama_runtime.shot_prompt_canonical import (
 )
 from ai_drama_runtime.store import RuntimeStore, now_iso
 from ai_drama_web.app import create_app
-from ai_drama_web.providers.models import ProviderJob
+from ai_drama_web.providers.models import ProviderJob, ProviderResult
 from ai_drama_web.store import ProductStore
 
 
@@ -229,6 +229,57 @@ def test_refresh_generation_job_submits_queued_video_job(tmp_path):
     assert body["provider_job_id"] == "api-video-1"
 
 
+def test_results_api_lists_selects_and_reviews_generation_result(tmp_path):
+    data_root, chapter, revision, _canonical = _ready_chapter(tmp_path)
+    with _app_client(data_root) as client:
+        client.app.state.generation_backend = CompletedApiVideoBackend()
+        created = client.post(
+            f"/api/chapters/{chapter.chapter_id}/generation/video-jobs",
+            json={
+                "prompt_revision_id": revision.revision_id,
+                "shot_id": "SHOT_001",
+                "idempotency_key": "submit-1",
+            },
+        ).json()
+        submitted = client.post(f"/api/generation/jobs/{created['job_id']}/refresh").json()
+        completed = client.post(f"/api/generation/jobs/{submitted['job_id']}/refresh").json()
+        listed = client.get(f"/api/chapters/{chapter.chapter_id}/results")
+        result_id = listed.json()[0]["results"][0]["result_id"]
+        selected = client.post(f"/api/shots/SHOT_001/results/{result_id}/select")
+        reviewed = client.post(
+            f"/api/results/{result_id}/review",
+            json={
+                "decision": "passed",
+                "failure_category": "",
+                "note": "current cut",
+            },
+        )
+
+    assert completed["internal_status"] == "completed"
+    assert listed.status_code == 200, listed.text
+    assert listed.json() == [
+        {
+            "shot_id": "SHOT_001",
+            "current_result_id": "",
+            "results": [
+                {
+                    "result_id": result_id,
+                    "job_id": completed["job_id"],
+                    "attempt_number": 1,
+                    "media_type": "video/mp4",
+                    "source_url": "https://cdn.example.test/video.mp4",
+                    "local_result_available": True,
+                    "created_at": listed.json()[0]["results"][0]["created_at"],
+                }
+            ],
+        }
+    ]
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["result_id"] == result_id
+    assert reviewed.status_code == 200, reviewed.text
+    assert reviewed.json()["decision"] == "passed"
+
+
 def test_queue_video_job_endpoint_blocks_unready_shot(tmp_path):
     data_root, chapter, revision, _canonical = _ready_chapter(tmp_path)
     with _app_client(data_root) as client:
@@ -254,4 +305,22 @@ class ApiVideoBackend:
             provider_job_id="api-video-1",
             status="submitted",
             raw={"provider": "api-video", "prompt": request.prompt},
+        )
+
+
+class CompletedApiVideoBackend(ApiVideoBackend):
+    def get_job_status(self, provider_job_id):
+        return ProviderJob(
+            provider_job_id=provider_job_id,
+            status="completed",
+            raw={"provider": "api-video", "status": "completed"},
+        )
+
+    def fetch_result(self, provider_job_id):
+        return ProviderResult(
+            provider_job_id=provider_job_id,
+            media_type="video/mp4",
+            url="https://cdn.example.test/video.mp4",
+            content=b"mp4-bytes",
+            raw={"provider": "api-video", "url": "https://cdn.example.test/video.mp4"},
         )

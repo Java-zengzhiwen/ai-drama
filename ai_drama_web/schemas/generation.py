@@ -51,3 +51,48 @@ class GenerationJobRead(BaseModel):
 
 class GenerationJobDetailRead(GenerationJobRead):
     request: dict[str, Any]
+
+
+class GenerationResultRead(BaseModel):
+    result_id: str
+    job_id: str
+    attempt_number: int
+    media_type: str
+    source_url: str
+    local_result_available: bool
+    created_at: str
+
+
+class ShotResultsRead(BaseModel):
+    shot_id: str
+    current_result_id: str
+    results: list[GenerationResultRead]
+
+
+class ShotResultSelectionRead(BaseModel):
+    chapter_id: str
+    shot_id: str
+    result_id: str
+    selected_at: str
+
+
+class ResultReviewCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: str
+    failure_category: str = ""
+    note: str = ""
+
+    @field_validator("decision")
+    @classmethod
+    def validate_decision(cls, value: str) -> str:
+        return _not_blank(value)
+
+
+class ResultReviewRead(BaseModel):
+    review_id: str
+    result_id: str
+    decision: str
+    failure_category: str
+    note: str
+    created_at: str

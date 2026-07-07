@@ -9,6 +9,10 @@ from ai_drama_web.dependencies import get_product_store, get_runtime_store
 from ai_drama_web.schemas.generation import (
     GenerationJobDetailRead,
     GenerationJobRead,
+    ResultReviewCreate,
+    ResultReviewRead,
+    ShotResultSelectionRead,
+    ShotResultsRead,
     VideoJobCreate,
 )
 from ai_drama_web.secrets import LocalSecretStore
@@ -133,6 +137,63 @@ async def refresh_generation_job(
         return _error(409, "job_not_refreshable", str(exc))
 
 
+@router.get("/chapters/{chapter_id}/results", response_model=list[ShotResultsRead])
+async def list_chapter_results(
+    chapter_id: str,
+    product_store: ProductStore = Depends(get_product_store),
+):
+    jobs = product_store.list_generation_jobs_for_chapter(chapter_id)
+    shot_ids = []
+    for job in jobs:
+        if job.shot_id not in shot_ids:
+            shot_ids.append(job.shot_id)
+    groups = []
+    for shot_id in shot_ids:
+        results = product_store.list_generation_results_for_shot(chapter_id, shot_id)
+        if not results:
+            continue
+        selection = product_store.current_generation_result_selection(chapter_id, shot_id)
+        groups.append(
+            {
+                "shot_id": shot_id,
+                "current_result_id": "" if selection is None else selection.result_id,
+                "results": [_result_read(product_store, result) for result in results],
+            }
+        )
+    return groups
+
+
+@router.post(
+    "/shots/{shot_id}/results/{result_id}/select",
+    response_model=ShotResultSelectionRead,
+)
+async def select_result(
+    shot_id: str,
+    result_id: str,
+    product_store: ProductStore = Depends(get_product_store),
+):
+    result = product_store.get_generation_result(result_id)
+    if result is None or result.shot_id != shot_id:
+        raise HTTPException(status_code=404, detail="generation result not found")
+    return product_store.select_generation_result(result.chapter_id, shot_id, result_id)
+
+
+@router.post("/results/{result_id}/review", response_model=ResultReviewRead)
+async def review_result(
+    result_id: str,
+    payload: ResultReviewCreate,
+    product_store: ProductStore = Depends(get_product_store),
+):
+    if product_store.get_generation_result(result_id) is None:
+        raise HTTPException(status_code=404, detail="generation result not found")
+    return product_store.create_result_review(
+        result_id=result_id,
+        decision=payload.decision,
+        failure_category=payload.failure_category,
+        note=payload.note,
+    )
+
+
 def _job_read(job) -> dict:
     return {
         "job_id": job.job_id,
@@ -158,6 +219,19 @@ def _job_read(job) -> dict:
         "completed_at": job.completed_at,
         "created_at": job.created_at,
         "updated_at": job.updated_at,
+    }
+
+
+def _result_read(product_store: ProductStore, result) -> dict:
+    job = product_store.get_generation_job(result.job_id)
+    return {
+        "result_id": result.result_id,
+        "job_id": result.job_id,
+        "attempt_number": 0 if job is None else job.attempt_number,
+        "media_type": result.media_type,
+        "source_url": result.source_url,
+        "local_result_available": bool(result.object_id),
+        "created_at": result.created_at,
     }
 
 
