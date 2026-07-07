@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from ai_drama_runtime.store import RuntimeStore
 
 from .config import Settings
+from .routers.asset_delivery import router as asset_delivery_router
 from .routers.asset_requirements import router as asset_requirements_router
 from .routers.assets import router as assets_router
 from .routers.profiles import router as profiles_router
@@ -50,6 +51,7 @@ def create_app(
     app.state.repo_root = repo_root
     app.state.max_asset_upload_bytes = _max_asset_upload_bytes_from_env()
     app.state.secret_store = LocalSecretStore(settings.data_root)
+    app.include_router(asset_delivery_router)
     app.include_router(projects_router)
     app.include_router(asset_requirements_router)
     app.include_router(assets_router)
