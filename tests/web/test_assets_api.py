@@ -291,6 +291,61 @@ def test_current_adopted_binding_is_explicit_and_unique_per_target_role(client):
     assert rejected_current.status_code == 409
 
 
+def test_asset_list_includes_persisted_bindings_for_adopted_versions(client):
+    project, chapter = _create_project_and_chapter(client)
+    profile = _create_character_profile(client, project["project_id"], chapter["chapter_id"])
+    first_asset = _upload_png(client, chapter["chapter_id"], name="版本一").json()
+    second_asset = _upload_png(client, chapter["chapter_id"], name="版本二").json()
+    client.post(f"/api/assets/{first_asset['asset_id']}/mark-usable")
+    client.post(f"/api/assets/{second_asset['asset_id']}/mark-usable")
+
+    first_binding = client.post(
+        f"/api/assets/{first_asset['asset_id']}/bindings",
+        json={
+            "target_type": "character",
+            "target_id": profile["profile_id"],
+            "role": "primary_reference",
+            "is_current": False,
+        },
+    ).json()
+    second_binding = client.post(
+        f"/api/assets/{second_asset['asset_id']}/bindings",
+        json={
+            "target_type": "character",
+            "target_id": profile["profile_id"],
+            "role": "primary_reference",
+            "is_current": True,
+        },
+    ).json()
+
+    response = client.get(f"/api/chapters/{chapter['chapter_id']}/assets")
+
+    assert response.status_code == 200, response.text
+    assets_by_id = {asset["asset_id"]: asset for asset in response.json()}
+    assert assets_by_id[first_asset["asset_id"]]["bindings"] == [
+        {
+            "binding_id": first_binding["binding_id"],
+            "asset_id": first_asset["asset_id"],
+            "target_type": "character",
+            "target_id": profile["profile_id"],
+            "role": "primary_reference",
+            "is_current": False,
+            "created_at": first_binding["created_at"],
+        }
+    ]
+    assert assets_by_id[second_asset["asset_id"]]["bindings"] == [
+        {
+            "binding_id": second_binding["binding_id"],
+            "asset_id": second_asset["asset_id"],
+            "target_type": "character",
+            "target_id": profile["profile_id"],
+            "role": "primary_reference",
+            "is_current": True,
+            "created_at": second_binding["created_at"],
+        }
+    ]
+
+
 def test_get_asset_content_returns_original_bytes_and_media_type(client):
     _, chapter = _create_project_and_chapter(client)
     asset = _upload_png(client, chapter["chapter_id"]).json()

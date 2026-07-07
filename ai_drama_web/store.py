@@ -433,6 +433,18 @@ class ProductStore:
         ).fetchall()
         return [AssetRecord(**dict(row)) for row in rows]
 
+    def list_asset_bindings(self, asset_id):
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM asset_bindings
+            WHERE asset_id = ?
+            ORDER BY is_current DESC, created_at ASC, binding_id ASC
+            """,
+            (asset_id,),
+        ).fetchall()
+        return [AssetBindingRecord(**dict(row)) for row in rows]
+
     def update_asset_status(self, asset_id, status, *, metadata=None):
         updated_at = now_iso()
         metadata_object_id = None if metadata is None else self.runtime.write_text_object(_normalized_json(metadata))

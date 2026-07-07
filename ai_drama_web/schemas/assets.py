@@ -109,5 +109,6 @@ class AssetRead(BaseModel):
     source_type: AssetSourceType
     source_job_id: str
     metadata: dict[str, Any]
+    bindings: list[AssetBindingRead] = Field(default_factory=list)
     created_at: str
     updated_at: str

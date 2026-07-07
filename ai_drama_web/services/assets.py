@@ -163,6 +163,10 @@ class AssetService:
             "source_type": record.source_type,
             "source_job_id": record.source_job_id,
             "metadata": self._asset_metadata(record),
+            "bindings": [
+                self._read_binding(binding)
+                for binding in self.product_store.list_asset_bindings(record.asset_id)
+            ],
             "created_at": record.created_at,
             "updated_at": record.updated_at,
         }

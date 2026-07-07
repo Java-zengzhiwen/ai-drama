@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Skeleton, Tabs, Tag, Typography } from "antd";
 import { useMemo } from "react";
+import { ProfilesAssetsTab } from "../assets/ProfilesAssetsTab";
 import { getChapterStatus, type ChapterStatus } from "../projects/api";
 import { ScriptTab } from "../script/ScriptTab";
 import { getChapter } from "../script/api";
@@ -23,7 +24,7 @@ type ApiError = {
 
 const storyboardBlockedReason = "未确认剧本，不允许生成分镜。";
 const productionBlockedReason = "未确认分镜，不允许进入后续生产步骤。";
-const futureProductionBlockedReason = "后续生产步骤属于后续里程碑，Milestone 1 不开放。";
+const futureProductionBlockedReason = "Shot Prompt 将在 M2 后续任务解锁；Agnes 生成和结果与重跑保持锁定。";
 
 export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps) {
   const chapterQuery = useQuery({
@@ -133,10 +134,14 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
               label: storyboardUnlocked(status) ? "分镜" : lockedLabel("分镜", storyboardLockReason(status)),
             },
             {
-              children: <LockedPanel reason={productionLockReason(status)} title="资料与资产" />,
-              disabled: true,
+              children: assetsUnlocked(status) ? (
+                <ProfilesAssetsTab chapter={chapter} />
+              ) : (
+                <LockedPanel reason={productionBlockedReason} title="资料与资产" />
+              ),
+              disabled: !assetsUnlocked(status),
               key: "assets",
-              label: lockedLabel("资料与资产", productionLockReason(status)),
+              label: assetsUnlocked(status) ? "资料与资产" : lockedLabel("资料与资产", productionBlockedReason),
             },
             {
               children: <LockedPanel reason={productionLockReason(status)} title="Shot Prompt" />,
@@ -265,6 +270,10 @@ function storyboardLockReason(status?: ChapterStatus) {
 
 function storyboardUnlocked(status?: ChapterStatus) {
   return ["script_approved", "storyboard_draft", "storyboard_approved"].includes(status?.status ?? "");
+}
+
+function assetsUnlocked(status?: ChapterStatus) {
+  return status?.status === "storyboard_approved";
 }
 
 function lockedLabel(label: string, reason: string) {
