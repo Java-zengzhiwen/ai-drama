@@ -477,7 +477,8 @@ describe("shot prompt workspace", () => {
     const rail = screen.getByLabelText("workflow rail");
     expect(within(rail).getByText("资料与资产")).toBeInTheDocument();
     expect(within(rail).getByText("Shot Prompt 待生成：等待资产需求 ready")).toBeInTheDocument();
-    expect(within(rail).getByText("Agnes 生成已锁定：Agnes 生成和结果与重跑保持锁定。")).toBeInTheDocument();
+    expect(within(rail).getByText("Agnes 生成已锁定：请先生成或选择当前 Shot Prompt revision。")).toBeInTheDocument();
+    expect(within(rail).getByText("结果与重跑已锁定：已有 GenerationJob 后可查看结果与重跑。")).toBeInTheDocument();
 
     expect(await screen.findByText("资产需求")).toBeInTheDocument();
     const requirementsTable = screen.getByRole("table", { name: "Asset requirement rows" });
@@ -517,7 +518,8 @@ describe("shot prompt workspace", () => {
     expect(screen.getByRole("tab", { name: "分镜" })).not.toHaveAttribute("aria-disabled", "true");
     const rail = screen.getByLabelText("workflow rail");
     expect(within(rail).getByText(shotPromptRailText)).toBeInTheDocument();
-    expect(within(rail).getByText("Agnes 生成已锁定：Agnes 生成和结果与重跑保持锁定。")).toBeInTheDocument();
+    expect(within(rail).getByText("Agnes 生成已锁定：请先生成或选择当前 Shot Prompt revision。")).toBeInTheDocument();
+    expect(within(rail).getByText("结果与重跑已锁定：已有 GenerationJob 后可查看结果与重跑。")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Agnes 生成/ })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("tab", { name: /结果与重跑/ })).toHaveAttribute("aria-disabled", "true");
   });

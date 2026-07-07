@@ -363,7 +363,7 @@ describe("storyboard web editor", () => {
 
     expect(await screen.findByText("分镜已确认")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Shot Prompt" })).not.toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByText("Agnes 生成和结果与重跑保持锁定。")).toBeInTheDocument();
+    expect(screen.getByText("请先生成或选择当前 Shot Prompt revision。")).toBeInTheDocument();
     expect(screen.queryByText("未确认分镜，不允许进入后续生产步骤。")).not.toBeInTheDocument();
   });
 

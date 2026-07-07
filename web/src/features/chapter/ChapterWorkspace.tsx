@@ -2,7 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Skeleton, Tabs, Tag, Typography } from "antd";
 import { useMemo, useState } from "react";
 import { ProfilesAssetsTab } from "../assets/ProfilesAssetsTab";
+import { AgnesGenerationTab } from "../generation/AgnesGenerationTab";
+import { GenerationResultsTab } from "../generation/GenerationResultsTab";
+import { listGenerationJobs } from "../generation/api";
 import { getChapterStatus, type ChapterStatus } from "../projects/api";
+import { listShotPromptRevisions } from "../prompts/api";
 import { ShotPromptTab } from "../prompts/ShotPromptTab";
 import { ScriptTab } from "../script/ScriptTab";
 import { getChapter } from "../script/api";
@@ -25,7 +29,8 @@ type ApiError = {
 
 const storyboardBlockedReason = "未确认剧本，不允许生成分镜。";
 const productionBlockedReason = "未确认分镜，不允许进入后续生产步骤。";
-const futureProductionBlockedReason = "Agnes 生成和结果与重跑保持锁定。";
+const agnesBlockedReason = "请先生成或选择当前 Shot Prompt revision。";
+const resultsBlockedReason = "已有 GenerationJob 后可查看结果与重跑。";
 
 export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps) {
   const [activeTab, setActiveTab] = useState("source");
@@ -39,9 +44,22 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
     queryKey: ["chapter-status", chapterId],
     queryFn: () => getChapterStatus(chapterId),
   });
+  const shotPromptRevisionsQuery = useQuery({
+    enabled: Boolean(chapterId) && shotPromptUnlocked(statusQuery.data),
+    queryKey: ["shot-prompt-revisions", chapterId],
+    queryFn: () => listShotPromptRevisions(chapterId),
+  });
+  const generationJobsQuery = useQuery({
+    enabled: Boolean(chapterId),
+    queryKey: ["generation-jobs", chapterId],
+    queryFn: () => listGenerationJobs(chapterId),
+  });
 
   const status = statusQuery.data;
-  const rail = useWorkflowRail(status, statusQuery.isError, statusQuery.isLoading);
+  const currentPromptRevision = (shotPromptRevisionsQuery.data ?? []).find((revision) => revision.current) ?? (shotPromptRevisionsQuery.data ?? [])[0];
+  const agnesOpen = Boolean(currentPromptRevision);
+  const resultsOpen = (generationJobsQuery.data ?? []).length > 0;
+  const rail = useWorkflowRail(status, statusQuery.isError, statusQuery.isLoading, agnesOpen, resultsOpen);
 
   if (chapterQuery.isError) {
     return (
@@ -160,16 +178,24 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
                 : lockedLabel("Shot Prompt", productionLockReason(status)),
             },
             {
-              children: <LockedPanel reason={productionLockReason(status)} title="Agnes 生成" />,
-              disabled: true,
+              children: agnesOpen && currentPromptRevision && chapter ? (
+                <AgnesGenerationTab chapter={chapter} revision={currentPromptRevision} />
+              ) : (
+                <LockedPanel reason={agnesLockReason(status)} title="Agnes 生成" />
+              ),
+              disabled: !agnesOpen,
               key: "agnes",
-              label: lockedLabel("Agnes 生成", productionLockReason(status)),
+              label: agnesOpen ? "Agnes 生成" : lockedLabel("Agnes 生成", agnesLockReason(status)),
             },
             {
-              children: <LockedPanel reason={productionLockReason(status)} title="结果与重跑" />,
-              disabled: true,
+              children: resultsOpen && chapter ? (
+                <GenerationResultsTab chapter={chapter} />
+              ) : (
+                <LockedPanel reason={resultsBlockedReason} title="结果与重跑" />
+              ),
+              disabled: !resultsOpen,
               key: "results",
-              label: lockedLabel("结果与重跑", productionLockReason(status)),
+              label: resultsOpen ? "结果与重跑" : lockedLabel("结果与重跑", resultsBlockedReason),
             },
           ]}
         />
@@ -178,7 +204,13 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
   );
 }
 
-function useWorkflowRail(status?: ChapterStatus, statusUnavailable = false, statusLoading = false) {
+function useWorkflowRail(
+  status?: ChapterStatus,
+  statusUnavailable = false,
+  statusLoading = false,
+  agnesOpen = false,
+  resultsOpen = false,
+) {
   return useMemo(() => {
     if (statusUnavailable || statusLoading) {
       const reason = statusLoading ? "状态加载中" : "状态不可用";
@@ -235,12 +267,17 @@ function useWorkflowRail(status?: ChapterStatus, statusUnavailable = false, stat
         reason: shotPromptStep.reason,
       },
       {
-        color: "default",
-        label: "Agnes 生成已锁定",
-        reason: futureProductionBlockedReason,
+        color: agnesOpen ? "processing" : "default",
+        label: agnesOpen ? "Agnes 生成" : "Agnes 生成已锁定",
+        reason: agnesOpen ? "" : agnesBlockedReason,
+      },
+      {
+        color: resultsOpen ? "processing" : "default",
+        label: resultsOpen ? "结果与重跑" : "结果与重跑已锁定",
+        reason: resultsOpen ? "" : resultsBlockedReason,
       },
     ];
-  }, [status?.status, statusLoading, statusUnavailable]);
+  }, [agnesOpen, resultsOpen, status?.status, statusLoading, statusUnavailable]);
 }
 
 function WorkflowErrorAlert({
@@ -288,7 +325,11 @@ function LockedReasons({ status }: { status?: ChapterStatus }) {
 }
 
 function productionLockReason(status?: ChapterStatus) {
-  return storyboardDoneStatus(status?.status ?? "") ? futureProductionBlockedReason : productionBlockedReason;
+  return storyboardDoneStatus(status?.status ?? "") ? agnesBlockedReason : productionBlockedReason;
+}
+
+function agnesLockReason(status?: ChapterStatus) {
+  return shotPromptUnlocked(status) ? agnesBlockedReason : productionBlockedReason;
 }
 
 function storyboardLockReason(status?: ChapterStatus) {
