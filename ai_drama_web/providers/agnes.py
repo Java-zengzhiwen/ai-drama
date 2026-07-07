@@ -24,6 +24,8 @@ class AgnesImageBackend(GenerationBackend):
         *,
         endpoint: str | None = None,
         model: str | None = None,
+        video_endpoint: str | None = None,
+        video_model: str | None = None,
         timeout_seconds: float | None = None,
     ) -> None:
         settings = Settings()
@@ -35,6 +37,8 @@ class AgnesImageBackend(GenerationBackend):
         self._api_key = api_key
         self._endpoint = endpoint or settings.agnes_image_endpoint
         self._model = model or settings.agnes_image_model
+        self._video_endpoint = video_endpoint or settings.agnes_video_endpoint
+        self._video_model = video_model or settings.agnes_video_model
         self._timeout_seconds = resolved_timeout
         self._jobs: dict[str, ProviderJob] = {}
 
@@ -61,7 +65,26 @@ class AgnesImageBackend(GenerationBackend):
         return _copy_job(job)
 
     def create_video_job(self, request: VideoGenerationRequest) -> ProviderJob:
-        raise NotImplementedError("agnes backend does not support video generation")
+        payload = self._build_video_payload(request)
+        response_body = self._post_video_generation(payload)
+        video_id = self._extract_video_id(response_body)
+        job = ProviderJob(
+            provider_job_id=video_id,
+            status="submitted",
+            raw=_sanitize_raw(
+                {
+                    "provider": "agnes",
+                    "media_type": "video",
+                    "request": payload,
+                    "provider_response": response_body,
+                    "task_id": response_body.get("task_id"),
+                    "video_id": video_id,
+                },
+                secrets=(self._api_key,),
+            ),
+        )
+        self._jobs[video_id] = _copy_job(job)
+        return _copy_job(job)
 
     def get_job_status(self, provider_job_id: str) -> ProviderJob:
         try:
@@ -104,6 +127,29 @@ class AgnesImageBackend(GenerationBackend):
         }
         if request.input_images:
             payload["extra_body"]["image"] = list(request.input_images)
+        return payload
+
+    def _build_video_payload(self, request: VideoGenerationRequest) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self._video_model,
+            "prompt": request.prompt,
+        }
+        if request.negative_prompt:
+            payload["negative_prompt"] = request.negative_prompt
+
+        parameters = dict(request.parameters)
+        mode = parameters.pop("mode", None)
+        payload.update(parameters)
+
+        if len(request.input_images) == 1:
+            payload["image"] = request.input_images[0]
+        elif len(request.input_images) > 1:
+            extra_body: dict[str, Any] = {"image": list(request.input_images)}
+            if mode:
+                extra_body["mode"] = mode
+            payload["extra_body"] = extra_body
+        elif mode:
+            payload["extra_body"] = {"mode": mode}
         return payload
 
     def _post_image_generation(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -156,6 +202,56 @@ class AgnesImageBackend(GenerationBackend):
             )
         return response_body
 
+    def _post_video_generation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        try:
+            response = httpx.post(
+                self._video_endpoint,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=self._timeout_seconds,
+            )
+        except httpx.TimeoutException as exc:
+            raise ProviderError(
+                "timeout",
+                "agnes video request timed out",
+                provider="agnes",
+                raw=_sanitize_raw({"endpoint": self._video_endpoint}, secrets=(self._api_key,)),
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(
+                "unknown_provider_error",
+                "agnes video request failed",
+                provider="agnes",
+                raw=_sanitize_raw(
+                    {"endpoint": self._video_endpoint, "error": str(exc)},
+                    secrets=(self._api_key,),
+                ),
+            ) from exc
+
+        if response.status_code >= 400:
+            raise ProviderError(
+                _http_error_code(response.status_code),
+                "agnes video request was rejected",
+                provider="agnes",
+                raw={
+                    "status_code": response.status_code,
+                    "response": _safe_response_json(response, secrets=(self._api_key,)),
+                },
+            )
+
+        response_body = _safe_response_json(response, secrets=(self._api_key,))
+        if not isinstance(response_body, dict):
+            raise ProviderError(
+                "unknown_provider_error",
+                "agnes video response was not a JSON object",
+                provider="agnes",
+                raw={"response": response_body},
+            )
+        return response_body
+
     @staticmethod
     def _extract_image_url(response_body: dict[str, Any]) -> str:
         try:
@@ -175,6 +271,18 @@ class AgnesImageBackend(GenerationBackend):
                 raw={"provider_response": response_body},
             )
         return image_url
+
+    @staticmethod
+    def _extract_video_id(response_body: dict[str, Any]) -> str:
+        video_id = response_body.get("video_id")
+        if not isinstance(video_id, str) or not video_id:
+            raise ProviderError(
+                "unknown_provider_error",
+                "agnes video response did not include video_id",
+                provider="agnes",
+                raw={"provider_response": response_body},
+            )
+        return video_id
 
     @staticmethod
     def _image_job_id(payload: dict[str, Any], image_url: str) -> str:

@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     runtime_model: str = ""
     agnes_image_endpoint: str = "https://apihub.agnes-ai.com/v1/images/generations"
     agnes_image_model: str = "agnes-image-2.1-flash"
+    agnes_video_endpoint: str = "https://apihub.agnes-ai.com/v1/videos"
+    agnes_video_model: str = "agnes-video-v2.0"
     agnes_timeout_seconds: float = 60.0
     public_base_url: str = ""
     model_config = SettingsConfigDict(env_prefix="AI_DRAMA_", extra="ignore")

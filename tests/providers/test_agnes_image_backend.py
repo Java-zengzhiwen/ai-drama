@@ -10,7 +10,6 @@ from ai_drama_web.providers.models import (
     ImageGenerationRequest,
     ProviderJob,
     ProviderResult,
-    VideoGenerationRequest,
 )
 
 
@@ -237,7 +236,7 @@ def test_missing_response_url_maps_to_unknown_provider_error():
     assert exc_info.value.code == "unknown_provider_error"
 
 
-def test_unknown_jobs_and_video_generation_remain_unsupported():
+def test_unknown_jobs_remain_rejected():
     backend = AgnesImageBackend(api_key=API_KEY)
 
     with pytest.raises(KeyError, match="unknown provider job id: missing-job"):
@@ -245,6 +244,3 @@ def test_unknown_jobs_and_video_generation_remain_unsupported():
 
     with pytest.raises(KeyError, match="unknown provider job id: missing-job"):
         backend.fetch_result("missing-job")
-
-    with pytest.raises(NotImplementedError, match="agnes backend does not support video generation"):
-        backend.create_video_job(VideoGenerationRequest(prompt="clip", duration_seconds=5))
