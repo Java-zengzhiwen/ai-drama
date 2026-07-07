@@ -362,7 +362,8 @@ describe("storyboard web editor", () => {
     renderWithQueryClient(<ChapterWorkspace chapterId="chapter-1" projectId="project-1" />);
 
     expect(await screen.findByText("分镜已确认")).toBeInTheDocument();
-    expect(screen.getByText("Shot Prompt 将在 M2 后续任务解锁；Agnes 生成和结果与重跑保持锁定。")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Shot Prompt" })).not.toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("Agnes 生成和结果与重跑保持锁定。")).toBeInTheDocument();
     expect(screen.queryByText("未确认分镜，不允许进入后续生产步骤。")).not.toBeInTheDocument();
   });
 

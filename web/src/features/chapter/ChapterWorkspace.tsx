@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Skeleton, Tabs, Tag, Typography } from "antd";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { ProfilesAssetsTab } from "../assets/ProfilesAssetsTab";
 import { getChapterStatus, type ChapterStatus } from "../projects/api";
+import { ShotPromptTab } from "../prompts/ShotPromptTab";
 import { ScriptTab } from "../script/ScriptTab";
 import { getChapter } from "../script/api";
 import { StoryboardTab } from "../storyboard/StoryboardTab";
@@ -24,9 +25,10 @@ type ApiError = {
 
 const storyboardBlockedReason = "未确认剧本，不允许生成分镜。";
 const productionBlockedReason = "未确认分镜，不允许进入后续生产步骤。";
-const futureProductionBlockedReason = "Shot Prompt 将在 M2 后续任务解锁；Agnes 生成和结果与重跑保持锁定。";
+const futureProductionBlockedReason = "Agnes 生成和结果与重跑保持锁定。";
 
 export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps) {
+  const [activeTab, setActiveTab] = useState("source");
   const chapterQuery = useQuery({
     enabled: Boolean(chapterId),
     queryKey: ["chapter", chapterId],
@@ -112,6 +114,8 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
         />
       ) : (
         <Tabs
+          activeKey={activeTab}
+          onChange={setActiveTab}
           items={[
             {
               children: <SourceTab chapter={chapter} />,
@@ -144,10 +148,16 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
               label: assetsUnlocked(status) ? "资料与资产" : lockedLabel("资料与资产", productionBlockedReason),
             },
             {
-              children: <LockedPanel reason={productionLockReason(status)} title="Shot Prompt" />,
-              disabled: true,
+              children: shotPromptUnlocked(status) ? (
+                <ShotPromptTab chapter={chapter} onOpenAssets={() => setActiveTab("assets")} />
+              ) : (
+                <LockedPanel reason={productionLockReason(status)} title="Shot Prompt" />
+              ),
+              disabled: !shotPromptUnlocked(status),
               key: "shot-prompt",
-              label: lockedLabel("Shot Prompt", productionLockReason(status)),
+              label: shotPromptUnlocked(status)
+                ? "Shot Prompt"
+                : lockedLabel("Shot Prompt", productionLockReason(status)),
             },
             {
               children: <LockedPanel reason={productionLockReason(status)} title="Agnes 生成" />,
@@ -195,6 +205,7 @@ function useWorkflowRail(status?: ChapterStatus, statusUnavailable = false, stat
     const sourceDone = current !== "missing_source";
     const scriptDone = current === "script_approved" || current === "storyboard_draft" || current === "storyboard_approved";
     const storyboardDone = current === "storyboard_approved";
+    const productionOpen = storyboardDone;
 
     return [
       {
@@ -211,6 +222,21 @@ function useWorkflowRail(status?: ChapterStatus, statusUnavailable = false, stat
         color: storyboardDone ? "success" : "default",
         label: storyboardDone ? "分镜已确认" : "分镜待确认",
         reason: storyboardDone ? "" : storyboardLockReason(status),
+      },
+      {
+        color: productionOpen ? "processing" : "default",
+        label: productionOpen ? "资料与资产" : "资料与资产待解锁",
+        reason: productionOpen ? "" : productionBlockedReason,
+      },
+      {
+        color: productionOpen ? "default" : "default",
+        label: productionOpen ? "Shot Prompt 待生成" : "Shot Prompt 待解锁",
+        reason: productionOpen ? "等待资产需求 ready" : productionBlockedReason,
+      },
+      {
+        color: "default",
+        label: "Agnes 生成已锁定",
+        reason: futureProductionBlockedReason,
       },
     ];
   }, [status?.status, statusLoading, statusUnavailable]);
@@ -273,6 +299,10 @@ function storyboardUnlocked(status?: ChapterStatus) {
 }
 
 function assetsUnlocked(status?: ChapterStatus) {
+  return status?.status === "storyboard_approved";
+}
+
+function shotPromptUnlocked(status?: ChapterStatus) {
   return status?.status === "storyboard_approved";
 }
 

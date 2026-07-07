@@ -263,7 +263,7 @@ describe("profiles and assets workspace", () => {
 
     expect(await screen.findByText("暂无生产资料。创建角色、场景、道具或风格资料后会显示在这里。")).toBeInTheDocument();
     expect(screen.getByText("暂无资产。上传图片或请求 Agnes 图片后会显示在这里。")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: /Shot Prompt/ })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("tab", { name: "Shot Prompt" })).not.toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("tab", { name: /Agnes 生成/ })).toHaveAttribute("aria-disabled", "true");
   });
 
