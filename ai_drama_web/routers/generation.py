@@ -126,7 +126,7 @@ async def refresh_generation_job(
     service: GenerationExecutionService = Depends(get_execution_service),
 ):
     try:
-        return _job_read(service.submit_queued_job(job_id))
+        return _job_read(service.refresh_job(job_id))
     except ValueError as exc:
         if str(exc) == "generation job not found":
             raise HTTPException(status_code=404, detail="generation job not found")

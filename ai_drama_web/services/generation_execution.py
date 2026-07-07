@@ -57,3 +57,76 @@ class GenerationExecutionService:
             provider_job_id=provider_job.provider_job_id,
             response_object_id=response_object_id,
         )
+
+    def refresh_job(self, job_id: str):
+        job = self.product_store.get_generation_job(job_id)
+        if job is None:
+            raise ValueError("generation job not found")
+        if job.internal_status == "queued":
+            return self.submit_queued_job(job.job_id)
+        if job.internal_status in {"completed", "failed", "cancelled"}:
+            return job
+        if job.internal_status not in {"submitted", "polling"}:
+            raise ValueError("generation job is not refreshable")
+        try:
+            provider_job = self.backend.get_job_status(job.provider_job_id)
+            if provider_job.status in {"submitted", "queued"}:
+                return job
+            if provider_job.status in {"polling", "processing", "running", "in_progress"}:
+                return self.product_store.transition_generation_job(job.job_id, "polling")
+            if provider_job.status == "failed":
+                return self.product_store.transition_generation_job(
+                    job.job_id,
+                    "failed",
+                    error_code="generation_failed",
+                    error_message="video provider failed",
+                )
+            if provider_job.status != "completed":
+                return self.product_store.transition_generation_job(
+                    job.job_id,
+                    "failed",
+                    error_code="unknown_provider_error",
+                    error_message="video provider failed",
+                )
+            result = self.backend.fetch_result(job.provider_job_id)
+        except ProviderError as exc:
+            return self.product_store.transition_generation_job(
+                job.job_id,
+                "failed",
+                error_code=exc.code,
+                error_message="video provider failed",
+            )
+        object_id = ""
+        if result.content is not None:
+            object_id = self.runtime_store.write_bytes_object(result.content)
+        metadata_object_id = self.runtime_store.write_text_object(
+            json.dumps(
+                {
+                    "provider_job": provider_job.raw,
+                    "provider_result": {
+                        "provider_job_id": result.provider_job_id,
+                        "media_type": result.media_type,
+                        "url": result.url,
+                        "raw": result.raw,
+                    },
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        )
+        generation_result = self.product_store.create_generation_result(
+            job_id=job.job_id,
+            chapter_id=job.chapter_id,
+            shot_id=job.shot_id,
+            object_id=object_id,
+            media_type=result.media_type,
+            source_url=result.url,
+            metadata_object_id=metadata_object_id,
+        )
+        return self.product_store.transition_generation_job(
+            job.job_id,
+            "completed",
+            provider_result_id=generation_result.result_id,
+        )
