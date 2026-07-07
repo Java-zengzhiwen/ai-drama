@@ -72,9 +72,9 @@ if (runningInVitest) {
     const statusResponse = await request.get(`${backendURL}/api/chapters/${chapterId}/status`);
     await expect(statusResponse).toBeOK();
     expect(await statusResponse.json()).toEqual({
-      status: "storyboard_approved",
-      blocking_reason: "",
-      next_action: "open_assets",
+      status: "assets_incomplete",
+      blocking_reason: "asset requirements are not ready",
+      next_action: "analyze_assets",
     });
   });
 }

@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Skeleton, Tabs, Tag, Typography } from "antd";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { ProfilesAssetsTab } from "../assets/ProfilesAssetsTab";
 import { getChapterStatus, type ChapterStatus } from "../projects/api";
+import { ShotPromptTab } from "../prompts/ShotPromptTab";
 import { ScriptTab } from "../script/ScriptTab";
 import { getChapter } from "../script/api";
 import { StoryboardTab } from "../storyboard/StoryboardTab";
@@ -23,9 +25,10 @@ type ApiError = {
 
 const storyboardBlockedReason = "未确认剧本，不允许生成分镜。";
 const productionBlockedReason = "未确认分镜，不允许进入后续生产步骤。";
-const futureProductionBlockedReason = "后续生产步骤属于后续里程碑，Milestone 1 不开放。";
+const futureProductionBlockedReason = "Agnes 生成和结果与重跑保持锁定。";
 
 export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps) {
+  const [activeTab, setActiveTab] = useState("source");
   const chapterQuery = useQuery({
     enabled: Boolean(chapterId),
     queryKey: ["chapter", chapterId],
@@ -111,6 +114,8 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
         />
       ) : (
         <Tabs
+          activeKey={activeTab}
+          onChange={setActiveTab}
           items={[
             {
               children: <SourceTab chapter={chapter} />,
@@ -133,16 +138,26 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
               label: storyboardUnlocked(status) ? "分镜" : lockedLabel("分镜", storyboardLockReason(status)),
             },
             {
-              children: <LockedPanel reason={productionLockReason(status)} title="资料与资产" />,
-              disabled: true,
+              children: assetsUnlocked(status) ? (
+                <ProfilesAssetsTab chapter={chapter} />
+              ) : (
+                <LockedPanel reason={productionBlockedReason} title="资料与资产" />
+              ),
+              disabled: !assetsUnlocked(status),
               key: "assets",
-              label: lockedLabel("资料与资产", productionLockReason(status)),
+              label: assetsUnlocked(status) ? "资料与资产" : lockedLabel("资料与资产", productionBlockedReason),
             },
             {
-              children: <LockedPanel reason={productionLockReason(status)} title="Shot Prompt" />,
-              disabled: true,
+              children: shotPromptUnlocked(status) ? (
+                <ShotPromptTab chapter={chapter} onOpenAssets={() => setActiveTab("assets")} />
+              ) : (
+                <LockedPanel reason={productionLockReason(status)} title="Shot Prompt" />
+              ),
+              disabled: !shotPromptUnlocked(status),
               key: "shot-prompt",
-              label: lockedLabel("Shot Prompt", productionLockReason(status)),
+              label: shotPromptUnlocked(status)
+                ? "Shot Prompt"
+                : lockedLabel("Shot Prompt", productionLockReason(status)),
             },
             {
               children: <LockedPanel reason={productionLockReason(status)} title="Agnes 生成" />,
@@ -188,8 +203,10 @@ function useWorkflowRail(status?: ChapterStatus, statusUnavailable = false, stat
 
     const current = status?.status ?? "missing_source";
     const sourceDone = current !== "missing_source";
-    const scriptDone = current === "script_approved" || current === "storyboard_draft" || current === "storyboard_approved";
-    const storyboardDone = current === "storyboard_approved";
+    const scriptDone = current === "script_approved" || current === "storyboard_draft" || storyboardDoneStatus(current);
+    const storyboardDone = storyboardDoneStatus(current);
+    const productionOpen = storyboardDone;
+    const shotPromptStep = shotPromptRailStep(current, productionOpen);
 
     return [
       {
@@ -206,6 +223,21 @@ function useWorkflowRail(status?: ChapterStatus, statusUnavailable = false, stat
         color: storyboardDone ? "success" : "default",
         label: storyboardDone ? "分镜已确认" : "分镜待确认",
         reason: storyboardDone ? "" : storyboardLockReason(status),
+      },
+      {
+        color: productionOpen ? "processing" : "default",
+        label: productionOpen ? "资料与资产" : "资料与资产待解锁",
+        reason: productionOpen ? "" : productionBlockedReason,
+      },
+      {
+        color: shotPromptStep.color,
+        label: shotPromptStep.label,
+        reason: shotPromptStep.reason,
+      },
+      {
+        color: "default",
+        label: "Agnes 生成已锁定",
+        reason: futureProductionBlockedReason,
       },
     ];
   }, [status?.status, statusLoading, statusUnavailable]);
@@ -256,7 +288,7 @@ function LockedReasons({ status }: { status?: ChapterStatus }) {
 }
 
 function productionLockReason(status?: ChapterStatus) {
-  return status?.status === "storyboard_approved" ? futureProductionBlockedReason : productionBlockedReason;
+  return storyboardDoneStatus(status?.status ?? "") ? futureProductionBlockedReason : productionBlockedReason;
 }
 
 function storyboardLockReason(status?: ChapterStatus) {
@@ -264,7 +296,56 @@ function storyboardLockReason(status?: ChapterStatus) {
 }
 
 function storyboardUnlocked(status?: ChapterStatus) {
-  return ["script_approved", "storyboard_draft", "storyboard_approved"].includes(status?.status ?? "");
+  const current = status?.status ?? "";
+  return ["script_approved", "storyboard_draft"].includes(current) || storyboardDoneStatus(current);
+}
+
+function assetsUnlocked(status?: ChapterStatus) {
+  return storyboardDoneStatus(status?.status ?? "");
+}
+
+function shotPromptUnlocked(status?: ChapterStatus) {
+  return storyboardDoneStatus(status?.status ?? "");
+}
+
+function storyboardDoneStatus(status: string) {
+  return ["storyboard_approved", "assets_incomplete", "assets_ready", "prompts_draft", "prompts_ready"].includes(status);
+}
+
+function shotPromptRailStep(status: string, productionOpen: boolean) {
+  if (!productionOpen) {
+    return {
+      color: "default",
+      label: "Shot Prompt 待解锁",
+      reason: productionBlockedReason,
+    };
+  }
+  if (status === "assets_ready") {
+    return {
+      color: "processing",
+      label: "Shot Prompt 可生成",
+      reason: "",
+    };
+  }
+  if (status === "prompts_draft") {
+    return {
+      color: "processing",
+      label: "Shot Prompt 待确认",
+      reason: "检查并标记镜头 Ready",
+    };
+  }
+  if (status === "prompts_ready") {
+    return {
+      color: "success",
+      label: "Shot Prompt 已就绪",
+      reason: "",
+    };
+  }
+  return {
+    color: "default",
+    label: "Shot Prompt 待生成",
+    reason: "等待资产需求 ready",
+  };
 }
 
 function lockedLabel(label: string, reason: string) {

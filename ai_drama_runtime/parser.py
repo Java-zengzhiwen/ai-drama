@@ -5,6 +5,7 @@ import re
 PARSER_VERSION = "drama-script-markdown-v1"
 STORYBOARD_PARSER_VERSION = "storyboard-markdown-v1"
 STORYBOARD_CANONICAL_PARSER_VERSION = "storyboard-canonical-json-v1"
+SHOT_PROMPT_CANONICAL_PARSER_VERSION = "shot-prompt-canonical-json-v1"
 
 
 class ParseError(ValueError):
@@ -85,4 +86,40 @@ def parse_storyboard_canonical_response(raw):
         validate_storyboard_canonical(data)
         return serialize_canonical_json(data).decode("utf-8")
     except CanonicalStoryboardError as exc:
+        raise ParseError(exc.code, exc.safe_message) from exc
+
+
+def parse_shot_prompt_canonical_response(raw):
+    from .shot_prompt_canonical import (
+        CanonicalShotPromptError,
+        parse_shot_prompt_json,
+        serialize_shot_prompt_json,
+        validate_shot_prompt_canonical,
+    )
+
+    if not raw or not raw.strip():
+        raise ParseError("SHOT_PROMPT_PARSER_EMPTY_OUTPUT", "empty runtime response")
+    try:
+        data = parse_shot_prompt_json(raw)
+    except CanonicalShotPromptError as exc:
+        raise ParseError(exc.code, exc.safe_message) from exc
+    if isinstance(data, dict) and "shot_prompt_canonical" in data:
+        data = data["shot_prompt_canonical"]
+    elif isinstance(data, dict) and "choices" in data:
+        try:
+            content = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ParseError("CANONICAL_SCHEMA_INVALID", "OpenAI-compatible response does not contain choices[0].message.content") from exc
+        if not isinstance(content, str) or not content.strip():
+            raise ParseError("CANONICAL_SCHEMA_INVALID", "OpenAI-compatible response content must be non-empty JSON text")
+        try:
+            data = parse_shot_prompt_json(content)
+        except CanonicalShotPromptError as exc:
+            raise ParseError(exc.code, exc.safe_message) from exc
+        if isinstance(data, dict) and "shot_prompt_canonical" in data:
+            data = data["shot_prompt_canonical"]
+    try:
+        validate_shot_prompt_canonical(data)
+        return serialize_shot_prompt_json(data).decode("utf-8")
+    except CanonicalShotPromptError as exc:
         raise ParseError(exc.code, exc.safe_message) from exc

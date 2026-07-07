@@ -1,0 +1,81 @@
+{
+  "package_format_version": "1",
+  "skill_id": "ai-drama-shot-prompt-skill",
+  "version": "v0.1.0",
+  "display_name": "AI Drama Shot Prompt Skill",
+  "description": "Canonical shot prompt set package for Milestone 2 Shot Prompt Studio.",
+  "package_status": "active",
+  "instructions_entry": "SKILL.md",
+  "context_files": [
+    "README.md",
+    "schemas/shot-prompt-set.schema.json",
+    "contracts/shot-prompt-contract-v1.md"
+  ],
+  "input_types": [
+    "canonical_storyboard_revision",
+    "asset_requirement_state",
+    "approved_asset_refs"
+  ],
+  "output_types": [
+    "shot_prompt_set"
+  ],
+  "schemas": [
+    "schemas/shot-prompt-set.schema.json"
+  ],
+  "contracts": [
+    "contracts/shot-prompt-contract-v1.md"
+  ],
+  "validator_support_files": [],
+  "validators": [
+    {
+      "validator_id": "shot_prompt_set_structure",
+      "entrypoint": "validators/validate_shot_prompt_set.py",
+      "required": true,
+      "applies_to": [
+        "shot_prompt_set"
+      ],
+      "command": [
+        "{python}",
+        "{entrypoint}",
+        "--revision",
+        "{revision_path}",
+        "--report",
+        "{report_path}",
+        "--repo-root",
+        "{repo_root}"
+      ],
+      "dependencies": [],
+      "timeout_seconds": 10,
+      "expected_exit_behavior": "zero_is_pass",
+      "validator_origin": "skill_package",
+      "required_artifacts": [
+        "shot_prompt_set"
+      ],
+      "current_profile_status": "APPLICABLE",
+      "current_profile_reason": "validates shot prompt canonical structure and asset references"
+    }
+  ],
+  "runtime_requirements": {
+    "python": ">=3.9"
+  },
+  "dependency_requirements": [],
+  "provenance": {
+    "source": "m2_task_9_create_shot_prompt_skill_package"
+  },
+  "execution_profiles": [
+    {
+      "profile_id": "shot-prompt-canonical-v1",
+      "output_type": "shot_prompt_set",
+      "output_format": "json",
+      "parser_version": "shot-prompt-canonical-json-v1",
+      "required_schema_version": "shot-prompt-canonical-v1",
+      "supported_outputs": [
+        "shot_prompt_set"
+      ],
+      "unsupported_outputs": [
+        "libtv_execution_package",
+        "post_production_package"
+      ]
+    }
+  ]
+}

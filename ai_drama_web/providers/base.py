@@ -1,0 +1,15 @@
+from typing import Protocol
+
+from ai_drama_web.providers.models import (
+    ImageGenerationRequest,
+    ProviderJob,
+    ProviderResult,
+    VideoGenerationRequest,
+)
+
+
+class GenerationBackend(Protocol):
+    def create_image_job(self, request: ImageGenerationRequest) -> ProviderJob: ...
+    def create_video_job(self, request: VideoGenerationRequest) -> ProviderJob: ...
+    def get_job_status(self, provider_job_id: str) -> ProviderJob: ...
+    def fetch_result(self, provider_job_id: str) -> ProviderResult: ...
