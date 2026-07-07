@@ -79,8 +79,8 @@ Inline notices appear above the table:
 自动轮询中；刷新间隔来自运行时策略。
 RPM 限制：队列会按速率提交。
 restart_recovery_in_progress：启动后检查 queued/submitted/polling 任务。
-recovered_after_restart：应用重启后已恢复 3 个未完成任务：2 个继续自动处理，1 个需要人工检查。
-submission_outcome_unknown：1 个任务状态无法确认，已标记为 submission_outcome_unknown。
+recovered_after_restart：恢复检查完成，共发现 3 个未完成任务：2 个已恢复自动处理，1 个需要人工检查。
+submission_outcome_unknown：1 个 submitting 任务没有 provider job id，状态无法确认，未计入恢复成功。
 ```
 
 `submission_outcome_unknown` is shown as a warning state that requires user attention before rerun or manual resolution.
@@ -89,16 +89,21 @@ Recovery lifecycle:
 
 - recovery check start shows `restart_recovery_in_progress`;
 - recovery check completion shows `recovered_after_restart`;
+- `restart_recovery_in_progress` and `recovered_after_restart` are mutually exclusive;
 - `recovered_after_restart` is a nonblocking success/info notice;
 - users may dismiss `recovered_after_restart`;
+- dismissing `recovered_after_restart` only changes notice visibility;
 - dismissing `recovered_after_restart` must not stop Poller or React Query polling;
+- dismissing `recovered_after_restart` must not hide polling, RPM, or `submission_outcome_unknown` notices;
 - stable failure categories remain visible on affected rows;
 - `submission_outcome_unknown` must not be hidden by `recovered_after_restart`;
+- `submission_outcome_unknown` is not counted in recovered success;
 - persisted `submitting` jobs without provider job id are counted only under `submission_outcome_unknown`, not recovered success.
 
 Accessibility:
 
-- polling and restart notices use `role="status"` and `aria-live="polite"`;
+- dynamic recovery notices use separate `role="status"` and `aria-live="polite"` regions so updating one notice does not reread the full notice bar;
+- the recovered notice dismiss button has an accessible name and does not move focus into the Drawer;
 - RPM limit changes do not steal focus;
 - manual refresh buttons remain keyboard reachable next to the notices.
 

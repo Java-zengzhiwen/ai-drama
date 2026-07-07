@@ -33,10 +33,14 @@ Inline notices for auto polling, RPM limit, `restart_recovery_in_progress`, `rec
 Rules:
 
 - `restart_recovery_in_progress` appears while startup recovery scans persisted jobs;
-- `recovered_after_restart` appears after Poller reclaims recoverable jobs and shows recovered and exception counts;
+- `restart_recovery_in_progress` and `recovered_after_restart` are mutually exclusive;
+- `recovered_after_restart` appears after Poller reclaims recoverable jobs and shows discovered, recovered, and exception counts;
+- `recovered_after_restart` includes an accessible dismiss action;
 - `submission_outcome_unknown` remains a separate warning and is never merged into `recovered_after_restart`;
+- dismissing `recovered_after_restart` changes only notice visibility and does not change task state;
 - dismissing `recovered_after_restart` does not stop Poller or React Query polling;
-- notice updates use polite live-region behavior and do not steal focus.
+- dismissing `recovered_after_restart` does not hide polling, RPM, or `submission_outcome_unknown` notices;
+- notice updates use separate polite live-region behavior and do not steal focus.
 
 ### ShotGenerationInspector
 

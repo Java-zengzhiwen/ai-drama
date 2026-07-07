@@ -75,7 +75,8 @@ nonterminal job exists
 -> manual refresh available
 -> startup scan shows restart_recovery_in_progress
 -> Poller reclaims persisted queued/submitted/polling jobs
--> completed scan shows recovered_after_restart with recovered and exception counts
+-> startup scan completes and hides restart_recovery_in_progress
+-> completed scan shows recovered_after_restart with discovered, recovered, and exception counts
 -> submitting without provider id shows submission_outcome_unknown and is not counted as recovered success
 ```
 
@@ -86,9 +87,11 @@ app starts
 -> persisted queued/submitted/polling jobs found
 -> restart_recovery_in_progress notice appears without stealing focus
 -> Poller reclaims recoverable jobs
--> recovered_after_restart notice appears with recovered count and exception count
+-> restart_recovery_in_progress notice hides
+-> recovered_after_restart notice appears with discovered count, recovered count, and exception count
 -> user may dismiss recovered_after_restart notice
 -> dismissing notice does not stop Poller or React Query polling
+-> dismissing notice does not hide polling, RPM, or submission_outcome_unknown notices
 -> submission_outcome_unknown remains visible as a separate warning when needed
 ```
 

@@ -30,6 +30,7 @@ focused region comparison evidence:
 
 ```text
 docs/product-design/m3/assets/design-qa-focused-preview-rerun.png
+docs/product-design/m3/assets/design-qa-recovery-lifecycle.png
 ```
 
 viewports:
@@ -43,7 +44,7 @@ viewports:
 state:
 
 ```text
-Agnes 生成 / selected ready shot 1-01 / completed result v3 / recovered notices visible / rerun drawer opened from real trigger
+Agnes 生成 / selected ready shot 1-01 / completed result v3 / recovery lifecycle exercised / recovered notice dismissed / rerun drawer opened from real trigger
 Responsive evidence includes table-first viewport and drawer opened/scrolled into view.
 ```
 
@@ -84,7 +85,7 @@ Image quality and asset fidelity:
 Copy and content:
 
 - Pass. Copy covers ready/blocked visibility, ready-only submit, duplicate prevention, auto polling, manual refresh, RPM limit, restart recovery lifecycle, result versioning, current adopted result, two result URL expiration cases, and immutable rerun.
-- `recovered_after_restart` states the recovered count and exception count.
+- `recovered_after_restart` distinguishes discovered, recovered, and exception counts.
 - `submission_outcome_unknown` is shown separately and is not counted as recovered success.
 - Forbidden scope remains absent: no LibTV, dubbing, subtitles, BGM, timeline, export, collaboration, or M4 acceptance UI.
 
@@ -127,9 +128,21 @@ Browser verification was executed against `docs/product-design/m3/assets/prototy
 - Pass. Blocked checkboxes are disabled.
 - Pass. Keyboard focus style is visible on drawer fields.
 
+Recovery lifecycle:
+
+- Pass. `restart_recovery_in_progress` and `recovered_after_restart` are mutually exclusive.
+- Pass. Completion replaces the in-progress notice.
+- Pass. Recovered copy distinguishes discovered, recovered, and exception counts.
+- Pass. `submission_outcome_unknown` remains separately visible.
+- Pass. Recovered notice can be dismissed by keyboard and pointer.
+- Pass. Dismissal does not hide polling, RPM, or `submission_outcome_unknown` notices.
+- Pass. Dismissal does not alter Drawer behavior or task state.
+
 Accessibility:
 
-- Pass. Polling and recovery notices use polite live-region behavior.
+- Pass. Polling, recovery in-progress, recovered, and unknown notices use separate polite live-region behavior so state changes do not re-announce the whole notice bar.
+- Pass. Recovered dismiss button is reachable by `Tab`, has accessible name `关闭恢复完成提示`, and triggers with pointer, `Enter`, and `Space`.
+- Pass. After dismissal, focus moves to the GenerationNoticeBar container and is not forced into the Drawer or page top.
 - Pass. Table selection checkboxes and rerun action buttons have shot-specific accessible names.
 - Pass. Row `Enter` selects the row without submitting a job.
 - Pass. Row keyboard/click handling ignores events from buttons, inputs, selects, textareas, and links.
@@ -137,6 +150,9 @@ Accessibility:
 ## Patches Made During QA
 
 - Added `recovered_after_restart` and distinguished it from `restart_recovery_in_progress` and `submission_outcome_unknown`.
+- Added recovery lifecycle prototype controls for scan in-progress and scan completed states.
+- Added `recovered_after_restart` dismiss action with keyboard-accessible button and notice-level visibility state only.
+- Updated recovery copy to distinguish 3 discovered unfinished tasks, 2 recovered tasks, and 1 manual-check exception.
 - Implemented real drawer open/close behavior from `data-rerun-trigger` buttons for failed, cancelled, expired, and unsatisfactory examples.
 - Added responsive drawer semantics: desktop `role="dialog"` with `aria-modal="true"`; narrow viewport `role="region"` with no `aria-modal`.
 - Added desktop focus trap, `Esc` close, actual trigger focus return, and narrow viewport scroll/focus behavior.

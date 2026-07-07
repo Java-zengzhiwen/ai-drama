@@ -127,5 +127,5 @@ submission_outcome_unknown
 Recovery state semantics:
 
 - `restart_recovery_in_progress`: startup recovery scan is running for persisted `queued`, `submitted`, and `polling` jobs.
-- `recovered_after_restart`: Poller has reclaimed recoverable persisted jobs; UI shows recovered count and exception count as a nonblocking notice.
+- `recovered_after_restart`: startup recovery scan is complete; Poller has reclaimed recoverable persisted jobs; UI shows discovered count, recovered count, and exception count as a dismissible nonblocking notice.
 - `submission_outcome_unknown`: a persisted `submitting` job has no provider job id and must not be counted as recovered success.

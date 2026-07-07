@@ -61,19 +61,31 @@ Startup recovery check is running for persisted `queued`, `submitted`, and `poll
 restart_recovery_in_progress：启动后检查 queued/submitted/polling 任务。
 ```
 
+Transition:
+
+```text
+restart_recovery_in_progress
+-> recovered_after_restart
+```
+
+`restart_recovery_in_progress` and `recovered_after_restart` must not be visible at the same time.
+
 ### recovered_after_restart
 
 Poller has reclaimed recoverable persisted jobs after app restart. UI shows recovered count and exception count.
 
 ```text
-应用重启后已恢复 3 个未完成任务：2 个继续自动处理，1 个需要人工检查。
+恢复检查完成，共发现 3 个未完成任务：2 个已恢复自动处理，1 个需要人工检查。
 ```
 
 Rules:
 
 - shown only after recovery check completes;
 - can be dismissed by the user;
+- dismissal creates `recovered_after_restart.dismissed`;
+- `recovered_after_restart.dismissed` is only a UI notice visibility state, not a new Job state;
 - dismissal does not stop Poller or React Query polling;
+- dismissal does not hide polling, RPM, or `submission_outcome_unknown` notices;
 - does not hide row-level failures;
 - does not hide `submission_outcome_unknown`.
 
@@ -82,7 +94,7 @@ Rules:
 A persisted `submitting` job has no provider job id after restart. It is not counted as `recovered_after_restart`.
 
 ```text
-1 个任务状态无法确认，已标记为 submission_outcome_unknown。
+1 个 submitting 任务没有 provider job id，状态无法确认，未计入恢复成功。
 ```
 
 ### completed

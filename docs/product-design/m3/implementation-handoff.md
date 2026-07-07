@@ -144,7 +144,7 @@ submission_outcome_unknown
 Recovery semantics:
 
 - `restart_recovery_in_progress`: app startup found persisted `queued`, `submitted`, or `polling` jobs and is checking whether Poller can reclaim them.
-- `recovered_after_restart`: recovery check completed; Poller reclaimed recoverable jobs; UI shows recovered count and exception count.
+- `recovered_after_restart`: recovery check completed; Poller reclaimed recoverable jobs; UI shows discovered count, recovered count, and exception count.
 - `submission_outcome_unknown`: persisted `submitting` job has no provider job id and cannot be counted as recovered success.
 
 ## Loading, Empty, Error States
@@ -183,11 +183,14 @@ Error:
 - Manual refresh is available for chapter-level job refresh and selected job refresh.
 - RPM limit hint remains visible while queued jobs exist.
 - Show `restart_recovery_in_progress` while startup recovery scans persisted jobs.
+- Do not show `restart_recovery_in_progress` and `recovered_after_restart` at the same time.
 - Show `recovered_after_restart` after Poller reclaims recoverable jobs.
-- `recovered_after_restart` must include recovered count and exception count.
-- User may dismiss `recovered_after_restart`; dismissal must not stop Poller or React Query polling.
+- `recovered_after_restart` must include discovered count, recovered count, and exception count.
+- User may dismiss `recovered_after_restart`; dismissal must change only local notice visibility.
+- Dismissal must not stop Poller, pause React Query polling, modify Job state, or hide polling/RPM notices.
 - Show `submission_outcome_unknown` separately when a persisted `submitting` job has no provider job id.
 - `submission_outcome_unknown` must not be hidden by `recovered_after_restart`.
+- `submission_outcome_unknown` must not be counted as recovered success.
 
 ## Video Preview
 

@@ -156,9 +156,20 @@
       gap: 8px;
       padding: 8px 10px;
     }
+    .notice[hidden] { display: none; }
     .notice.ok { background: var(--green-bg); border-color: #bbf7d0; color: #166534; }
     .notice.warn { background: var(--amber-bg); border-color: #fed7aa; color: #9a3412; }
     .notice.info { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+    .notice-dismiss {
+      background: transparent;
+      border: 1px solid currentColor;
+      border-radius: 999px;
+      color: inherit;
+      font-size: 12px;
+      line-height: 1;
+      padding: 3px 8px;
+      white-space: nowrap;
+    }
     .btn, .primary, .danger, .link {
       background: var(--surface);
       border: 1px solid var(--line);
@@ -363,12 +374,24 @@
               <button class="btn">筛选</button>
             </div>
 
-            <div class="notice-row" role="status" aria-live="polite">
+            <div class="notice-row" id="generationNoticeBar" aria-label="generation notices" tabindex="-1">
               <div class="notice ok"><span class="dot"></span>自动轮询中；刷新间隔来自运行时策略</div>
               <div class="notice warn"><span class="dot"></span>RPM 限制：队列会按 provider 限流策略提交</div>
-              <div class="notice info"><span class="dot"></span>restart_recovery_in_progress：启动后检查 queued/submitted/polling 任务</div>
-              <div class="notice ok"><span class="dot"></span>recovered_after_restart：应用重启后已恢复 3 个未完成任务：2 个继续自动处理，1 个需要人工检查。</div>
-              <div class="notice warn"><span class="dot"></span>submission_outcome_unknown：1 个任务状态无法确认，未计入恢复成功。</div>
+              <button type="button" class="btn" id="showRecoveryInProgress">模拟恢复检查中</button>
+              <button type="button" class="btn" id="showRecoveryCompleted">模拟恢复检查完成</button>
+              <div class="notice info" id="recoveryInProgressNotice" data-recovery-state="restart_recovery_in_progress" role="status" aria-live="polite" hidden>
+                <span class="dot"></span>
+                <span>restart_recovery_in_progress：正在检查已持久化的 queued/submitted/polling 任务。</span>
+              </div>
+              <div class="notice ok recovery-notice" id="recoveredNotice" data-recovery-state="recovered_after_restart" role="status" aria-live="polite">
+                <span class="dot"></span>
+                <span>recovered_after_restart：恢复检查完成，共发现 3 个未完成任务：2 个已恢复自动处理，1 个需要人工检查。</span>
+                <button type="button" class="notice-dismiss" id="dismissRecoveredNotice" aria-label="关闭恢复完成提示">关闭</button>
+              </div>
+              <div class="notice warn" id="submissionUnknownNotice" data-recovery-state="submission_outcome_unknown" role="status" aria-live="polite">
+                <span class="dot"></span>
+                <span>submission_outcome_unknown：1 个 submitting 任务没有 provider job id，状态无法确认，未计入恢复成功。</span>
+              </div>
             </div>
 
             <section class="surface">
@@ -533,6 +556,13 @@
     const cancelDrawer = document.getElementById('cancelDrawer');
     const drawerTitle = document.getElementById('rerunTitle');
     const narrowViewport = window.matchMedia("(max-width: 1180px)");
+    const recoveryInProgressNotice = document.getElementById('recoveryInProgressNotice');
+    const recoveredNotice = document.getElementById('recoveredNotice');
+    const submissionUnknownNotice = document.getElementById('submissionUnknownNotice');
+    const dismissRecoveredNotice = document.getElementById('dismissRecoveredNotice');
+    const showRecoveryInProgressButton = document.getElementById('showRecoveryInProgress');
+    const showRecoveryCompletedButton = document.getElementById('showRecoveryCompleted');
+    const generationNoticeBar = document.getElementById('generationNoticeBar');
     let lastRerunTrigger = null;
 
     function interactiveTarget(event) {
@@ -585,6 +615,24 @@
         first.focus();
       }
     }
+
+    function showRecoveryInProgress() {
+      recoveryInProgressNotice.hidden = false;
+      recoveredNotice.hidden = true;
+    }
+
+    function showRecoveryCompleted() {
+      recoveryInProgressNotice.hidden = true;
+      recoveredNotice.hidden = false;
+      submissionUnknownNotice.hidden = false;
+    }
+
+    dismissRecoveredNotice?.addEventListener('click', () => {
+      recoveredNotice.hidden = true;
+      generationNoticeBar.focus();
+    });
+    showRecoveryInProgressButton?.addEventListener('click', showRecoveryInProgress);
+    showRecoveryCompletedButton?.addEventListener('click', showRecoveryCompleted);
 
     document.querySelectorAll('[data-rerun-trigger]').forEach((trigger) => {
       trigger.addEventListener('click', (event) => {
