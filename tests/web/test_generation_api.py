@@ -10,6 +10,7 @@ from ai_drama_runtime.shot_prompt_canonical import (
 )
 from ai_drama_runtime.store import RuntimeStore, now_iso
 from ai_drama_web.app import create_app
+from ai_drama_web.providers.models import ProviderJob
 from ai_drama_web.store import ProductStore
 
 
@@ -207,6 +208,27 @@ def test_generation_job_detail_includes_saved_request_preview(tmp_path):
     assert body["request"]["assets"][0]["url"].startswith("https://assets.example.test/public/assets/")
 
 
+def test_refresh_generation_job_submits_queued_video_job(tmp_path):
+    data_root, chapter, revision, _canonical = _ready_chapter(tmp_path)
+    with _app_client(data_root) as client:
+        client.app.state.generation_backend = ApiVideoBackend()
+        created = client.post(
+            f"/api/chapters/{chapter.chapter_id}/generation/video-jobs",
+            json={
+                "prompt_revision_id": revision.revision_id,
+                "shot_id": "SHOT_001",
+                "idempotency_key": "submit-1",
+            },
+        ).json()
+        refreshed = client.post(f"/api/generation/jobs/{created['job_id']}/refresh")
+
+    assert refreshed.status_code == 200, refreshed.text
+    body = refreshed.json()
+    assert body["internal_status"] == "submitted"
+    assert body["ui_status"] == "generating"
+    assert body["provider_job_id"] == "api-video-1"
+
+
 def test_queue_video_job_endpoint_blocks_unready_shot(tmp_path):
     data_root, chapter, revision, _canonical = _ready_chapter(tmp_path)
     with _app_client(data_root) as client:
@@ -224,3 +246,12 @@ def test_queue_video_job_endpoint_blocks_unready_shot(tmp_path):
         "error_code": "shot_prompt_blocked",
         "error_message": "shot prompt is not ready",
     }
+
+
+class ApiVideoBackend:
+    def create_video_job(self, request):
+        return ProviderJob(
+            provider_job_id="api-video-1",
+            status="submitted",
+            raw={"provider": "api-video", "prompt": request.prompt},
+        )

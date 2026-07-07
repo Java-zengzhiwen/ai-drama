@@ -13,6 +13,9 @@ from ai_drama_web.schemas.generation import (
 )
 from ai_drama_web.secrets import LocalSecretStore
 from ai_drama_web.services.asset_delivery import AssetDeliveryInvalidPublicBaseUrl
+from ai_drama_web.providers.fake import FakeGenerationBackend
+from ai_drama_web.providers.base import GenerationBackend
+from ai_drama_web.services.generation_execution import GenerationExecutionService
 from ai_drama_web.services.generation_jobs import GenerationJobBlocked, GenerationJobService
 from ai_drama_web.store import ProductStore
 
@@ -38,6 +41,14 @@ def get_secret_store(request: Request) -> LocalSecretStore:
     return request.app.state.secret_store
 
 
+def get_generation_backend(request: Request) -> GenerationBackend:
+    backend = getattr(request.app.state, "generation_backend", None)
+    if backend is None:
+        backend = FakeGenerationBackend()
+        request.app.state.generation_backend = backend
+    return backend
+
+
 def get_service(
     product_store: ProductStore = Depends(get_product_store),
     runtime_store: RuntimeStore = Depends(get_runtime_store),
@@ -50,6 +61,14 @@ def get_service(
         secret_store,
         public_base_url=settings.public_base_url,
     )
+
+
+def get_execution_service(
+    product_store: ProductStore = Depends(get_product_store),
+    runtime_store: RuntimeStore = Depends(get_runtime_store),
+    backend: GenerationBackend = Depends(get_generation_backend),
+) -> GenerationExecutionService:
+    return GenerationExecutionService(product_store, runtime_store, backend)
 
 
 @router.post(
@@ -99,6 +118,19 @@ async def generation_job_detail(
         raise HTTPException(status_code=404, detail="generation job not found")
     body = _job_read(job)
     return {**body, "request": json.loads(runtime_store.read_text(job.request_object_id))}
+
+
+@router.post("/generation/jobs/{job_id}/refresh", response_model=GenerationJobRead)
+async def refresh_generation_job(
+    job_id: str,
+    service: GenerationExecutionService = Depends(get_execution_service),
+):
+    try:
+        return _job_read(service.submit_queued_job(job_id))
+    except ValueError as exc:
+        if str(exc) == "generation job not found":
+            raise HTTPException(status_code=404, detail="generation job not found")
+        return _error(409, "job_not_refreshable", str(exc))
 
 
 def _job_read(job) -> dict:

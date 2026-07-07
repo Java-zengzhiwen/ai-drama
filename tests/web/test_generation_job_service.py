@@ -168,6 +168,7 @@ def test_queue_video_job_persists_canonical_request_and_returns_existing_duplica
     request = json.loads(runtime.read_text(job.request_object_id))
     assert request["prompt"] == "Shen Qinghe turns toward the lantern."
     assert request["negative_prompt"] == "warped face"
+    assert request["duration_seconds"] == 5
     assert request["parameters"] == {"frame_rate": 24, "num_frames": 121}
     assert [item["asset_id"] for item in request["assets"]] == asset_ids
     assert all(item["url"].startswith("https://assets.example.test/public/assets/") for item in request["assets"])

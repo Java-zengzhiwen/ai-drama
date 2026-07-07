@@ -133,6 +133,7 @@ class GenerationJobService:
             "shot_id": shot["shot_id"],
             "prompt": overrides.get("prompt") or shot["positive_prompt"],
             "negative_prompt": overrides.get("negative_prompt") or shot["negative_prompt"],
+            "duration_seconds": shot["duration_seconds"],
             "assets": assets,
             "parameters": dict(overrides.get("parameters") or shot["agnes_video_params"]),
         }
