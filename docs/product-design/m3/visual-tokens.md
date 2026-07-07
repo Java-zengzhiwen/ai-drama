@@ -59,8 +59,12 @@ result.preview.video      16:9, fills inspector content width
 result.version.thumbnail  16:9, min 96px wide
 asset.ref.thumb           54px x 54px
 shot.table.row            stable dense row height
-drawer.width.desktop      360px to 420px
+drawer.width.desktop      360px
+drawer.width.tablet       100% stacked below preview
+drawer.width.mobile       100% full content width
 ```
+
+Do not introduce fixed provider pixel resolution as a visual token. Video surfaces use 16:9 aspect ratio; actual provider size fields appear only when supported by backend provider capability/API schema.
 
 ## State Mapping
 
@@ -82,5 +86,7 @@ result_expired warning
 - Do not put cards inside cards.
 - Use borders and subtle surface tints before shadows.
 - Tables stay dense and horizontally scrollable.
-- Drawers use the same form rhythm as M2 asset detail.
+- Drawers use the same form rhythm as M2 asset detail and the single drawer width token above.
 - Video preview is a decision surface, not an editing surface.
+- At 1180px and below, drawer stacks below the selected preview and does not cover the table.
+- At 768px and below, drawer actions wrap and table/version strips keep horizontal scroll.

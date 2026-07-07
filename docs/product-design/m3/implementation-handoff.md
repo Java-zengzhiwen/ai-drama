@@ -27,7 +27,13 @@ Agnes 生成
 结果与重跑
 ```
 
-M3 unlocks `Agnes 生成` and `结果与重跑` after Shot Prompt readiness permits video generation.
+M3 Gate rules:
+
+- `Agnes 生成` unlocks when the chapter has a current Shot Prompt revision.
+- Ready and blocked shots are both visible inside `Agnes 生成`.
+- Only ready shots can be selected or submitted.
+- `结果与重跑` unlocks when at least one `GenerationJob` exists for the chapter.
+- Blocked rows stay visible with correction routes, but their submit controls are disabled.
 
 ## Main Components By Page
 
@@ -85,6 +91,18 @@ GET /api/assets/{asset_id}/content
 GET /api/settings/agnes
 ```
 
+## Provider Capability And API Schema Boundary
+
+The frontend must display only video parameters that the backend provider capability/API schema explicitly supports.
+
+Implementation rules:
+
+- do not hard-code Agnes provider-only parameters in React;
+- do not show fixed frame rate, style strength, fixed pixel resolution, or provider mode labels unless returned by backend capability/API schema;
+- render mode and duration override controls only when those fields are supported;
+- keep unsupported fields absent rather than disabled, unless the API returns an explicit unsupported reason that should be explained;
+- persist canonical values from the API schema, not localized display labels.
+
 ## State Mapping
 
 Backend job states to UI states:
@@ -124,8 +142,10 @@ Loading:
 
 Empty:
 
-- Agnes generation: `暂无 ready 镜头。请先在 Shot Prompt 标记镜头 Ready。`
-- Results: `暂无视频结果。提交 Agnes 生成后会显示结果版本。`
+- Agnes locked: `请先生成或选择当前 Shot Prompt revision。`
+- Agnes unlocked with no ready rows: `暂无 ready 镜头。blocked 镜头仍会显示原因，但不可提交。`
+- Results locked: `已有 GenerationJob 后可查看结果与重跑。`
+- Results empty after unlock: `暂无视频结果。提交 Agnes 生成后会显示结果版本。`
 
 Error:
 
@@ -156,6 +176,8 @@ Error:
 - Do not autoplay.
 - Keep play controls visible.
 - Show result URL expiration separately from local persisted result availability.
+- `source_url_expired + local_result_available`: show the local persisted result, label the provider source URL as expired, keep rerun available when API state permits.
+- `source_url_expired + local_result_missing`: do not show a broken video preview; show source Prompt, source assets, Job, and attempt metadata as the recovery basis.
 
 ## Result Version History
 
@@ -176,6 +198,8 @@ generation mode
 duration
 ```
 
+Render an override field only if the backend provider capability/API schema supports it.
+
 Required source context:
 
 - source job id;
@@ -188,24 +212,57 @@ Required source context:
 
 Rerun creation must preserve the source job and source result.
 
+Asset override contract:
+
+- reuse the M2 Asset Picker component and visual language;
+- show only assets with usable state;
+- support category filtering for `character_reference`, `character_outfit`, `scene_reference`, `scene_angle`, `prop_reference`, and `shot_keyframe`;
+- show current asset and replacement asset side by side before submit;
+- save exact replacement asset IDs in the rerun request;
+- never save thumbnail URL, local path, display name, or provider URL as the identity;
+- validate provider reachability for every selected replacement before enabling `创建重跑任务`;
+- if reachability fails, preserve the selection in the drawer and show the normalized error category.
+
+Drawer keyboard and accessibility:
+
+- use `role="dialog"`, `aria-modal="true"`, `aria-labelledby`, and `aria-describedby`;
+- move focus into the drawer when opened;
+- trap `Tab` focus within the drawer while modal;
+- close on `Esc`;
+- return focus to the invoking rerun action after close;
+- keep reset, cancel, and create actions keyboard reachable in that order.
+
 ## Responsive Behavior
 
 Desktop:
 
 - keep generation table and right preview/inspector side by side;
-- drawer opens from the right and may overlay the inspector.
+- drawer opens from the right at the shared desktop width token;
+- workspace reserves drawer width when the drawer is persistently open;
+- drawer may overlay the inspector only for transient open/close animation, not for the settled state.
 
 Tablet / narrow desktop:
 
 - keep table first;
 - stack result preview below the table;
-- drawer remains full-height.
+- at 1180px and below, drawer stacks below the preview and no longer covers table or inspector;
+- drawer remains full-width within the content column.
 
 Mobile:
 
 - preserve order: Workflow Rail, Tabs, notices, table, selected preview, drawer;
 - keep gate alerts visible;
 - allow horizontal scroll for dense tables and version strips.
+- at 768px and below, drawer is full-width with footer actions wrapping instead of overflowing.
+
+## Table And Notice Accessibility
+
+- Table selection checkboxes must have shot-specific accessible names.
+- Blocked shot checkboxes are disabled and named as not submittable.
+- Row focus with `Enter` selects the row; it must not submit the job.
+- Batch submit button references selected-ready count via `aria-describedby`.
+- Polling, RPM, and restart recovery notices use `role="status"` with `aria-live="polite"`.
+- Notice updates must not steal focus from the table or drawer.
 
 ## Reusable M1/M2 Components
 
@@ -220,18 +277,20 @@ Reuse or closely match:
 - asset thumbnail and version strip language from M2;
 - Drawer pattern from Asset Grid;
 - Prompt Gate summary style;
-- Agnes parameter preview block.
+- Agnes parameter preview block driven by backend provider capability/API schema.
 
 ## Design Decisions Implementation Must Not Change
 
 - M3 is still a chapter workspace, not a new dashboard.
 - `Agnes 生成` uses a table-first command surface.
+- `Agnes 生成` unlocks from current Shot Prompt revision existence, not from every shot being ready.
 - Result preview is visible from the selected generation row.
 - Video preview never autoplays.
 - Rerun is explicit and immutable.
 - Only approved override fields appear in the rerun drawer.
+- Approved override fields still appear only when backend provider capability/API schema supports them.
 - Prior jobs and prior results remain visible after rerun.
-- Blocked shots stay visible with direct correction routes.
+- Ready and blocked shots stay visible; only ready shots can be submitted.
 - Polling, RPM, and restart recovery states are first-class UI states.
 - Do not add LibTV, dubbing, subtitles, BGM, timeline, video editing, export, collaboration, or M4 acceptance UI.
 

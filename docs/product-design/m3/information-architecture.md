@@ -25,7 +25,13 @@ Agnes 生成
 结果与重跑
 ```
 
-`Agnes 生成` and `结果与重跑` are unlocked only when Shot Prompt readiness allows video generation. Earlier tabs remain available and retain their M1/M2 behavior.
+Gate rules:
+
+- `Agnes 生成` unlocks when the chapter has a current Shot Prompt revision.
+- Ready and blocked shots are both visible after `Agnes 生成` unlocks.
+- Only ready shots can be selected for submit.
+- `结果与重跑` unlocks when at least one `GenerationJob` exists for the chapter.
+- Earlier tabs remain available and retain their M1/M2 behavior.
 
 ## Agnes 生成 Surface
 
@@ -36,7 +42,7 @@ Primary regions:
 - generation toolbar;
 - inline polling, RPM, and restart recovery notices;
 - ready/blocked shot generation table;
-- selected shot prompt and parameter preview;
+- selected shot prompt and provider capability/API schema parameter preview;
 - result preview inspector for the selected shot;
 - rerun drawer entry when the selected job/result needs another attempt.
 
@@ -95,7 +101,8 @@ Result display states:
 ```text
 success
 failed
-result_expired
+source_url_expired + local_result_available
+source_url_expired + local_result_missing
 current_selected
 not_selected
 ```

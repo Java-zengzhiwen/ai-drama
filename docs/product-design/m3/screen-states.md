@@ -2,10 +2,18 @@
 
 ## Agnes 生成
 
-### empty
+### locked_no_current_shot_prompt_revision
+
+`Agnes 生成` tab remains locked when no current Shot Prompt revision exists.
 
 ```text
-暂无 ready 镜头。请先在 Shot Prompt 标记镜头 Ready。
+请先生成或选择当前 Shot Prompt revision。
+```
+
+### empty_no_ready_rows
+
+```text
+暂无 ready 镜头。blocked 镜头仍会显示原因，但不可提交。
 ```
 
 ### loading
@@ -14,11 +22,11 @@ Keep Workflow Rail, chapter Tabs, notices, and table header visible. Use table s
 
 ### ready
 
-Ready rows are selectable and can be submitted. Show the prompt revision, asset readiness, mode, duration, and preview summary.
+Ready rows are selectable and can be submitted. Show the prompt revision, asset readiness, and only backend provider capability/API schema supported parameter fields.
 
 ### blocked
 
-Blocked rows remain visible in the table with the blocker reason.
+Blocked rows remain visible in the table with the blocker reason. Their selection checkbox is disabled and the row action routes back to Shot Prompt or 资料与资产.
 
 Examples:
 
@@ -61,6 +69,8 @@ Row shows terminal cancelled status. It can be rerun only through explicit rerun
 
 ### no_results
 
+`结果与重跑` remains locked until at least one `GenerationJob` exists.
+
 ```text
 暂无视频结果。提交 Agnes 生成后会显示结果版本。
 ```
@@ -81,17 +91,41 @@ Inline success state:
 当前采用结果已更新。
 ```
 
-### result_expired
+### source_url_expired_local_result_available
 
 Show warning:
 
 ```text
-结果 URL 已过期。保留原 Job 和历史结果，可基于源输入重跑。
+Provider source URL 已过期。本地保存结果仍可预览；保留原 Job 和历史结果，可基于源输入重跑。
+```
+
+### source_url_expired_local_result_missing
+
+Show error:
+
+```text
+Provider source URL 已过期，且本地结果缺失。无法预览原视频；保留源 Prompt、资产 ID、Job 和 attempt，可创建重跑。
 ```
 
 ### rerun_drawer_open
 
 Drawer shows source job, source assets, source prompt, approved override fields, and create/cancel actions.
+
+Asset override state inside the drawer:
+
+- reuses the M2 Asset Picker;
+- lists only usable assets;
+- filters by category;
+- compares current and replacement assets;
+- stores exact asset IDs;
+- blocks submit until provider reachability validation passes.
+
+Drawer accessibility state:
+
+- drawer is a modal dialog on desktop;
+- `Esc` closes it;
+- `Tab` remains inside it while open;
+- focus returns to the invoking action after close.
 
 ## Shared Errors
 

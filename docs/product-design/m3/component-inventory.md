@@ -32,7 +32,7 @@ Inline notices for auto polling, RPM limit, and restart recovery.
 
 ### ShotGenerationInspector
 
-Selected-shot read-only panel showing Prompt, negative Prompt, source assets, and Agnes parameters.
+Selected-shot read-only panel showing Prompt, negative Prompt, source assets, 16:9 video aspect, and only Agnes parameters returned by backend provider capability/API schema.
 
 ### ResultPreviewPanel
 
@@ -58,13 +58,33 @@ mode override
 duration override
 ```
 
+`asset override` reuses the M2 Asset Picker rather than introducing a new picker.
+
+Required asset override behaviors:
+
+- only usable assets are selectable;
+- category filters match M2 asset categories;
+- current and replacement assets are compared before submit;
+- exact asset IDs are saved in the rerun request;
+- provider reachability is validated before submit.
+
 ### FailureCategoryChip
 
 Compact normalized error category display for provider and workflow failures.
 
 ### PollingStatusIndicator
 
-Shows whether React Query polling is active for nonterminal jobs.
+Shows whether React Query polling is active for nonterminal jobs. It must be announced with polite live-region semantics and must not move focus.
+
+### DrawerAccessibilityContract
+
+Shared behavior for `RerunDrawer`:
+
+- modal dialog role and labels;
+- focus moves in on open and returns on close;
+- `Esc` closes;
+- `Tab` remains inside while modal;
+- desktop width and responsive stacking follow the shared drawer token.
 
 ## Explicitly Not Components
 
