@@ -26,6 +26,41 @@ def _create_project_and_chapter(client):
     return project, chapter
 
 
+def _create_chapter_with_source(client):
+    project = client.post(
+        "/api/projects",
+        json={
+            "name": "生死",
+            "description": "古装重生短剧",
+            "series_canon": "明代商贾世界",
+            "characters_context": "沈清荷、沈清莲、顾长渊",
+            "production_brief": "真人写实，16:9，低饱和",
+        },
+    ).json()
+    chapter = client.post(
+        f"/api/projects/{project['project_id']}/chapters",
+        json={"title": "第一章", "position": 1},
+    ).json()
+    source = client.post(
+        f"/api/chapters/{chapter['chapter_id']}/source-revisions",
+        json={"content": "沈清荷醒来后发现自己回到成亲前，她决定重新查账。"},
+    )
+    assert source.status_code == 200, source.text
+    return project, chapter
+
+
+def _generate_and_approve_storyboard(client, chapter_id):
+    script_response = client.post(f"/api/chapters/{chapter_id}/script/generate")
+    assert script_response.status_code == 200, script_response.text
+    approved_script = client.post(f"/api/script-revisions/{script_response.json()['revision_id']}/approve")
+    assert approved_script.status_code == 200, approved_script.text
+    storyboard_response = client.post(f"/api/chapters/{chapter_id}/storyboard/generate")
+    assert storyboard_response.status_code == 200, storyboard_response.text
+    approved_storyboard = client.post(f"/api/storyboard-revisions/{storyboard_response.json()['revision_id']}/approve")
+    assert approved_storyboard.status_code == 200, approved_storyboard.text
+    return approved_storyboard.json()
+
+
 def _create_profile(client, project_id, chapter_id, profile_type, name):
     payload = {
         "name": name,
@@ -333,6 +368,19 @@ def test_analyze_canonical_storyboard_reports_missing_assets_and_ready_character
     latest = client.get(f"/api/chapters/{chapter_id}/asset-requirements/latest")
     assert latest.status_code == 200, latest.text
     assert latest.json() == result
+
+
+def test_analyze_accepts_storyboard_generated_by_web_workflow(client):
+    _, chapter = _create_chapter_with_source(client)
+    approved_storyboard = _generate_and_approve_storyboard(client, chapter["chapter_id"])
+
+    response = client.post(f"/api/chapters/{chapter['chapter_id']}/asset-requirements/analyze")
+
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["chapter_id"] == chapter["chapter_id"]
+    assert result["storyboard_revision_id"] == approved_storyboard["revision_id"]
+    assert result["status"] == "missing_assets"
 
 
 def test_non_usable_bound_assets_surface_generation_or_review_states(client):

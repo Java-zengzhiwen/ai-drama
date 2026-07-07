@@ -203,9 +203,10 @@ function useWorkflowRail(status?: ChapterStatus, statusUnavailable = false, stat
 
     const current = status?.status ?? "missing_source";
     const sourceDone = current !== "missing_source";
-    const scriptDone = current === "script_approved" || current === "storyboard_draft" || current === "storyboard_approved";
-    const storyboardDone = current === "storyboard_approved";
+    const scriptDone = current === "script_approved" || current === "storyboard_draft" || storyboardDoneStatus(current);
+    const storyboardDone = storyboardDoneStatus(current);
     const productionOpen = storyboardDone;
+    const shotPromptStep = shotPromptRailStep(current, productionOpen);
 
     return [
       {
@@ -229,9 +230,9 @@ function useWorkflowRail(status?: ChapterStatus, statusUnavailable = false, stat
         reason: productionOpen ? "" : productionBlockedReason,
       },
       {
-        color: productionOpen ? "default" : "default",
-        label: productionOpen ? "Shot Prompt 待生成" : "Shot Prompt 待解锁",
-        reason: productionOpen ? "等待资产需求 ready" : productionBlockedReason,
+        color: shotPromptStep.color,
+        label: shotPromptStep.label,
+        reason: shotPromptStep.reason,
       },
       {
         color: "default",
@@ -287,7 +288,7 @@ function LockedReasons({ status }: { status?: ChapterStatus }) {
 }
 
 function productionLockReason(status?: ChapterStatus) {
-  return status?.status === "storyboard_approved" ? futureProductionBlockedReason : productionBlockedReason;
+  return storyboardDoneStatus(status?.status ?? "") ? futureProductionBlockedReason : productionBlockedReason;
 }
 
 function storyboardLockReason(status?: ChapterStatus) {
@@ -295,15 +296,56 @@ function storyboardLockReason(status?: ChapterStatus) {
 }
 
 function storyboardUnlocked(status?: ChapterStatus) {
-  return ["script_approved", "storyboard_draft", "storyboard_approved"].includes(status?.status ?? "");
+  const current = status?.status ?? "";
+  return ["script_approved", "storyboard_draft"].includes(current) || storyboardDoneStatus(current);
 }
 
 function assetsUnlocked(status?: ChapterStatus) {
-  return status?.status === "storyboard_approved";
+  return storyboardDoneStatus(status?.status ?? "");
 }
 
 function shotPromptUnlocked(status?: ChapterStatus) {
-  return status?.status === "storyboard_approved";
+  return storyboardDoneStatus(status?.status ?? "");
+}
+
+function storyboardDoneStatus(status: string) {
+  return ["storyboard_approved", "assets_incomplete", "assets_ready", "prompts_draft", "prompts_ready"].includes(status);
+}
+
+function shotPromptRailStep(status: string, productionOpen: boolean) {
+  if (!productionOpen) {
+    return {
+      color: "default",
+      label: "Shot Prompt 待解锁",
+      reason: productionBlockedReason,
+    };
+  }
+  if (status === "assets_ready") {
+    return {
+      color: "processing",
+      label: "Shot Prompt 可生成",
+      reason: "",
+    };
+  }
+  if (status === "prompts_draft") {
+    return {
+      color: "processing",
+      label: "Shot Prompt 待确认",
+      reason: "检查并标记镜头 Ready",
+    };
+  }
+  if (status === "prompts_ready") {
+    return {
+      color: "success",
+      label: "Shot Prompt 已就绪",
+      reason: "",
+    };
+  }
+  return {
+    color: "default",
+    label: "Shot Prompt 待生成",
+    reason: "等待资产需求 ready",
+  };
 }
 
 function lockedLabel(label: string, reason: string) {

@@ -714,10 +714,9 @@ def test_fresh_runtime_store_schema_matches_migrated_legacy_schema(tmp_path):
     assert fresh_schema == migrated_legacy_schema
 
 
-def test_phase3a_scope_does_not_create_later_phase_files():
+def test_phase3a_scope_does_not_create_unapproved_later_phase_files():
     repo_root = Path(__file__).resolve().parents[1]
     forbidden = [
-        "ai_drama_runtime/shot_prompt_canonical.py",
         "ai_drama_runtime/shot_prompt_renderer.py",
         "ai_drama_runtime/shot_prompt_bundle.py",
         "skills/ai-drama-shot-prompt-canonical-skill/v0.1.0/skill.json",

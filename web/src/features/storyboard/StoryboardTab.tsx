@@ -41,7 +41,15 @@ type SaveInput = {
 };
 
 const storyboardBlockedReason = "未确认剧本，不允许生成分镜。";
-const enabledStatuses = new Set(["script_approved", "storyboard_draft", "storyboard_approved"]);
+const enabledStatuses = new Set([
+  "script_approved",
+  "storyboard_draft",
+  "storyboard_approved",
+  "assets_incomplete",
+  "assets_ready",
+  "prompts_draft",
+  "prompts_ready",
+]);
 const tableFields: Array<keyof CanonicalShot> = [
   "shot_order",
   "duration_seconds",

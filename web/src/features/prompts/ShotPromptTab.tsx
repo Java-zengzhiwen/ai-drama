@@ -38,6 +38,7 @@ export function ShotPromptTab({ chapter, onOpenAssets }: ShotPromptTabProps) {
   const queryClient = useQueryClient();
   const requirementsQueryKey = ["asset-requirements", chapter.chapter_id];
   const revisionsQueryKey = ["shot-prompt-revisions", chapter.chapter_id];
+  const chapterStatusQueryKey = ["chapter-status", chapter.chapter_id];
   const [selectedRevisionId, setSelectedRevisionId] = useState("");
   const [loadedRevisionId, setLoadedRevisionId] = useState("");
   const [selectedShotId, setSelectedShotId] = useState("");
@@ -91,6 +92,7 @@ export function ShotPromptTab({ chapter, onOpenAssets }: ShotPromptTabProps) {
     onSuccess: (nextRequirements) => {
       queryClient.setQueryData(requirementsQueryKey, nextRequirements);
       void queryClient.invalidateQueries({ queryKey: requirementsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: chapterStatusQueryKey });
     },
   });
 
@@ -100,6 +102,7 @@ export function ShotPromptTab({ chapter, onOpenAssets }: ShotPromptTabProps) {
       upsertRevision(queryClient, revisionsQueryKey, revision);
       loadRevisionForEditing(revision);
       void queryClient.invalidateQueries({ queryKey: revisionsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: chapterStatusQueryKey });
     },
   });
 
@@ -110,6 +113,7 @@ export function ShotPromptTab({ chapter, onOpenAssets }: ShotPromptTabProps) {
       upsertRevision(queryClient, revisionsQueryKey, revision);
       loadRevisionForEditing(revision);
       void queryClient.invalidateQueries({ queryKey: revisionsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: chapterStatusQueryKey });
     },
   });
 
@@ -120,6 +124,7 @@ export function ShotPromptTab({ chapter, onOpenAssets }: ShotPromptTabProps) {
       upsertRevision(queryClient, revisionsQueryKey, revision);
       loadRevisionForEditing(revision);
       void queryClient.invalidateQueries({ queryKey: revisionsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: chapterStatusQueryKey });
     },
   });
 
@@ -130,6 +135,7 @@ export function ShotPromptTab({ chapter, onOpenAssets }: ShotPromptTabProps) {
       upsertRevision(queryClient, revisionsQueryKey, revision);
       loadRevisionForEditing(revision);
       void queryClient.invalidateQueries({ queryKey: revisionsQueryKey });
+      void queryClient.invalidateQueries({ queryKey: chapterStatusQueryKey });
     },
   });
 

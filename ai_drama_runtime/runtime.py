@@ -185,8 +185,8 @@ def _mock_storyboard_canonical(runtime_request):
     inputs = payload.get("inputs", {})
     return {
         "schema_version": "storyboard-canonical-v1",
-        "project_id": "project-%s" % inputs.get("source_script_artifact_id", "mock"),
-        "chapter_id": "chapter-%s" % inputs.get("source_script_artifact_id", "mock"),
+        "project_id": inputs.get("project_id", "mock-project"),
+        "chapter_id": inputs.get("chapter_id", "mock-chapter"),
         "source": {
             "script_artifact_id": inputs.get("source_script_artifact_id", ""),
             "script_revision_id": inputs.get("source_script_revision_id", ""),

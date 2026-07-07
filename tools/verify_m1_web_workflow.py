@@ -91,7 +91,7 @@ def _run_workflow(client: TestClient) -> tuple[str, str]:
     assert approved_storyboard["approval_status"] == "approved"
 
     final_status = _expect_status(client.get(f"/api/chapters/{chapter['chapter_id']}/status"), 200)
-    assert final_status["status"] == "storyboard_approved"
+    assert final_status["status"] == "assets_incomplete"
     return project["project_id"], chapter["chapter_id"]
 
 

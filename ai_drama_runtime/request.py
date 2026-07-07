@@ -164,6 +164,8 @@ def _storyboard_inputs_from_source_revision(store, source_revision):
         item = snapshots.get(name)
         return store.read_text(item.object_id)
     return {
+        "project_id": source_revision.project_id,
+        "chapter_id": source_revision.chapter_id,
         "source_script_revision_id": source_revision.revision_id,
         "source_script_artifact_id": source_revision.artifact_id,
         "source_script_content_hash": source_revision.content_hash,

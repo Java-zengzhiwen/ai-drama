@@ -41,6 +41,24 @@ const storyboardApprovedStatus: ChapterStatus = {
   next_action: "milestone_1_complete",
 };
 
+const assetsReadyStatus: ChapterStatus = {
+  status: "assets_ready",
+  blocking_reason: "",
+  next_action: "generate_shot_prompts",
+};
+
+const promptsDraftStatus: ChapterStatus = {
+  status: "prompts_draft",
+  blocking_reason: "",
+  next_action: "mark_shot_prompts_ready",
+};
+
+const promptsReadyStatus: ChapterStatus = {
+  status: "prompts_ready",
+  blocking_reason: "",
+  next_action: "m2_complete",
+};
+
 const missingRequirements = {
   requirement_set_id: "requirements-1",
   chapter_id: "chapter-1",
@@ -475,8 +493,33 @@ describe("shot prompt workspace", () => {
     await waitFor(() =>
       expect(mockedPost).toHaveBeenCalledWith("/chapters/chapter-1/asset-requirements/analyze"),
     );
+    await waitFor(() =>
+      expect(mockedGet.mock.calls.filter(([url]) => url === "/chapters/chapter-1/status").length).toBeGreaterThan(1),
+    );
     await waitFor(() => expect(within(requirementsTable).getAllByText("ready").length).toBeGreaterThan(0));
     expect(screen.getByRole("button", { name: "生成全章 Shot Prompt" })).toBeEnabled();
+  });
+
+  test.each([
+    [assetsReadyStatus, "Shot Prompt 可生成"],
+    [promptsDraftStatus, "Shot Prompt 待确认：检查并标记镜头 Ready"],
+    [promptsReadyStatus, "Shot Prompt 已就绪"],
+  ])("keeps storyboard available and workflow rail accurate for %s", async (status, shotPromptRailText) => {
+    setupWorkspaceMocks({
+      latestRequirements: readyRequirements,
+      revisions: status.status === "assets_ready" ? [] : [status.status === "prompts_ready" ? readyRevision : generatedRevision],
+      status,
+    });
+
+    renderWithQueryClient(<ChapterWorkspace chapterId="chapter-1" projectId="project-1" />);
+
+    expect(await screen.findByRole("heading", { name: "第一章" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "分镜" })).not.toHaveAttribute("aria-disabled", "true");
+    const rail = screen.getByLabelText("workflow rail");
+    expect(within(rail).getByText(shotPromptRailText)).toBeInTheDocument();
+    expect(within(rail).getByText("Agnes 生成已锁定：Agnes 生成和结果与重跑保持锁定。")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Agnes 生成/ })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("tab", { name: /结果与重跑/ })).toHaveAttribute("aria-disabled", "true");
   });
 
   test("uses state-specific asset requirement guidance and blocks ready actions for blocked shots", async () => {
@@ -598,6 +641,9 @@ describe("shot prompt workspace", () => {
     await waitFor(() =>
       expect(mockedPost).toHaveBeenCalledWith("/chapters/chapter-1/shot-prompts/generate"),
     );
+    await waitFor(() =>
+      expect(mockedGet.mock.calls.filter(([url]) => url === "/chapters/chapter-1/status").length).toBeGreaterThan(1),
+    );
 
     expect(await screen.findByText("Revision 1")).toBeInTheDocument();
     const shotTable = screen.getByRole("table", { name: "Shot prompt rows" });
@@ -632,6 +678,9 @@ describe("shot prompt workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "标记当前镜头 Ready" }));
     await waitFor(() =>
       expect(mockedPost).toHaveBeenCalledWith("/shot-prompt-revisions/prompt-1/shots/SHOT_001/mark-ready"),
+    );
+    await waitFor(() =>
+      expect(mockedGet.mock.calls.filter(([url]) => url === "/chapters/chapter-1/status").length).toBeGreaterThan(2),
     );
     expect(await within(shotTable).findByText("ready")).toBeInTheDocument();
 
