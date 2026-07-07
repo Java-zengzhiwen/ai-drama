@@ -12,6 +12,7 @@ from .config import Settings
 from .routers.asset_delivery import router as asset_delivery_router
 from .routers.asset_requirements import router as asset_requirements_router
 from .routers.assets import router as assets_router
+from .routers.generation import router as generation_router
 from .routers.profiles import router as profiles_router
 from .routers.projects import router as projects_router
 from .routers.scripts import router as scripts_router
@@ -55,6 +56,7 @@ def create_app(
     app.include_router(projects_router)
     app.include_router(asset_requirements_router)
     app.include_router(assets_router)
+    app.include_router(generation_router)
     app.include_router(profiles_router)
     app.include_router(scripts_router)
     app.include_router(shot_prompts_router)
