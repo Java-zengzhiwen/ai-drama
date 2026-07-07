@@ -280,6 +280,43 @@ def test_results_api_lists_selects_and_reviews_generation_result(tmp_path):
     assert reviewed.json()["decision"] == "passed"
 
 
+def test_rerun_api_creates_new_attempt_with_prompt_and_asset_overrides(tmp_path):
+    data_root, chapter, revision, _canonical = _ready_chapter(tmp_path)
+    with _app_client(data_root) as client:
+        source = client.post(
+            f"/api/chapters/{chapter.chapter_id}/generation/video-jobs",
+            json={
+                "prompt_revision_id": revision.revision_id,
+                "shot_id": "SHOT_001",
+                "idempotency_key": "source",
+            },
+        ).json()
+        replacement = client.post(
+            f"/api/chapters/{chapter.chapter_id}/assets",
+            data={"asset_type": "shot_keyframe", "name": "Replacement"},
+            files={"file": ("replacement.png", PNG_BYTES, "image/png")},
+        ).json()
+        replacement = client.post(f"/api/assets/{replacement['asset_id']}/mark-usable").json()
+        rerun = client.post(
+            f"/api/generation/jobs/{source['job_id']}/rerun",
+            json={
+                "idempotency_key": "rerun-1",
+                "prompt": "Override prompt",
+                "asset_ids": [replacement["asset_id"]],
+            },
+        )
+        detail = client.get(f"/api/generation/jobs/{rerun.json()['new_job']['job_id']}")
+
+    assert rerun.status_code == 200, rerun.text
+    body = rerun.json()
+    assert body["source_job_id"] == source["job_id"]
+    assert body["new_job"]["attempt_number"] == 2
+    assert body["new_job"]["internal_status"] == "queued"
+    request = detail.json()["request"]
+    assert request["prompt"] == "Override prompt"
+    assert [asset["asset_id"] for asset in request["assets"]] == [replacement["asset_id"]]
+
+
 def test_queue_video_job_endpoint_blocks_unready_shot(tmp_path):
     data_root, chapter, revision, _canonical = _ready_chapter(tmp_path)
     with _app_client(data_root) as client:

@@ -7,6 +7,8 @@ from ai_drama_runtime.store import RuntimeStore
 from ai_drama_web.config import Settings
 from ai_drama_web.dependencies import get_product_store, get_runtime_store
 from ai_drama_web.schemas.generation import (
+    GenerationRerunCreate,
+    GenerationRerunRead,
     GenerationJobDetailRead,
     GenerationJobRead,
     ResultReviewCreate,
@@ -194,6 +196,51 @@ async def review_result(
     )
 
 
+@router.post("/generation/jobs/{job_id}/rerun", response_model=GenerationRerunRead)
+async def rerun_generation_job(
+    job_id: str,
+    payload: GenerationRerunCreate,
+    service: GenerationJobService = Depends(get_service),
+    product_store: ProductStore = Depends(get_product_store),
+    runtime_store: RuntimeStore = Depends(get_runtime_store),
+):
+    source = product_store.get_generation_job(job_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="generation job not found")
+    overrides = _rerun_overrides(payload)
+    try:
+        new_job = service.queue_video_job(
+            prompt_revision_id=source.prompt_revision_id,
+            shot_id=source.shot_id,
+            idempotency_key=payload.idempotency_key,
+            explicit_rerun=True,
+            overrides=overrides,
+        )
+    except GenerationJobBlocked as exc:
+        return _error(409, "shot_prompt_blocked", str(exc))
+    except AssetDeliveryInvalidPublicBaseUrl:
+        return _error(409, "input_unreachable", "public asset delivery URL is not provider reachable")
+    rerun = product_store.create_rerun_record(
+        source_job_id=source.job_id,
+        new_job_id=new_job.job_id,
+        overrides_object_id=runtime_store.write_text_object(
+            json.dumps(
+                overrides,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        ),
+    )
+    return {
+        "rerun_id": rerun.rerun_id,
+        "source_job_id": rerun.source_job_id,
+        "new_job": _job_read(new_job),
+        "created_at": rerun.created_at,
+    }
+
+
 def _job_read(job) -> dict:
     return {
         "job_id": job.job_id,
@@ -233,6 +280,19 @@ def _result_read(product_store: ProductStore, result) -> dict:
         "local_result_available": bool(result.object_id),
         "created_at": result.created_at,
     }
+
+
+def _rerun_overrides(payload: GenerationRerunCreate) -> dict:
+    overrides = {}
+    if payload.prompt is not None:
+        overrides["prompt"] = payload.prompt
+    if payload.negative_prompt is not None:
+        overrides["negative_prompt"] = payload.negative_prompt
+    if payload.asset_ids is not None:
+        overrides["asset_ids"] = list(payload.asset_ids)
+    if payload.parameters is not None:
+        overrides["parameters"] = dict(payload.parameters)
+    return overrides
 
 
 def _error(status_code: int, error_code: str, error_message: str) -> JSONResponse:

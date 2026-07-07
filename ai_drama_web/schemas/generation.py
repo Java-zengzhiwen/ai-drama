@@ -96,3 +96,25 @@ class ResultReviewRead(BaseModel):
     failure_category: str
     note: str
     created_at: str
+
+
+class GenerationRerunCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    idempotency_key: str
+    prompt: str | None = None
+    negative_prompt: str | None = None
+    asset_ids: list[str] | None = None
+    parameters: dict[str, Any] | None = None
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_idempotency_key(cls, value: str) -> str:
+        return _not_blank(value)
+
+
+class GenerationRerunRead(BaseModel):
+    rerun_id: str
+    source_job_id: str
+    new_job: GenerationJobRead
+    created_at: str

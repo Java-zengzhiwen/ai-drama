@@ -114,7 +114,8 @@ class GenerationJobService:
 
     def _request_for_shot(self, shot: dict, overrides: dict) -> dict:
         assets = []
-        for asset_id in shot["asset_refs"]:
+        asset_ids = overrides.get("asset_ids") or shot["asset_refs"]
+        for asset_id in asset_ids:
             asset = self.product_store.get_asset(asset_id)
             if asset is None:
                 raise GenerationJobBlocked("asset is missing")

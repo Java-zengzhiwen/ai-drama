@@ -176,24 +176,37 @@ def test_queue_video_job_persists_canonical_request_and_returns_existing_duplica
 
 
 def test_explicit_rerun_creates_next_attempt_with_overrides(tmp_path):
-    runtime, _store, service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+    runtime, store, service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
     first = service.queue_video_job(
         prompt_revision_id=revision.revision_id,
         shot_id="SHOT_001",
         idempotency_key="source",
     )
+    replacement = store.create_generated_asset(
+        project_id=revision.project_id,
+        chapter_id=revision.chapter_id,
+        asset_type="shot_keyframe",
+        name="Replacement",
+        data=b"png-replacement",
+        media_type="image/png",
+        source_job_id="image-job-3",
+        metadata={},
+    )
+    store.update_asset_status(replacement.asset_id, "usable")
 
     rerun = service.queue_video_job(
         prompt_revision_id=revision.revision_id,
         shot_id="SHOT_001",
         idempotency_key="rerun-1",
         explicit_rerun=True,
-        overrides={"prompt": "Override prompt"},
+        overrides={"prompt": "Override prompt", "asset_ids": [replacement.asset_id]},
     )
 
     assert rerun.job_id != first.job_id
     assert rerun.attempt_number == 2
-    assert json.loads(runtime.read_text(rerun.request_object_id))["prompt"] == "Override prompt"
+    request = json.loads(runtime.read_text(rerun.request_object_id))
+    assert request["prompt"] == "Override prompt"
+    assert [asset["asset_id"] for asset in request["assets"]] == [replacement.asset_id]
 
 
 def test_queue_video_job_blocks_unready_or_unusable_inputs(tmp_path):
