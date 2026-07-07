@@ -77,6 +77,9 @@ completed     success
 failed        error
 cancelled     default
 result_expired warning
+restart_recovery_in_progress info
+recovered_after_restart success
+submission_outcome_unknown warning
 ```
 
 ## Layout Rules

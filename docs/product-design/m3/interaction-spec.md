@@ -78,10 +78,23 @@ Inline notices appear above the table:
 ```text
 自动轮询中；刷新间隔来自运行时策略。
 RPM 限制：队列会按速率提交。
-应用重启后恢复 queued/submitted/polling 任务。
+restart_recovery_in_progress：启动后检查 queued/submitted/polling 任务。
+recovered_after_restart：应用重启后已恢复 3 个未完成任务：2 个继续自动处理，1 个需要人工检查。
+submission_outcome_unknown：1 个任务状态无法确认，已标记为 submission_outcome_unknown。
 ```
 
 `submission_outcome_unknown` is shown as a warning state that requires user attention before rerun or manual resolution.
+
+Recovery lifecycle:
+
+- recovery check start shows `restart_recovery_in_progress`;
+- recovery check completion shows `recovered_after_restart`;
+- `recovered_after_restart` is a nonblocking success/info notice;
+- users may dismiss `recovered_after_restart`;
+- dismissing `recovered_after_restart` must not stop Poller or React Query polling;
+- stable failure categories remain visible on affected rows;
+- `submission_outcome_unknown` must not be hidden by `recovered_after_restart`;
+- persisted `submitting` jobs without provider job id are counted only under `submission_outcome_unknown`, not recovered success.
 
 Accessibility:
 
@@ -149,12 +162,16 @@ Drawer behavior:
 Keyboard and accessibility:
 
 - drawer uses `role="dialog"`, `aria-modal="true"`, a labelled title, and a description;
+- desktop drawer uses `role="dialog"` and `aria-modal="true"`;
+- at 1180px and below, drawer uses `role="region"` and removes `aria-modal`;
 - opening the drawer moves focus to the drawer title or first editable field;
 - `Esc` closes the drawer and returns focus to the invoking rerun action;
-- `Tab` stays inside the drawer while it is modal;
+- `Tab` and `Shift+Tab` stay inside the drawer only while desktop modal semantics are active;
+- narrow viewport drawer does not trap focus and scrolls into view when opened;
 - table selection checkboxes have shot-specific accessible names;
 - blocked rows expose disabled checkbox state and correction action text;
 - row focus with `Enter` selects the row without toggling blocked checkboxes.
+- row keyboard handling ignores events that originate from `button`, `input`, `select`, `textarea`, or `a`.
 
 ## Error And Recovery
 

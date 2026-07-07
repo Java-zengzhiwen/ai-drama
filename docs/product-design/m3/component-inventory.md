@@ -28,7 +28,15 @@ Dense table for ready and blocked shots. It must keep blocked rows visible and n
 
 ### GenerationNoticeBar
 
-Inline notices for auto polling, RPM limit, and restart recovery.
+Inline notices for auto polling, RPM limit, `restart_recovery_in_progress`, `recovered_after_restart`, and `submission_outcome_unknown`.
+
+Rules:
+
+- `restart_recovery_in_progress` appears while startup recovery scans persisted jobs;
+- `recovered_after_restart` appears after Poller reclaims recoverable jobs and shows recovered and exception counts;
+- `submission_outcome_unknown` remains a separate warning and is never merged into `recovered_after_restart`;
+- dismissing `recovered_after_restart` does not stop Poller or React Query polling;
+- notice updates use polite live-region behavior and do not steal focus.
 
 ### ShotGenerationInspector
 
@@ -80,10 +88,11 @@ Shows whether React Query polling is active for nonterminal jobs. It must be ann
 
 Shared behavior for `RerunDrawer`:
 
-- modal dialog role and labels;
+- desktop modal dialog role and labels;
+- narrow viewport nonmodal region role and labels;
 - focus moves in on open and returns on close;
 - `Esc` closes;
-- `Tab` remains inside while modal;
+- `Tab` and `Shift+Tab` remain inside only while desktop modal semantics are active;
 - desktop width and responsive stacking follow the shared drawer token.
 
 ## Explicitly Not Components

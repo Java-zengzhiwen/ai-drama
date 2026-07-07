@@ -73,8 +73,23 @@ ready shot submitted
 nonterminal job exists
 -> polling notice visible
 -> manual refresh available
--> restart recovery notice visible for queued/submitted/polling
--> submitting without provider id shows submission_outcome_unknown
+-> startup scan shows restart_recovery_in_progress
+-> Poller reclaims persisted queued/submitted/polling jobs
+-> completed scan shows recovered_after_restart with recovered and exception counts
+-> submitting without provider id shows submission_outcome_unknown and is not counted as recovered success
+```
+
+### Recovered After Restart
+
+```text
+app starts
+-> persisted queued/submitted/polling jobs found
+-> restart_recovery_in_progress notice appears without stealing focus
+-> Poller reclaims recoverable jobs
+-> recovered_after_restart notice appears with recovered count and exception count
+-> user may dismiss recovered_after_restart notice
+-> dismissing notice does not stop Poller or React Query polling
+-> submission_outcome_unknown remains visible as a separate warning when needed
 ```
 
 ### Result Expired

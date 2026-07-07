@@ -43,8 +43,8 @@ viewports:
 state:
 
 ```text
-Agnes 生成 / selected ready shot 1-01 / completed result v3 / rerun drawer open
-Responsive evidence includes top table-first viewport and drawer scrolled into view.
+Agnes 生成 / selected ready shot 1-01 / completed result v3 / recovered notices visible / rerun drawer opened from real trigger
+Responsive evidence includes table-first viewport and drawer opened/scrolled into view.
 ```
 
 ## Findings
@@ -61,19 +61,20 @@ Expected source-to-prototype differences:
 Fonts and typography:
 
 - Pass. Prototype uses the M1/M2 font stack and compact product UI scale.
-- Verified at 1440 x 1024, 1180 x 800, and 768 x 1024: table headers, row text, drawer labels, and notice text stay readable without overlapping.
+- Verified at 1440 x 1024, 1180 x 800, and 768 x 1024: table headers, row text, drawer labels, notice text, and footer actions stay readable without overlapping.
 
 Spacing and layout rhythm:
 
-- Pass. Shell, Workflow Rail, Tabs, toolbar, notices, dense table, preview panel, version strip, and rerun drawer follow the inherited M1/M2 rhythm and 6px radius.
-- Desktop verification: 360px drawer width is reserved and does not cover the result preview in the settled state.
-- 1180 x 800 verification: table remains first, preview/drawer stack below, and drawer fields use full available width.
-- 768 x 1024 verification: sidebar and workflow content reflow, dense table remains horizontally scrollable, drawer footer actions wrap without overflow.
+- Pass. Shell, Workflow Rail, Tabs, toolbar, notices, dense table, preview panel, version strip, and rerun drawer follow inherited M1/M2 rhythm and 6px radius.
+- Desktop verification: drawer width is 360px and the settled state reserves space so it does not cover result preview.
+- 1180 x 800 verification: table remains first, drawer opens as a stacked region below preview, and it does not cover table or preview.
+- 768 x 1024 verification: layout is single column, dense table and version strip remain horizontally scrollable, drawer is full-width, and footer actions do not overflow.
+- Version thumbnail token verification: prototype uses `min-width: 96px`.
 
 Colors and visual tokens:
 
 - Pass. Prototype uses inherited neutral surfaces, blue focus/accent, and success/warning/error/info chips.
-- Gate, RPM, polling, restart recovery, URL-expired, and blocked states remain visually distinct.
+- `restart_recovery_in_progress`, `recovered_after_restart`, and `submission_outcome_unknown` are visually separate notices.
 
 Image quality and asset fidelity:
 
@@ -82,24 +83,67 @@ Image quality and asset fidelity:
 
 Copy and content:
 
-- Pass. Copy covers ready/blocked visibility, ready-only submit, batch submit, single state inspection, duplicate-submission prevention, auto polling, manual refresh, RPM limit, restart recovery, result versioning, current adopted result, two result URL expiration cases, and immutable rerun.
+- Pass. Copy covers ready/blocked visibility, ready-only submit, duplicate prevention, auto polling, manual refresh, RPM limit, restart recovery lifecycle, result versioning, current adopted result, two result URL expiration cases, and immutable rerun.
+- `recovered_after_restart` states the recovered count and exception count.
+- `submission_outcome_unknown` is shown separately and is not counted as recovered success.
 - Forbidden scope remains absent: no LibTV, dubbing, subtitles, BGM, timeline, export, collaboration, or M4 acceptance UI.
+
+## Interaction QA
+
+Browser verification was executed against `docs/product-design/m3/assets/prototype.html`.
+
+1440 x 1024:
+
+- Pass. Drawer opens from a real `data-rerun-trigger`.
+- Pass. Drawer role is `dialog`.
+- Pass. Drawer has `aria-modal="true"`.
+- Pass. Drawer width is 360px.
+- Pass. Drawer does not cover result preview in settled state.
+- Pass. Focus enters the first editable drawer field.
+- Pass. `Tab` and `Shift+Tab` remain inside drawer.
+- Pass. `Esc` closes drawer.
+- Pass. Focus returns to the actual triggering rerun button.
+- Pass. `recovered_after_restart` notice is visible.
+- Pass. `submission_outcome_unknown` remains separately visible.
+
+1180 x 800:
+
+- Pass. Drawer stacks below preview.
+- Pass. Drawer role is `region`.
+- Pass. Drawer has no `aria-modal`.
+- Pass. Focus enters drawer after open.
+- Pass. No desktop focus trap is applied.
+- Pass. `Esc` closes drawer and returns focus to the actual trigger.
+- Pass. Table remains first and drawer does not cover table or preview.
+
+768 x 1024:
+
+- Pass. Layout is single column.
+- Pass. Dense table remains horizontally scrollable.
+- Pass. Version strip remains horizontally scrollable.
+- Pass. Drawer is full-width.
+- Pass. Footer actions do not overflow.
+- Pass. `recovered_after_restart` notice is readable.
+- Pass. Blocked checkboxes are disabled.
+- Pass. Keyboard focus style is visible on drawer fields.
 
 Accessibility:
 
-- Pass for design handoff. Drawer has modal dialog semantics, title/description wiring, Escape close behavior, and keyboard-reachable controls.
-- Polling notices use polite live-region semantics.
-- Table selection checkboxes have shot-specific labels, and blocked rows expose disabled selection.
+- Pass. Polling and recovery notices use polite live-region behavior.
+- Pass. Table selection checkboxes and rerun action buttons have shot-specific accessible names.
+- Pass. Row `Enter` selects the row without submitting a job.
+- Pass. Row keyboard/click handling ignores events from buttons, inputs, selects, textareas, and links.
 
 ## Patches Made During QA
 
-- Changed prototype video parameter preview from unsupported fixed provider examples to 16:9 and backend capability/API schema driven parameter display.
-- Removed the unconfirmed hard-coded FPS, style strength, slow mode, and fixed resolution examples from the prototype.
-- Updated Tab Gate rules: current Shot Prompt revision unlocks `Agnes 生成`; at least one `GenerationJob` unlocks `结果与重跑`.
-- Added rerun asset override contract using M2 Asset Picker, usable-only filtering, category filtering, current/replacement comparison, exact asset IDs, and provider reachability validation.
-- Split result expiration into `source_url_expired + local_result_available` and `source_url_expired + local_result_missing`.
-- Standardized drawer width, overlay rules, responsive stacking, keyboard behavior, and accessibility rules.
-- Captured 1440 x 1024, 1180 x 800, and 768 x 1024 screenshots and regenerated comparison evidence.
+- Added `recovered_after_restart` and distinguished it from `restart_recovery_in_progress` and `submission_outcome_unknown`.
+- Implemented real drawer open/close behavior from `data-rerun-trigger` buttons for failed, cancelled, expired, and unsatisfactory examples.
+- Added responsive drawer semantics: desktop `role="dialog"` with `aria-modal="true"`; narrow viewport `role="region"` with no `aria-modal`.
+- Added desktop focus trap, `Esc` close, actual trigger focus return, and narrow viewport scroll/focus behavior.
+- Replaced fixed `batchBtn` focus return with `lastRerunTrigger?.focus()`.
+- Prevented row keyboard/click handlers from reacting to nested interactive controls.
+- Updated version thumbnail min width to 96px.
+- Regenerated 1440 x 1024, 1180 x 800, and 768 x 1024 screenshots plus full-view and focused comparison evidence.
 
 ## Final Result
 

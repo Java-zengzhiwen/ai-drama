@@ -53,6 +53,38 @@ Network submission is in progress. Row shows warning if provider job id is not y
 
 Provider job exists and polling is active. Row shows progress-style status and the polling notice stays visible.
 
+### restart_recovery_in_progress
+
+Startup recovery check is running for persisted `queued`, `submitted`, and `polling` jobs. The notice is polite, nonblocking, and does not move focus.
+
+```text
+restart_recovery_in_progress：启动后检查 queued/submitted/polling 任务。
+```
+
+### recovered_after_restart
+
+Poller has reclaimed recoverable persisted jobs after app restart. UI shows recovered count and exception count.
+
+```text
+应用重启后已恢复 3 个未完成任务：2 个继续自动处理，1 个需要人工检查。
+```
+
+Rules:
+
+- shown only after recovery check completes;
+- can be dismissed by the user;
+- dismissal does not stop Poller or React Query polling;
+- does not hide row-level failures;
+- does not hide `submission_outcome_unknown`.
+
+### submission_outcome_unknown
+
+A persisted `submitting` job has no provider job id after restart. It is not counted as `recovered_after_restart`.
+
+```text
+1 个任务状态无法确认，已标记为 submission_outcome_unknown。
+```
+
 ### completed
 
 Row shows `completed`, current result version if selected, and `打开结果`.
@@ -122,9 +154,11 @@ Asset override state inside the drawer:
 
 Drawer accessibility state:
 
-- drawer is a modal dialog on desktop;
+- drawer is a modal dialog on desktop with `role="dialog"` and `aria-modal="true"`;
+- drawer is a nonmodal region at 1180px and below with `role="region"` and no `aria-modal`;
 - `Esc` closes it;
-- `Tab` remains inside it while open;
+- `Tab` and `Shift+Tab` remain inside it only in desktop modal mode;
+- narrow viewport open scrolls the drawer region into view and does not trap focus;
 - focus returns to the invoking action after close.
 
 ## Shared Errors

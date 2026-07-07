@@ -133,6 +133,20 @@ unknown_provider_error
 submission_outcome_unknown
 ```
 
+Recovery UI states:
+
+```text
+restart_recovery_in_progress
+recovered_after_restart
+submission_outcome_unknown
+```
+
+Recovery semantics:
+
+- `restart_recovery_in_progress`: app startup found persisted `queued`, `submitted`, or `polling` jobs and is checking whether Poller can reclaim them.
+- `recovered_after_restart`: recovery check completed; Poller reclaimed recoverable jobs; UI shows recovered count and exception count.
+- `submission_outcome_unknown`: persisted `submitting` job has no provider job id and cannot be counted as recovered success.
+
 ## Loading, Empty, Error States
 
 Loading:
@@ -168,7 +182,12 @@ Error:
 - Show polling interval text near the table.
 - Manual refresh is available for chapter-level job refresh and selected job refresh.
 - RPM limit hint remains visible while queued jobs exist.
-- Restart recovery notice remains visible when queued, submitted, polling, or `submission_outcome_unknown` jobs exist.
+- Show `restart_recovery_in_progress` while startup recovery scans persisted jobs.
+- Show `recovered_after_restart` after Poller reclaims recoverable jobs.
+- `recovered_after_restart` must include recovered count and exception count.
+- User may dismiss `recovered_after_restart`; dismissal must not stop Poller or React Query polling.
+- Show `submission_outcome_unknown` separately when a persisted `submitting` job has no provider job id.
+- `submission_outcome_unknown` must not be hidden by `recovered_after_restart`.
 
 ## Video Preview
 
@@ -225,11 +244,15 @@ Asset override contract:
 
 Drawer keyboard and accessibility:
 
-- use `role="dialog"`, `aria-modal="true"`, `aria-labelledby`, and `aria-describedby`;
-- move focus into the drawer when opened;
-- trap `Tab` focus within the drawer while modal;
+- desktop uses `role="dialog"`, `aria-modal="true"`, `aria-labelledby`, and `aria-describedby`;
+- 1180px and below uses `role="region"` and removes `aria-modal`;
+- open from a real `data-rerun-trigger` action and save the actual trigger;
+- move focus into the drawer title or first editable field when opened;
+- trap `Tab` and `Shift+Tab` focus within the drawer only in desktop modal mode;
+- do not trap focus in narrow viewport region mode;
 - close on `Esc`;
 - return focus to the invoking rerun action after close;
+- close and cancel buttons both close the drawer;
 - keep reset, cancel, and create actions keyboard reachable in that order.
 
 ## Responsive Behavior
@@ -263,6 +286,7 @@ Mobile:
 - Batch submit button references selected-ready count via `aria-describedby`.
 - Polling, RPM, and restart recovery notices use `role="status"` with `aria-live="polite"`.
 - Notice updates must not steal focus from the table or drawer.
+- Row click and row keyboard handlers must ignore events from `button`, `input`, `select`, `textarea`, or `a`.
 
 ## Reusable M1/M2 Components
 
@@ -292,6 +316,7 @@ Reuse or closely match:
 - Prior jobs and prior results remain visible after rerun.
 - Ready and blocked shots stay visible; only ready shots can be submitted.
 - Polling, RPM, and restart recovery states are first-class UI states.
+- `restart_recovery_in_progress`, `recovered_after_restart`, and `submission_outcome_unknown` are distinct UI states and must not be merged.
 - Do not add LibTV, dubbing, subtitles, BGM, timeline, video editing, export, collaboration, or M4 acceptance UI.
 
 ## Prototype Reference

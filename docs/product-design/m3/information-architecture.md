@@ -40,7 +40,7 @@ Purpose: submit ready shots and monitor provider jobs.
 Primary regions:
 
 - generation toolbar;
-- inline polling, RPM, and restart recovery notices;
+- inline polling, RPM, `restart_recovery_in_progress`, `recovered_after_restart`, and `submission_outcome_unknown` notices;
 - ready/blocked shot generation table;
 - selected shot prompt and provider capability/API schema parameter preview;
 - result preview inspector for the selected shot;
@@ -94,6 +94,8 @@ generating
 completed
 failed
 cancelled
+restart_recovery_in_progress
+recovered_after_restart
 ```
 
 Result display states:
@@ -121,3 +123,9 @@ result_expired
 unknown_provider_error
 submission_outcome_unknown
 ```
+
+Recovery state semantics:
+
+- `restart_recovery_in_progress`: startup recovery scan is running for persisted `queued`, `submitted`, and `polling` jobs.
+- `recovered_after_restart`: Poller has reclaimed recoverable persisted jobs; UI shows recovered count and exception count as a nonblocking notice.
+- `submission_outcome_unknown`: a persisted `submitting` job has no provider job id and must not be counted as recovered success.

@@ -133,8 +133,9 @@
       grid-template-columns: minmax(0, 1fr) 324px;
       min-height: 0;
       overflow: auto;
-      padding: 14px calc(var(--drawer-width) + 16px) 14px 16px;
+      padding: 14px 16px;
     }
+    body.drawer-open .workspace { padding-right: calc(var(--drawer-width) + 16px); }
     .left { display: grid; gap: 12px; min-width: 0; }
     .toolbar, .notice-row {
       align-items: center;
@@ -240,8 +241,7 @@
       right: 0;
     }
     .versions { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
-    .version { border: 1px solid var(--line); border-radius: 6px; display: grid; gap: 5px; padding: 6px; }
-    .version { min-width: 86px; }
+    .version { border: 1px solid var(--line); border-radius: 6px; display: grid; gap: 5px; min-width: 96px; padding: 6px; }
     .version.active { border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--blue); }
     .version img { aspect-ratio: 16 / 9; border-radius: 4px; object-fit: cover; width: 100%; }
     .meta { display: grid; gap: 6px 10px; grid-template-columns: 95px 1fr; margin: 0; }
@@ -276,6 +276,7 @@
       .shell { grid-template-columns: 210px minmax(0, 1fr); }
       .progress { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
       .workspace { grid-template-columns: 1fr; padding: 14px 16px; }
+      body.drawer-open .workspace { padding-right: 16px; }
       .drawer { border-left: 0; border-top: 1px solid var(--line); box-shadow: none; position: static; width: 100%; }
       .preview-grid { grid-template-columns: 1fr; }
       .mini-panel { border-right: 0; border-bottom: 1px solid var(--line); }
@@ -365,7 +366,9 @@
             <div class="notice-row" role="status" aria-live="polite">
               <div class="notice ok"><span class="dot"></span>自动轮询中；刷新间隔来自运行时策略</div>
               <div class="notice warn"><span class="dot"></span>RPM 限制：队列会按 provider 限流策略提交</div>
-              <div class="notice info"><span class="dot"></span>应用重启后恢复 queued/submitted/polling 任务</div>
+              <div class="notice info"><span class="dot"></span>restart_recovery_in_progress：启动后检查 queued/submitted/polling 任务</div>
+              <div class="notice ok"><span class="dot"></span>recovered_after_restart：应用重启后已恢复 3 个未完成任务：2 个继续自动处理，1 个需要人工检查。</div>
+              <div class="notice warn"><span class="dot"></span>submission_outcome_unknown：1 个任务状态无法确认，未计入恢复成功。</div>
             </div>
 
             <section class="surface">
@@ -394,14 +397,14 @@
                     <tr class="active-row" data-shot="1-01">
                       <td><input checked type="checkbox" aria-label="选择 ready 镜头 1-01"></td><td>1-01</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>source</td><td><span class="state ok">completed</span></td><td>v3 当前</td><td>14:32:11</td><td><button class="link">打开结果</button></td>
                     </tr>
-                    <tr data-shot="1-02"><td><input checked type="checkbox" aria-label="选择 ready 镜头 1-02"></td><td>1-02</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>source</td><td><span class="state info">queued</span></td><td>-</td><td>14:32:08</td><td><button class="link">查看任务</button></td></tr>
-                    <tr data-shot="1-03"><td><input checked type="checkbox" aria-label="选择 ready 镜头 1-03"></td><td>1-03</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>source</td><td><span class="state info">submitting</span></td><td>-</td><td>14:32:05</td><td><button class="link">查看任务</button></td></tr>
-                    <tr data-shot="1-04"><td><input checked type="checkbox" aria-label="选择 ready 镜头 1-04"></td><td>1-04</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>source</td><td><span class="state info">generating</span></td><td>-</td><td>14:32:04</td><td><button class="link">刷新</button></td></tr>
-                    <tr data-shot="1-05"><td><input checked type="checkbox" aria-label="选择 ready 镜头 1-05"></td><td>1-05</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>source</td><td><span class="state ok">completed</span></td><td>v2</td><td>14:31:55</td><td><button class="link">打开结果</button></td></tr>
-                    <tr data-shot="1-06"><td><input checked type="checkbox" aria-label="选择 ready 镜头 1-06"></td><td>1-06</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>source</td><td><span class="state err">failed</span></td><td>-</td><td>14:31:49</td><td><button class="link">创建重跑</button></td></tr>
-                    <tr><td><input disabled type="checkbox" aria-label="blocked 镜头 1-07 不可提交"></td><td>1-07</td><td><span class="state err">blocked</span></td><td>v2</td><td><span style="color:var(--red)">缺少资产（角色）</span></td><td>标准</td><td>source</td><td><span class="state wait">waiting</span></td><td>-</td><td>14:31:44</td><td><button class="link">去资料与资产</button></td></tr>
-                    <tr><td><input disabled type="checkbox" aria-label="blocked 镜头 1-08 不可提交"></td><td>1-08</td><td><span class="state err">blocked</span></td><td>v3</td><td><span style="color:var(--red)">缺少 Prompt</span></td><td>标准</td><td>source</td><td><span class="state wait">waiting</span></td><td>-</td><td>14:31:40</td><td><button class="link">去 Shot Prompt</button></td></tr>
-                    <tr><td><input type="checkbox" aria-label="选择 ready 镜头 1-09"></td><td>1-09</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>source</td><td><span class="state muted">cancelled</span></td><td>-</td><td>14:31:20</td><td><button class="link">创建重跑</button></td></tr>
+                    <tr data-shot="1-02"><td><input checked type="checkbox" aria-label="选择 ready 镜头 1-02"></td><td>1-02</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>source</td><td><span class="state info">queued</span></td><td>-</td><td>14:32:08</td><td><button class="link" aria-label="查看镜头 1-02 任务">查看任务</button></td></tr>
+                    <tr data-shot="1-03"><td><input checked type="checkbox" aria-label="选择 ready 镜头 1-03"></td><td>1-03</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>source</td><td><span class="state info">submitting</span></td><td>-</td><td>14:32:05</td><td><button class="link" aria-label="查看镜头 1-03 任务">查看任务</button></td></tr>
+                    <tr data-shot="1-04"><td><input checked type="checkbox" aria-label="选择 ready 镜头 1-04"></td><td>1-04</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>source</td><td><span class="state info">generating</span></td><td>-</td><td>14:32:04</td><td><button class="link" aria-label="刷新镜头 1-04 任务">刷新</button></td></tr>
+                    <tr data-shot="1-05"><td><input checked type="checkbox" aria-label="选择 ready 镜头 1-05"></td><td>1-05</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>source</td><td><span class="state ok">completed</span></td><td>v2</td><td>14:31:55</td><td><button class="link" aria-label="打开镜头 1-05 结果">打开结果</button></td></tr>
+                    <tr data-shot="1-06"><td><input checked type="checkbox" aria-label="选择 ready 镜头 1-06"></td><td>1-06</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>source</td><td><span class="state err">failed</span></td><td>-</td><td>14:31:49</td><td><button class="link" data-rerun-trigger aria-label="为 failed 镜头 1-06 创建重跑">创建重跑</button></td></tr>
+                    <tr><td><input disabled type="checkbox" aria-label="blocked 镜头 1-07 不可提交"></td><td>1-07</td><td><span class="state err">blocked</span></td><td>v2</td><td><span style="color:var(--red)">缺少资产（角色）</span></td><td>标准</td><td>source</td><td><span class="state wait">waiting</span></td><td>-</td><td>14:31:44</td><td><button class="link" aria-label="修复 blocked 镜头 1-07 的角色资产">去资料与资产</button></td></tr>
+                    <tr><td><input disabled type="checkbox" aria-label="blocked 镜头 1-08 不可提交"></td><td>1-08</td><td><span class="state err">blocked</span></td><td>v3</td><td><span style="color:var(--red)">缺少 Prompt</span></td><td>标准</td><td>source</td><td><span class="state wait">waiting</span></td><td>-</td><td>14:31:40</td><td><button class="link" aria-label="修复 blocked 镜头 1-08 的 Shot Prompt">去 Shot Prompt</button></td></tr>
+                    <tr data-shot="1-09"><td><input type="checkbox" aria-label="选择 ready 镜头 1-09"></td><td>1-09</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>source</td><td><span class="state muted">cancelled</span></td><td>-</td><td>14:31:20</td><td><button class="link" data-rerun-trigger aria-label="为 cancelled 镜头 1-09 创建重跑">创建重跑</button></td></tr>
                   </tbody>
                 </table>
               </div>
@@ -464,6 +467,7 @@
                 <div class="version"><img src="asset-scene-reference.png" alt="v5"><strong>v5</strong><span class="state err">local 缺失</span></div>
               </div>
               <button class="btn">设为当前采用</button>
+              <button class="btn" data-rerun-trigger aria-label="结果不满意时为镜头 1-01 创建重跑">结果不满意，创建重跑</button>
             </div>
 
             <div class="panel">
@@ -476,6 +480,7 @@
                 <dt>失败分类</dt><dd>-</dd>
                 <dt>URL 状态</dt><dd>v4: source_url_expired + local_result_available<br>v5: source_url_expired + local_result_missing</dd>
               </dl>
+              <button class="btn" data-rerun-trigger aria-label="为 source URL 过期结果创建重跑">基于过期结果创建重跑</button>
             </div>
 
             <div class="panel">
@@ -492,13 +497,14 @@
       </main>
     </div>
 
-    <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="rerunTitle" aria-describedby="rerunDesc" tabindex="-1">
+    <!-- Desktop uses role="dialog"; narrow viewports switch to role="region". -->
+    <aside class="drawer" role="dialog" aria-modal="true" aria-labelledby="rerunTitle" aria-describedby="rerunDesc" tabindex="-1" hidden>
       <header>
-        <strong id="rerunTitle">重跑 / 新建任务（基于 v3）</strong>
+        <strong id="rerunTitle" tabindex="-1">重跑 / 新建任务（基于 v3）</strong>
         <button class="btn" id="closeDrawer" aria-label="关闭重跑抽屉">关闭</button>
       </header>
       <div class="drawer-body">
-        <div class="notice info" id="rerunDesc">仅允许以下字段覆盖。原始任务和原始结果将被保留，不会被覆盖。Esc 关闭抽屉，Tab 在字段间移动。</div>
+        <div class="notice info" id="rerunDesc">仅允许以下字段覆盖。原始任务和原始结果将被保留，不会被覆盖。Esc 关闭抽屉，Tab / Shift+Tab 在字段间移动。</div>
         <label class="field"><span>Prompt 覆盖（可选）</span><textarea>夜晚的湿滑小巷，雨后地面反光，男主穿深色外套在右侧路牌附近停步，远处霓虹灯微亮。</textarea></label>
         <label class="field"><span>负向 Prompt 覆盖（可选）</span><textarea placeholder="在此输入负向 Prompt，仅当需要修改时启用"></textarea></label>
         <label class="field"><span>资产覆盖（复用 M2 Asset Picker，仅 usable）</span><select><option>沿用当前 4 个 usable 资产</option><option>替换 scene_angle：asset_scene_angle_usable_02</option><option>替换 shot_keyframe：asset_shot_keyframe_usable_01</option></select></label>
@@ -514,7 +520,7 @@
       <footer>
         <button class="btn">重置覆盖</button>
         <span style="margin-left:auto"></span>
-        <button class="btn">取消</button>
+        <button class="btn" id="cancelDrawer">取消</button>
         <button class="primary">创建重跑任务</button>
       </footer>
     </aside>
@@ -523,31 +529,95 @@
   <script>
     const rows = document.querySelectorAll('tbody tr[data-shot]');
     const drawer = document.querySelector('.drawer');
-    const closeDrawer = document.getElementById('closeDrawer');
-    const fallbackFocus = document.getElementById('batchBtn');
+    const closeDrawerButton = document.getElementById('closeDrawer');
+    const cancelDrawer = document.getElementById('cancelDrawer');
+    const drawerTitle = document.getElementById('rerunTitle');
+    const narrowViewport = window.matchMedia("(max-width: 1180px)");
+    let lastRerunTrigger = null;
+
+    function interactiveTarget(event) {
+      return event.target.closest('button, input, select, textarea, a');
+    }
+
+    function drawerFocusableElements() {
+      return Array.from(drawer.querySelectorAll('button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])'))
+        .filter((element) => !element.disabled && element.offsetParent !== null);
+    }
+
+    function setDrawerSemantics() {
+      const isNarrow = narrowViewport.matches;
+      drawer.setAttribute('role', isNarrow ? 'region' : 'dialog');
+      if (isNarrow) {
+        drawer.removeAttribute('aria-modal');
+      } else {
+        drawer.setAttribute('aria-modal', 'true');
+      }
+    }
+
+    function openDrawer(trigger) {
+      lastRerunTrigger = trigger;
+      setDrawerSemantics();
+      drawer.hidden = false;
+      document.body.classList.add('drawer-open');
+      if (narrowViewport.matches) {
+        drawer.scrollIntoView({ block: 'start', behavior: 'instant' });
+      }
+      drawer.querySelector('.drawer-body textarea, .drawer-body select, .drawer-body input, .drawer-body button')?.focus();
+    }
+
+    function closeDrawer() {
+      drawer.hidden = true;
+      document.body.classList.remove('drawer-open');
+      lastRerunTrigger?.focus();
+    }
+
+    function trapFocus(event) {
+      if (drawer.hidden || narrowViewport.matches || event.key !== 'Tab') return;
+      const focusable = drawerFocusableElements();
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.querySelectorAll('[data-rerun-trigger]').forEach((trigger) => {
+      trigger.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openDrawer(trigger);
+      });
+    });
+
     rows.forEach((row) => {
       row.tabIndex = 0;
-      row.addEventListener('click', () => {
+      row.addEventListener('click', (event) => {
+        if (interactiveTarget(event)) return;
         rows.forEach((candidate) => candidate.classList.remove('active-row'));
         row.classList.add('active-row');
       });
       row.addEventListener('keydown', (event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
+        if (interactiveTarget(event)) return;
+        if (event.key === 'Enter') {
           event.preventDefault();
           row.click();
         }
       });
     });
-    closeDrawer.addEventListener('click', () => {
-      drawer.hidden = true;
-      fallbackFocus.focus();
-    });
+    closeDrawerButton.addEventListener('click', closeDrawer);
+    cancelDrawer.addEventListener('click', closeDrawer);
     document.addEventListener('keydown', (event) => {
+      trapFocus(event);
       if (event.key === 'Escape' && !drawer.hidden) {
-        drawer.hidden = true;
-        fallbackFocus.focus();
+        closeDrawer();
       }
     });
+    narrowViewport.addEventListener('change', setDrawerSemantics);
+    setDrawerSemantics();
   </script>
 </body>
 </html>
