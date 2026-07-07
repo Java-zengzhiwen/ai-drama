@@ -15,6 +15,7 @@ from .routers.profiles import router as profiles_router
 from .routers.projects import router as projects_router
 from .routers.scripts import router as scripts_router
 from .routers.settings import router as settings_router
+from .routers.shot_prompts import router as shot_prompts_router
 from .routers.storyboards import router as storyboards_router
 from .secrets import LocalSecretStore
 from .store import ProductStore
@@ -54,6 +55,7 @@ def create_app(
     app.include_router(assets_router)
     app.include_router(profiles_router)
     app.include_router(scripts_router)
+    app.include_router(shot_prompts_router)
     app.include_router(storyboards_router)
     app.include_router(settings_router)
 
