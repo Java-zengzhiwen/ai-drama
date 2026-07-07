@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>M3 Generation Command + Result Preview Prototype</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --surface: #ffffff;
+      --subtle: #f9fafc;
+      --line: #d9dee8;
+      --line-strong: #b8c0cc;
+      --text: #1f2937;
+      --muted: #5f6b7a;
+      --soft: #8a94a3;
+      --blue: #2563eb;
+      --green: #16a34a;
+      --amber: #d97706;
+      --red: #dc2626;
+      --blue-bg: #eef6ff;
+      --green-bg: #f0fdf4;
+      --amber-bg: #fff7ed;
+      --red-bg: #fff1f2;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .58; }
+    .app { min-height: 100vh; display: grid; grid-template-rows: 56px 1fr; }
+    .topbar {
+      align-items: center;
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      gap: 16px;
+      padding: 0 18px;
+    }
+    .brand { align-items: center; display: flex; font-weight: 700; gap: 10px; white-space: nowrap; }
+    .brand-mark {
+      background: #111827;
+      border-radius: 5px;
+      color: #fff;
+      display: inline-grid;
+      font-size: 12px;
+      height: 24px;
+      place-items: center;
+      width: 24px;
+    }
+    .top-meta { border-left: 1px solid var(--line); display: grid; gap: 1px; padding-left: 14px; }
+    .pill {
+      align-items: center;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      display: inline-flex;
+      font-size: 12px;
+      gap: 6px;
+      padding: 2px 9px;
+      white-space: nowrap;
+    }
+    .dot { background: var(--soft); border-radius: 50%; height: 7px; width: 7px; }
+    .ok .dot { background: var(--green); }
+    .warn .dot { background: var(--amber); }
+    .err .dot { background: var(--red); }
+    .focus .dot { background: var(--blue); }
+    .top-actions { align-items: center; display: flex; gap: 10px; margin-left: auto; }
+    .shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 0; }
+    .sidebar {
+      background: var(--surface);
+      border-right: 1px solid var(--line);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      min-width: 0;
+      padding: 14px;
+    }
+    .side-tabs { border-bottom: 1px solid var(--line); display: flex; gap: 18px; margin: -14px -14px 0; padding: 0 14px; }
+    .side-tabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: 13px 0 11px; }
+    .side-tabs button.active { border-bottom-color: var(--blue); color: var(--blue); font-weight: 650; }
+    .search { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; width: 100%; }
+    .side-title { color: var(--muted); font-size: 12px; letter-spacing: .02em; margin: 8px 0 4px; text-transform: uppercase; }
+    .chapter {
+      border: 1px solid transparent;
+      border-radius: 6px;
+      display: grid;
+      gap: 8px;
+      grid-template-columns: 1fr auto;
+      padding: 8px;
+    }
+    .chapter.active { background: #eef4ff; border-color: #bfd2ff; }
+    .chapter small { color: var(--muted); }
+    .main { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+    .progress {
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(7, minmax(100px, 1fr));
+      padding: 11px 16px;
+    }
+    .step { color: var(--muted); min-width: 0; }
+    .step strong { color: var(--text); display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .step.done strong { color: var(--green); }
+    .step.current strong { color: var(--blue); }
+    .step.next strong { color: var(--muted); }
+    .tabs {
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      gap: 18px;
+      overflow-x: auto;
+      padding: 0 16px;
+    }
+    .tabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: 13px 2px 11px; white-space: nowrap; }
+    .tabs button.active { border-bottom-color: var(--blue); color: var(--blue); font-weight: 650; }
+    .workspace {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: minmax(0, 1fr) 324px;
+      min-height: 0;
+      overflow: auto;
+      padding: 14px 326px 14px 16px;
+    }
+    .left { display: grid; gap: 12px; min-width: 0; }
+    .toolbar, .notice-row {
+      align-items: center;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 10px;
+    }
+    .notice-row { background: transparent; border: 0; padding: 0; }
+    .notice {
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      display: inline-flex;
+      gap: 8px;
+      padding: 8px 10px;
+    }
+    .notice.ok { background: var(--green-bg); border-color: #bbf7d0; color: #166534; }
+    .notice.warn { background: var(--amber-bg); border-color: #fed7aa; color: #9a3412; }
+    .notice.info { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+    .btn, .primary, .danger, .link {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 7px 11px;
+    }
+    .primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .danger { background: #fff; border-color: #fca5a5; color: var(--red); }
+    .link { border: 0; color: var(--blue); padding: 0; }
+    select, input, textarea { background: #fff; border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; }
+    .surface {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      min-width: 0;
+    }
+    .surface-title {
+      align-items: center;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+      padding: 10px 12px;
+    }
+    .surface-title h2, .surface-title h3 { font-size: 15px; margin: 0; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid var(--line); padding: 9px 10px; text-align: left; vertical-align: top; white-space: nowrap; }
+    th { background: var(--subtle); color: var(--muted); font-size: 12px; font-weight: 650; position: sticky; top: 0; }
+    tr.active-row td { background: var(--blue-bg); }
+    tr:hover td { background: #f8fbff; }
+    .table-wrap { overflow: auto; max-height: 470px; }
+    .state {
+      align-items: center;
+      border-radius: 999px;
+      display: inline-flex;
+      font-size: 12px;
+      gap: 5px;
+      padding: 2px 7px;
+      white-space: nowrap;
+    }
+    .state.ok { background: #dcfce7; color: #166534; }
+    .state.wait { background: #fef3c7; color: #92400e; }
+    .state.info { background: #dbeafe; color: #1d4ed8; }
+    .state.err { background: #fee2e2; color: #991b1b; }
+    .state.muted { background: #edf1f7; color: #5f6b7a; }
+    .preview-grid { display: grid; gap: 12px; grid-template-columns: 1.2fr .8fr; }
+    .mini-panel { border-right: 1px solid var(--line); min-height: 136px; padding: 10px; }
+    .mini-panel:last-child { border-right: 0; }
+    .mini-panel h3 { font-size: 13px; margin: 0 0 6px; }
+    .mini-panel p { color: var(--muted); font-size: 12px; margin: 0; white-space: normal; }
+    .thumbs { display: flex; flex-wrap: wrap; gap: 7px; }
+    .thumbs img { border: 1px solid var(--line); border-radius: 5px; height: 54px; object-fit: cover; width: 54px; }
+    .inspector {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      display: grid;
+      gap: 0;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .panel { border-bottom: 1px solid var(--line); display: grid; gap: 10px; padding: 12px; }
+    .panel:last-child { border-bottom: 0; }
+    .panel h3 { font-size: 15px; margin: 0; }
+    .video-wrap { background: #0f172a; border-radius: 6px; overflow: hidden; position: relative; }
+    .video-wrap img { aspect-ratio: 16 / 9; display: block; height: auto; object-fit: cover; width: 100%; }
+    .video-controls {
+      align-items: center;
+      background: rgba(15, 23, 42, .82);
+      bottom: 0;
+      color: #fff;
+      display: flex;
+      font-size: 12px;
+      gap: 8px;
+      left: 0;
+      padding: 8px;
+      position: absolute;
+      right: 0;
+    }
+    .versions { display: grid; gap: 8px; grid-template-columns: repeat(4, minmax(68px, 1fr)); }
+    .version { border: 1px solid var(--line); border-radius: 6px; display: grid; gap: 5px; padding: 6px; }
+    .version.active { border-color: var(--blue); box-shadow: inset 0 0 0 1px var(--blue); }
+    .version img { aspect-ratio: 16 / 9; border-radius: 4px; object-fit: cover; width: 100%; }
+    .meta { display: grid; gap: 6px 10px; grid-template-columns: 95px 1fr; margin: 0; }
+    .meta dt { color: var(--muted); font-size: 12px; }
+    .meta dd { margin: 0; min-width: 0; }
+    .drawer {
+      background: var(--surface);
+      border-left: 1px solid var(--line);
+      bottom: 0;
+      box-shadow: -10px 0 24px rgba(15, 23, 42, .08);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      position: fixed;
+      right: 0;
+      top: 56px;
+      width: 310px;
+      z-index: 4;
+    }
+    .drawer header, .drawer footer { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 10px; justify-content: space-between; padding: 12px 14px; }
+    .drawer footer { border-bottom: 0; border-top: 1px solid var(--line); }
+    .drawer-body { display: grid; gap: 12px; overflow: auto; padding: 14px; }
+    label.field { display: grid; gap: 5px; }
+    label.field span { color: var(--muted); font-size: 12px; }
+    label.field textarea { min-height: 82px; resize: vertical; }
+    .footer-note { color: var(--muted); font-size: 12px; }
+    @media (max-width: 1180px) {
+      .shell { grid-template-columns: 210px minmax(0, 1fr); }
+      .progress { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
+      .workspace { grid-template-columns: 1fr; padding: 14px 16px; }
+      .drawer { position: static; width: auto; }
+      .preview-grid { grid-template-columns: 1fr; }
+      .mini-panel { border-right: 0; border-bottom: 1px solid var(--line); }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">M3</span>AI 剧集制作</div>
+      <div class="top-meta">
+        <strong>龙城迷雾</strong>
+        <span class="footer-note">悬疑 / 12集 / 单集45分钟</span>
+      </div>
+      <span class="pill ok"><span class="dot"></span>本地单用户</span>
+      <span class="pill focus"><span class="dot"></span>M3 Product Design</span>
+      <div class="top-actions">
+        <span class="pill err"><span class="dot"></span>1 个结果过期</span>
+        <span>导演</span>
+      </div>
+    </header>
+
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="side-tabs">
+          <button class="active">项目</button>
+          <button>资源库</button>
+        </div>
+        <input class="search" placeholder="搜索章节或内容">
+        <div>
+          <div class="side-title">项目概览</div>
+          <div class="chapter"><span>全剧进度</span><strong>90%</strong></div>
+          <div class="chapter active"><span>第1集 雾起龙城<br><small>Agnes 生成</small></span><span class="state info">进行中</span></div>
+          <div class="chapter"><span>第2集 夜色追踪<br><small>剧本中</small></span><span class="state muted">未开始</span></div>
+          <div class="chapter"><span>第3集 局中局<br><small>原文中</small></span><span class="state muted">未开始</span></div>
+          <div class="chapter"><span>第4集 真相渐近<br><small>未开始</small></span><span class="state muted">未开始</span></div>
+        </div>
+        <div class="notice warn" style="margin-top:auto">
+          <span>结果 URL 已过期：1 个镜头建议重跑。</span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <section class="progress" aria-label="workflow rail">
+          <div class="step done"><strong>原文完成</strong><span>2025-05-18</span></div>
+          <div class="step done"><strong>剧本已确认</strong><span>2025-05-19</span></div>
+          <div class="step done"><strong>分镜已确认</strong><span>2025-05-19</span></div>
+          <div class="step done"><strong>资料与资产</strong><span>ready</span></div>
+          <div class="step done"><strong>Shot Prompt 已就绪</strong><span>v3</span></div>
+          <div class="step current"><strong>Agnes 生成</strong><span>当前步骤</span></div>
+          <div class="step next"><strong>结果与重跑</strong><span>可查看</span></div>
+        </section>
+
+        <nav class="tabs" aria-label="chapter tabs">
+          <button>原文</button>
+          <button>剧本</button>
+          <button>分镜</button>
+          <button>资料与资产</button>
+          <button>Shot Prompt</button>
+          <button class="active">Agnes 生成</button>
+          <button>结果与重跑</button>
+        </nav>
+
+        <section class="workspace">
+          <div class="left">
+            <div class="toolbar">
+              <button class="primary" id="batchBtn">批量提交（已选 6 条）</button>
+              <button class="btn" id="refreshBtn">刷新状态</button>
+              <select aria-label="更多操作"><option>更多操作</option><option>只看失败</option><option>只看 blocked</option></select>
+              <input aria-label="搜索" placeholder="搜索 shot_id / 场景 / 角色" style="margin-left:auto;min-width:220px">
+              <button class="btn">筛选</button>
+            </div>
+
+            <div class="notice-row">
+              <div class="notice ok"><span class="dot"></span>自动轮询中，每 5 秒刷新一次</div>
+              <div class="notice warn"><span class="dot"></span>RPM 限制：队列会按速率提交</div>
+              <div class="notice info"><span class="dot"></span>应用重启后恢复 queued/submitted/polling 任务</div>
+            </div>
+
+            <section class="surface">
+              <div class="surface-title">
+                <h2>可生成镜头</h2>
+                <span class="footer-note">已选 6 条，共 15 条；blocked 行保留原因但不可提交</span>
+              </div>
+              <div class="table-wrap">
+                <table aria-label="Agnes generation rows">
+                  <thead>
+                    <tr>
+                      <th>选择</th>
+                      <th>shot_id</th>
+                      <th>就绪状态</th>
+                      <th>Prompt 版本</th>
+                      <th>资产状态</th>
+                      <th>模式</th>
+                      <th>时长</th>
+                      <th>任务状态</th>
+                      <th>当前结果</th>
+                      <th>最后更新时间</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="active-row" data-shot="1-01">
+                      <td><input checked type="checkbox"></td><td>1-01</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>5s</td><td><span class="state ok">completed</span></td><td>v3 当前</td><td>14:32:11</td><td><button class="link">打开结果</button></td>
+                    </tr>
+                    <tr data-shot="1-02"><td><input checked type="checkbox"></td><td>1-02</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>5s</td><td><span class="state info">queued</span></td><td>-</td><td>14:32:08</td><td><button class="link">查看任务</button></td></tr>
+                    <tr data-shot="1-03"><td><input checked type="checkbox"></td><td>1-03</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>5s</td><td><span class="state info">submitting</span></td><td>-</td><td>14:32:05</td><td><button class="link">查看任务</button></td></tr>
+                    <tr data-shot="1-04"><td><input checked type="checkbox"></td><td>1-04</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>5s</td><td><span class="state info">generating</span></td><td>-</td><td>14:32:04</td><td><button class="link">刷新</button></td></tr>
+                    <tr data-shot="1-05"><td><input checked type="checkbox"></td><td>1-05</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>5s</td><td><span class="state ok">completed</span></td><td>v2</td><td>14:31:55</td><td><button class="link">打开结果</button></td></tr>
+                    <tr data-shot="1-06"><td><input checked type="checkbox"></td><td>1-06</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>5s</td><td><span class="state err">failed</span></td><td>-</td><td>14:31:49</td><td><button class="link">创建重跑</button></td></tr>
+                    <tr><td><input disabled type="checkbox"></td><td>1-07</td><td><span class="state err">blocked</span></td><td>v2</td><td><span style="color:var(--red)">缺少资产（角色）</span></td><td>标准</td><td>5s</td><td><span class="state wait">waiting</span></td><td>-</td><td>14:31:44</td><td><button class="link">去资料与资产</button></td></tr>
+                    <tr><td><input disabled type="checkbox"></td><td>1-08</td><td><span class="state err">blocked</span></td><td>v3</td><td><span style="color:var(--red)">缺少 Prompt</span></td><td>标准</td><td>5s</td><td><span class="state wait">waiting</span></td><td>-</td><td>14:31:40</td><td><button class="link">去 Shot Prompt</button></td></tr>
+                    <tr><td><input type="checkbox"></td><td>1-09</td><td><span class="state ok">ready</span></td><td>v3</td><td>ready</td><td>标准</td><td>5s</td><td><span class="state muted">cancelled</span></td><td>-</td><td>14:31:20</td><td><button class="link">创建重跑</button></td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="surface">
+              <div class="surface-title">
+                <h3>当前镜头输入预览：1-01</h3>
+                <span class="state ok">可提交 / 已有结果</span>
+              </div>
+              <div class="preview-grid">
+                <div class="mini-panel">
+                  <h3>Prompt（来源 v3）</h3>
+                  <p>夜晚的湿滑小巷，雨后地面反光，男主穿深色外套在招牌旁快速行走，远处霓虹灯微亮，氛围紧张。</p>
+                </div>
+                <div class="mini-panel">
+                  <h3>Negative Prompt</h3>
+                  <p>禁止换脸、错服装、多人畸变、文字乱码、logo、水印、低清晰度。</p>
+                </div>
+                <div class="mini-panel">
+                  <h3>资产参考（4）</h3>
+                  <div class="thumbs">
+                    <img src="asset-character-reference.png" alt="角色参考">
+                    <img src="asset-character-outfit.png" alt="服装参考">
+                    <img src="asset-scene-reference.png" alt="场景参考">
+                    <img src="asset-scene-angle.png" alt="机位参考">
+                  </div>
+                </div>
+                <div class="mini-panel">
+                  <h3>Agnes 参数</h3>
+                  <p>模式：标准<br>时长：5 秒<br>分辨率：1024 x 1365 (3:4)<br>帧率：24<br>风格强度：0.65</p>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <aside class="inspector" aria-label="result preview inspector">
+            <div class="panel">
+              <div style="align-items:center;display:flex;justify-content:space-between;gap:12px">
+                <h3>结果预览</h3>
+                <span class="state ok">不自动播放</span>
+              </div>
+              <div class="video-wrap">
+                <img src="asset-shot-keyframe.png" alt="视频预览帧">
+                <div class="video-controls">
+                  <button class="btn" style="background:#fff;color:#111827;padding:3px 8px">播放</button>
+                  <span>00:00 / 00:05</span>
+                  <span style="margin-left:auto">v3 当前采用</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel">
+              <h3>版本历史</h3>
+              <div class="versions">
+                <div class="version"><img src="asset-scene-reference.png" alt="v1"><strong>v1</strong><span class="state ok">已完成</span></div>
+                <div class="version"><img src="asset-scene-angle.png" alt="v2"><strong>v2</strong><span class="state ok">已完成</span></div>
+                <div class="version active"><img src="asset-shot-keyframe.png" alt="v3"><strong>v3</strong><span class="state info">当前采用</span></div>
+                <div class="version"><img src="asset-prop-reference.png" alt="v4"><strong>v4</strong><span class="state wait">已过期</span></div>
+              </div>
+              <button class="btn">设为当前采用</button>
+            </div>
+
+            <div class="panel">
+              <h3>任务信息</h3>
+              <dl class="meta">
+                <dt>job_id</dt><dd>job_3d1f6b</dd>
+                <dt>provider_video_id</dt><dd>prov_a1b2c3</dd>
+                <dt>attempt</dt><dd>3 / 5</dd>
+                <dt>状态</dt><dd>completed</dd>
+                <dt>失败分类</dt><dd>-</dd>
+              </dl>
+            </div>
+
+            <div class="panel">
+              <h3>源输入</h3>
+              <p class="footer-note">保留来源 Prompt、资产、Job 和 attempt；重跑不会覆盖原结果。</p>
+              <div class="thumbs">
+                <img src="asset-character-reference.png" alt="源资产 1">
+                <img src="asset-character-outfit.png" alt="源资产 2">
+                <img src="asset-scene-angle.png" alt="源资产 3">
+              </div>
+            </div>
+          </aside>
+        </section>
+      </main>
+    </div>
+
+    <aside class="drawer" aria-label="rerun drawer">
+      <header>
+        <strong>重跑 / 新建任务（基于 v3）</strong>
+        <button class="btn" id="closeDrawer">关闭</button>
+      </header>
+      <div class="drawer-body">
+        <div class="notice info">仅允许以下字段覆盖。原始任务和原始结果将被保留，不会被覆盖。</div>
+        <label class="field"><span>Prompt 覆盖（可选）</span><textarea>夜晚的湿滑小巷，雨后地面反光，男主穿深色外套在右侧路牌附近停步，远处霓虹灯微亮。</textarea></label>
+        <label class="field"><span>负向 Prompt 覆盖（可选）</span><textarea placeholder="在此输入负向 Prompt，仅当需要修改时启用"></textarea></label>
+        <label class="field"><span>资产覆盖（可选）</span><select><option>沿用当前 4 个资产</option><option>替换场景机位</option><option>替换 shot_keyframe</option></select></label>
+        <label class="field"><span>模式覆盖（可选）</span><select><option>标准</option><option>慢速</option><option>图生视频</option></select></label>
+        <label class="field"><span>时长覆盖（可选）</span><select><option>5 秒</option><option>8 秒</option></select></label>
+        <div class="notice warn">失败分类说明：result_expired。结果 URL 已过期，可基于源输入创建重跑。</div>
+      </div>
+      <footer>
+        <button class="btn">重置覆盖</button>
+        <span style="margin-left:auto"></span>
+        <button class="btn">取消</button>
+        <button class="primary">创建重跑任务</button>
+      </footer>
+    </aside>
+  </div>
+
+  <script>
+    const rows = document.querySelectorAll('tbody tr[data-shot]');
+    const drawer = document.querySelector('.drawer');
+    const closeDrawer = document.getElementById('closeDrawer');
+    rows.forEach((row) => {
+      row.addEventListener('click', () => {
+        rows.forEach((candidate) => candidate.classList.remove('active-row'));
+        row.classList.add('active-row');
+      });
+    });
+    closeDrawer.addEventListener('click', () => {
+      drawer.style.display = drawer.style.display === 'none' ? 'grid' : 'none';
+      closeDrawer.textContent = drawer.style.display === 'none' ? '打开' : '关闭';
+    });
+  </script>
+</body>
+</html>
