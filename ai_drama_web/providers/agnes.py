@@ -25,6 +25,7 @@ class AgnesImageBackend(GenerationBackend):
         endpoint: str | None = None,
         model: str | None = None,
         video_endpoint: str | None = None,
+        video_status_endpoint: str | None = None,
         video_model: str | None = None,
         timeout_seconds: float | None = None,
     ) -> None:
@@ -38,6 +39,7 @@ class AgnesImageBackend(GenerationBackend):
         self._endpoint = endpoint or settings.agnes_image_endpoint
         self._model = model or settings.agnes_image_model
         self._video_endpoint = video_endpoint or settings.agnes_video_endpoint
+        self._video_status_endpoint = video_status_endpoint or settings.agnes_video_status_endpoint
         self._video_model = video_model or settings.agnes_video_model
         self._timeout_seconds = resolved_timeout
         self._jobs: dict[str, ProviderJob] = {}
@@ -87,12 +89,34 @@ class AgnesImageBackend(GenerationBackend):
         return _copy_job(job)
 
     def get_job_status(self, provider_job_id: str) -> ProviderJob:
+        if self._should_query_video_status(provider_job_id):
+            return self._video_job_from_response(
+                provider_job_id,
+                self._get_video_status_response(provider_job_id),
+            )
         try:
             return _copy_job(self._jobs[provider_job_id])
         except KeyError as exc:
             raise KeyError(f"unknown provider job id: {provider_job_id}") from exc
 
     def fetch_result(self, provider_job_id: str) -> ProviderResult:
+        if self._should_query_video_status(provider_job_id):
+            response_body = self._get_video_status_response(provider_job_id)
+            video_url = self._extract_video_result_url(provider_job_id, response_body)
+            return ProviderResult(
+                provider_job_id=provider_job_id,
+                media_type="video/mp4",
+                url=video_url,
+                content=None,
+                raw=_sanitize_raw(
+                    {
+                        "provider": "agnes",
+                        "media_type": "video/mp4",
+                        "provider_response": response_body,
+                    },
+                    secrets=(self._api_key,),
+                ),
+            )
         job = self.get_job_status(provider_job_id)
         image_url = job.raw.get("result_url")
         if not isinstance(image_url, str) or not image_url:
@@ -202,6 +226,63 @@ class AgnesImageBackend(GenerationBackend):
             )
         return response_body
 
+    def _get_video_status_response(self, provider_job_id: str) -> dict[str, Any]:
+        try:
+            response = httpx.get(
+                self._video_status_endpoint,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                params={
+                    "video_id": provider_job_id,
+                    "model_name": self._video_model,
+                },
+                timeout=self._timeout_seconds,
+            )
+        except httpx.TimeoutException as exc:
+            raise ProviderError(
+                "timeout",
+                "agnes video status request timed out",
+                provider="agnes",
+                raw=_sanitize_raw(
+                    {"endpoint": self._video_status_endpoint, "video_id": provider_job_id},
+                    secrets=(self._api_key,),
+                ),
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(
+                "unknown_provider_error",
+                "agnes video status request failed",
+                provider="agnes",
+                raw=_sanitize_raw(
+                    {
+                        "endpoint": self._video_status_endpoint,
+                        "video_id": provider_job_id,
+                        "error": str(exc),
+                    },
+                    secrets=(self._api_key,),
+                ),
+            ) from exc
+
+        if response.status_code >= 400:
+            raise ProviderError(
+                _http_error_code(response.status_code),
+                "agnes video status request was rejected",
+                provider="agnes",
+                raw={
+                    "status_code": response.status_code,
+                    "response": _safe_response_json(response, secrets=(self._api_key,)),
+                },
+            )
+
+        response_body = _safe_response_json(response, secrets=(self._api_key,))
+        if not isinstance(response_body, dict) or "status" not in response_body:
+            raise ProviderError(
+                "unknown_provider_error",
+                "agnes video status response was malformed",
+                provider="agnes",
+                raw={"provider_response": response_body},
+            )
+        return response_body
+
     def _post_video_generation(self, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             response = httpx.post(
@@ -284,6 +365,54 @@ class AgnesImageBackend(GenerationBackend):
             )
         return video_id
 
+    def _video_job_from_response(self, provider_job_id: str, response_body: dict[str, Any]) -> ProviderJob:
+        return ProviderJob(
+            provider_job_id=provider_job_id,
+            status=_normalize_video_status(response_body),
+            raw=_sanitize_raw(
+                {
+                    "provider": "agnes",
+                    "media_type": "video",
+                    "provider_response": response_body,
+                    "task_id": response_body.get("task_id") or response_body.get("id"),
+                    "video_id": response_body.get("video_id") or provider_job_id,
+                },
+                secrets=(self._api_key,),
+            ),
+        )
+
+    def _extract_video_result_url(self, provider_job_id: str, response_body: dict[str, Any]) -> str:
+        normalized_status = _normalize_video_status(response_body)
+        if normalized_status == "failed":
+            raise ProviderError(
+                "generation_failed",
+                "agnes video generation failed",
+                provider="agnes",
+                raw={"provider_job_id": provider_job_id, "provider_response": response_body},
+            )
+        if normalized_status != "completed":
+            raise ProviderError(
+                "provider_busy",
+                "agnes video result is not ready",
+                provider="agnes",
+                raw={"provider_job_id": provider_job_id, "provider_response": response_body},
+            )
+        video_url = response_body.get("url") or response_body.get("video_url")
+        if not isinstance(video_url, str) or not video_url:
+            raise ProviderError(
+                "result_expired",
+                "agnes completed video response did not include a usable result URL",
+                provider="agnes",
+                raw={"provider_job_id": provider_job_id, "provider_response": response_body},
+            )
+        return video_url
+
+    def _should_query_video_status(self, provider_job_id: str) -> bool:
+        job = self._jobs.get(provider_job_id)
+        if job is not None:
+            return job.raw.get("media_type") == "video"
+        return provider_job_id.startswith("video")
+
     @staticmethod
     def _image_job_id(payload: dict[str, Any], image_url: str) -> str:
         raw = {"payload": payload, "image_url": image_url}
@@ -302,6 +431,24 @@ def _http_error_code(status_code: int) -> str:
     if 500 <= status_code <= 599:
         return "provider_busy"
     return "unknown_provider_error"
+
+
+def _normalize_video_status(response_body: dict[str, Any]) -> str:
+    status = str(response_body.get("status", "")).strip().lower()
+    if status == "queued":
+        return "submitted"
+    if status in {"in_progress", "processing", "running"}:
+        return "polling"
+    if status == "completed":
+        return "completed"
+    if status == "failed":
+        return "failed"
+    raise ProviderError(
+        "unknown_provider_error",
+        "agnes video status response included an unknown status",
+        provider="agnes",
+        raw={"provider_response": response_body},
+    )
 
 
 def _safe_response_json(response: httpx.Response, *, secrets: tuple[str, ...] = ()) -> Any:
