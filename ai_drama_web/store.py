@@ -9,9 +9,26 @@ from .models import (
     AssetRecord,
     ChapterRecord,
     ChapterSourceRevisionRecord,
+    GenerationJobRecord,
+    GenerationResultRecord,
     ProductionProfileRecord,
     ProjectRecord,
+    RerunRecord,
+    ResultReviewRecord,
+    ShotResultSelectionRecord,
 )
+
+
+GENERATION_JOB_TRANSITIONS = {
+    "draft": {"queued"},
+    "queued": {"submitting", "cancelled"},
+    "submitting": {"submitted", "failed"},
+    "submitted": {"polling", "completed", "failed"},
+    "polling": {"polling", "completed", "failed"},
+    "completed": set(),
+    "failed": set(),
+    "cancelled": set(),
+}
 
 
 class ProductStore:
@@ -99,6 +116,68 @@ class ProductStore:
               storyboard_revision_id TEXT NOT NULL,
               content_object_id TEXT NOT NULL,
               content_hash TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS generation_jobs (
+              job_id TEXT PRIMARY KEY,
+              provider TEXT NOT NULL,
+              job_type TEXT NOT NULL CHECK (job_type IN ('image','video')),
+              project_id TEXT NOT NULL,
+              chapter_id TEXT NOT NULL,
+              shot_id TEXT NOT NULL DEFAULT '',
+              prompt_revision_id TEXT NOT NULL DEFAULT '',
+              provider_job_id TEXT NOT NULL DEFAULT '',
+              provider_result_id TEXT NOT NULL DEFAULT '',
+              internal_status TEXT NOT NULL CHECK (internal_status IN ('draft','queued','submitting','submitted','polling','completed','failed','cancelled')),
+              idempotency_key TEXT NOT NULL,
+              request_hash TEXT NOT NULL,
+              request_object_id TEXT NOT NULL,
+              response_object_id TEXT NOT NULL DEFAULT '',
+              attempt_number INTEGER NOT NULL,
+              error_code TEXT NOT NULL DEFAULT '',
+              error_message TEXT NOT NULL DEFAULT '',
+              submitted_at TEXT NOT NULL DEFAULT '',
+              next_poll_at TEXT NOT NULL DEFAULT '',
+              completed_at TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              UNIQUE(provider, idempotency_key)
+            );
+            CREATE INDEX IF NOT EXISTS generation_jobs_chapter_idx
+              ON generation_jobs(chapter_id, shot_id, created_at, job_id);
+            CREATE TABLE IF NOT EXISTS generation_results (
+              result_id TEXT PRIMARY KEY,
+              job_id TEXT NOT NULL REFERENCES generation_jobs(job_id) ON DELETE RESTRICT,
+              chapter_id TEXT NOT NULL,
+              shot_id TEXT NOT NULL,
+              object_id TEXT NOT NULL,
+              media_type TEXT NOT NULL,
+              source_url TEXT NOT NULL,
+              metadata_object_id TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS generation_results_shot_idx
+              ON generation_results(chapter_id, shot_id, created_at, result_id);
+            CREATE TABLE IF NOT EXISTS shot_result_selections (
+              chapter_id TEXT NOT NULL,
+              shot_id TEXT NOT NULL,
+              result_id TEXT NOT NULL REFERENCES generation_results(result_id) ON DELETE RESTRICT,
+              selected_at TEXT NOT NULL,
+              PRIMARY KEY(chapter_id, shot_id)
+            );
+            CREATE TABLE IF NOT EXISTS result_reviews (
+              review_id TEXT PRIMARY KEY,
+              result_id TEXT NOT NULL REFERENCES generation_results(result_id) ON DELETE RESTRICT,
+              decision TEXT NOT NULL CHECK (decision IN ('passed','failed')),
+              failure_category TEXT NOT NULL DEFAULT '',
+              note TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS rerun_records (
+              rerun_id TEXT PRIMARY KEY,
+              source_job_id TEXT NOT NULL REFERENCES generation_jobs(job_id) ON DELETE RESTRICT,
+              new_job_id TEXT NOT NULL REFERENCES generation_jobs(job_id) ON DELETE RESTRICT,
+              overrides_object_id TEXT NOT NULL,
               created_at TEXT NOT NULL
             );
             """
@@ -617,6 +696,293 @@ class ProductStore:
         data = dict(row)
         data["payload"] = json.loads(self.runtime.read_text(data["content_object_id"]))
         return data
+
+    def create_generation_job(
+        self,
+        *,
+        provider,
+        job_type,
+        project_id,
+        chapter_id,
+        shot_id,
+        prompt_revision_id,
+        idempotency_key,
+        request_hash,
+        request_object_id,
+        attempt_number,
+    ):
+        existing = self._generation_job_by_idempotency(provider, idempotency_key)
+        if existing is not None:
+            return existing
+        created_at = now_iso()
+        job_id = uuid.uuid4().hex
+        self.conn.execute(
+            """
+            INSERT INTO generation_jobs
+            (job_id, provider, job_type, project_id, chapter_id, shot_id,
+             prompt_revision_id, provider_job_id, provider_result_id,
+             internal_status, idempotency_key, request_hash, request_object_id,
+             response_object_id, attempt_number, error_code, error_message,
+             submitted_at, next_poll_at, completed_at, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, '', '', 'draft', ?, ?, ?, '', ?, '', '', '', '', '', ?, ?)
+            """,
+            (
+                job_id,
+                provider,
+                job_type,
+                project_id,
+                chapter_id,
+                shot_id,
+                prompt_revision_id,
+                idempotency_key,
+                request_hash,
+                request_object_id,
+                attempt_number,
+                created_at,
+                created_at,
+            ),
+        )
+        self.conn.commit()
+        return self.get_generation_job(job_id)
+
+    def get_generation_job(self, job_id):
+        row = self.conn.execute("SELECT * FROM generation_jobs WHERE job_id = ?", (job_id,)).fetchone()
+        return None if row is None else GenerationJobRecord(**dict(row))
+
+    def _generation_job_by_idempotency(self, provider, idempotency_key):
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM generation_jobs
+            WHERE provider = ? AND idempotency_key = ?
+            """,
+            (provider, idempotency_key),
+        ).fetchone()
+        return None if row is None else GenerationJobRecord(**dict(row))
+
+    def list_generation_jobs_for_chapter(self, chapter_id):
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM generation_jobs
+            WHERE chapter_id = ?
+            ORDER BY created_at ASC, job_id ASC
+            """,
+            (chapter_id,),
+        ).fetchall()
+        return [GenerationJobRecord(**dict(row)) for row in rows]
+
+    def transition_generation_job(
+        self,
+        job_id,
+        next_status,
+        *,
+        error_code="",
+        error_message="",
+        next_poll_at=None,
+        provider_result_id=None,
+    ):
+        current = self.get_generation_job(job_id)
+        if current is None:
+            return None
+        allowed = GENERATION_JOB_TRANSITIONS[current.internal_status]
+        if next_status not in allowed:
+            raise ValueError(
+                "invalid generation job transition: %s -> %s"
+                % (current.internal_status, next_status)
+            )
+        updated_at = now_iso()
+        submitted_at = current.submitted_at
+        completed_at = current.completed_at
+        if current.internal_status == "queued" and next_status == "submitting":
+            submitted_at = updated_at
+        if next_status in {"completed", "failed", "cancelled"}:
+            completed_at = updated_at
+        self.conn.execute(
+            """
+            UPDATE generation_jobs
+            SET internal_status = ?,
+                error_code = ?,
+                error_message = ?,
+                next_poll_at = ?,
+                provider_result_id = ?,
+                submitted_at = ?,
+                completed_at = ?,
+                updated_at = ?
+            WHERE job_id = ?
+            """,
+            (
+                next_status,
+                error_code,
+                error_message,
+                current.next_poll_at if next_poll_at is None else next_poll_at,
+                current.provider_result_id if provider_result_id is None else provider_result_id,
+                submitted_at,
+                completed_at,
+                updated_at,
+                job_id,
+            ),
+        )
+        self.conn.commit()
+        return self.get_generation_job(job_id)
+
+    def attach_generation_provider_job(self, job_id, *, provider_job_id, response_object_id):
+        current = self.get_generation_job(job_id)
+        if current is None:
+            return None
+        if current.internal_status != "submitting":
+            raise ValueError(
+                "invalid generation job transition: %s -> submitted"
+                % current.internal_status
+            )
+        updated_at = now_iso()
+        self.conn.execute(
+            """
+            UPDATE generation_jobs
+            SET internal_status = 'submitted',
+                provider_job_id = ?,
+                response_object_id = ?,
+                updated_at = ?
+            WHERE job_id = ?
+            """,
+            (provider_job_id, response_object_id, updated_at, job_id),
+        )
+        self.conn.commit()
+        return self.get_generation_job(job_id)
+
+    def next_generation_attempt_number(self, *, chapter_id, shot_id, provider, job_type):
+        row = self.conn.execute(
+            """
+            SELECT COALESCE(MAX(attempt_number), 0) + 1 AS next_attempt
+            FROM generation_jobs
+            WHERE chapter_id = ? AND shot_id = ? AND provider = ? AND job_type = ?
+            """,
+            (chapter_id, shot_id, provider, job_type),
+        ).fetchone()
+        return int(row["next_attempt"])
+
+    def create_generation_result(
+        self,
+        *,
+        job_id,
+        chapter_id,
+        shot_id,
+        object_id,
+        media_type,
+        source_url,
+        metadata_object_id,
+    ):
+        created_at = now_iso()
+        result_id = uuid.uuid4().hex
+        self.conn.execute(
+            """
+            INSERT INTO generation_results
+            (result_id, job_id, chapter_id, shot_id, object_id, media_type,
+             source_url, metadata_object_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                result_id,
+                job_id,
+                chapter_id,
+                shot_id,
+                object_id,
+                media_type,
+                source_url,
+                metadata_object_id,
+                created_at,
+            ),
+        )
+        self.conn.commit()
+        return self.get_generation_result(result_id)
+
+    def get_generation_result(self, result_id):
+        row = self.conn.execute(
+            "SELECT * FROM generation_results WHERE result_id = ?",
+            (result_id,),
+        ).fetchone()
+        return None if row is None else GenerationResultRecord(**dict(row))
+
+    def list_generation_results_for_shot(self, chapter_id, shot_id):
+        rows = self.conn.execute(
+            """
+            SELECT *
+            FROM generation_results
+            WHERE chapter_id = ? AND shot_id = ?
+            ORDER BY created_at ASC, result_id ASC
+            """,
+            (chapter_id, shot_id),
+        ).fetchall()
+        return [GenerationResultRecord(**dict(row)) for row in rows]
+
+    def select_generation_result(self, chapter_id, shot_id, result_id):
+        selected_at = now_iso()
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO shot_result_selections
+                (chapter_id, shot_id, result_id, selected_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(chapter_id, shot_id)
+                DO UPDATE SET result_id = excluded.result_id,
+                              selected_at = excluded.selected_at
+                """,
+                (chapter_id, shot_id, result_id, selected_at),
+            )
+        return self.current_generation_result_selection(chapter_id, shot_id)
+
+    def current_generation_result_selection(self, chapter_id, shot_id):
+        row = self.conn.execute(
+            """
+            SELECT *
+            FROM shot_result_selections
+            WHERE chapter_id = ? AND shot_id = ?
+            """,
+            (chapter_id, shot_id),
+        ).fetchone()
+        return None if row is None else ShotResultSelectionRecord(**dict(row))
+
+    def create_result_review(self, *, result_id, decision, failure_category="", note=""):
+        created_at = now_iso()
+        review_id = uuid.uuid4().hex
+        self.conn.execute(
+            """
+            INSERT INTO result_reviews
+            (review_id, result_id, decision, failure_category, note, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (review_id, result_id, decision, failure_category, note, created_at),
+        )
+        self.conn.commit()
+        return self.get_result_review(review_id)
+
+    def get_result_review(self, review_id):
+        row = self.conn.execute(
+            "SELECT * FROM result_reviews WHERE review_id = ?",
+            (review_id,),
+        ).fetchone()
+        return None if row is None else ResultReviewRecord(**dict(row))
+
+    def create_rerun_record(self, *, source_job_id, new_job_id, overrides_object_id):
+        created_at = now_iso()
+        rerun_id = uuid.uuid4().hex
+        self.conn.execute(
+            """
+            INSERT INTO rerun_records
+            (rerun_id, source_job_id, new_job_id, overrides_object_id, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (rerun_id, source_job_id, new_job_id, overrides_object_id, created_at),
+        )
+        self.conn.commit()
+        return self.get_rerun_record(rerun_id)
+
+    def get_rerun_record(self, rerun_id):
+        row = self.conn.execute(
+            "SELECT * FROM rerun_records WHERE rerun_id = ?",
+            (rerun_id,),
+        ).fetchone()
+        return None if row is None else RerunRecord(**dict(row))
 
 def _normalized_json(payload):
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
