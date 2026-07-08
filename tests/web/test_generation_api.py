@@ -211,7 +211,7 @@ def test_generation_job_detail_includes_saved_request_preview(tmp_path):
     body = detail.json()
     assert body["request"]["prompt"] == "Shen Qinghe turns toward the lantern."
     assert body["request"]["negative_prompt"] == "warped face"
-    assert body["request"]["parameters"] == {"num_frames": 121}
+    assert body["request"]["parameters"] == {"frame_rate": 24, "num_frames": 121}
     assert body["request"]["asset_ids"]
     assert "url" not in json.dumps(body["request"])
 

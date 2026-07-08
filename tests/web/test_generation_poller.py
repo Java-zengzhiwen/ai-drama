@@ -1,6 +1,9 @@
 import pytest
 
 from ai_drama_web.providers.models import ProviderJob, ProviderResult
+from ai_drama_web.secrets import LocalSecretStore
+from ai_drama_web.services.asset_delivery import AssetDeliveryService
+from ai_drama_web.services.generation_execution import GenerationExecutionService
 from ai_drama_web.services.generation_poller import GenerationPoller
 
 from test_generation_job_service import _ready_fixture
@@ -123,6 +126,43 @@ async def test_poller_marks_orphaned_submitting_as_submission_outcome_unknown(tm
     assert result.submission_outcome_unknown == 1
     assert job.internal_status == "failed"
     assert job.error_code == "submission_outcome_unknown"
+
+
+@pytest.mark.asyncio
+async def test_poller_marks_invalid_public_base_url_as_input_unreachable(tmp_path):
+    runtime, store, queue_service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+    queued = queue_service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="invalid-public-base-url",
+    )
+    backend = PollerBackend()
+    execution_service = GenerationExecutionService(
+        store,
+        runtime,
+        backend,
+        asset_delivery=AssetDeliveryService(
+            store,
+            runtime,
+            LocalSecretStore(tmp_path / "runtime.db-data"),
+            public_base_url="https://10.0.0.1",
+        ),
+    )
+
+    result = await GenerationPoller(
+        store,
+        runtime,
+        backend,
+        rpm=60,
+        poll_interval_seconds=5,
+        execution_service=execution_service,
+    ).run_cycle()
+
+    job = store.get_generation_job(queued.job_id)
+    assert result.submitted == 1
+    assert job.internal_status == "failed"
+    assert job.error_code == "input_unreachable"
+    assert job.error_message == "video input asset is not provider reachable"
 
 
 class PollerBackend:

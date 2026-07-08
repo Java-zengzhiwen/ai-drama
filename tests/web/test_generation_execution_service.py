@@ -28,7 +28,7 @@ def test_submit_queued_video_job_sends_saved_request_and_persists_provider_job(t
     assert backend.requests[0].prompt == "Shen Qinghe turns toward the lantern."
     assert backend.requests[0].negative_prompt == "warped face"
     assert backend.requests[0].duration_seconds == 5
-    assert backend.requests[0].parameters == {"num_frames": 121}
+    assert backend.requests[0].parameters == {"frame_rate": 24, "num_frames": 121}
     assert all(url.startswith("https://assets.example.test/public/assets/") for url in backend.requests[0].input_images)
     persisted_request = json.loads(runtime.read_text(queued.request_object_id))
     assert "url" not in json.dumps(persisted_request)
@@ -100,6 +100,46 @@ def test_submit_queued_video_job_records_provider_error_without_leaking_raw_mess
     assert failed.error_code == "provider_busy"
     assert failed.error_message == "video provider failed"
     assert "provider-secret" not in failed.error_message
+
+
+def test_submit_queued_video_job_maps_invalid_public_base_url_to_input_unreachable(tmp_path):
+    runtime, store, queue_service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+    queued = queue_service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="invalid-base-url",
+    )
+
+    failed = _execution_service(
+        tmp_path,
+        runtime,
+        store,
+        CapturingVideoBackend(),
+        public_base_url="http://localhost:8000",
+    ).submit_queued_job(queued.job_id)
+
+    assert failed.internal_status == "failed"
+    assert failed.error_code == "input_unreachable"
+    assert failed.error_message == "video input asset is not provider reachable"
+
+
+def test_invalid_public_base_url_does_not_leave_job_submitting(tmp_path):
+    runtime, store, queue_service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+    queued = queue_service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="invalid-base-url-submitting",
+    )
+
+    _execution_service(
+        tmp_path,
+        runtime,
+        store,
+        CapturingVideoBackend(),
+        public_base_url="https://127.0.0.1",
+    ).submit_queued_job(queued.job_id)
+
+    assert store.get_generation_job(queued.job_id).internal_status == "failed"
 
 
 def test_missing_agnes_key_marks_job_failed_with_authentication_or_configuration_error(tmp_path):
@@ -241,7 +281,7 @@ def test_submit_queued_video_job_rejects_nonqueued_job(tmp_path):
         _execution_service(tmp_path, runtime, store, CapturingVideoBackend()).submit_queued_job(queued.job_id)
 
 
-def _execution_service(tmp_path, runtime, store, backend):
+def _execution_service(tmp_path, runtime, store, backend, *, public_base_url="https://assets.example.test"):
     return GenerationExecutionService(
         store,
         runtime,
@@ -250,7 +290,7 @@ def _execution_service(tmp_path, runtime, store, backend):
             store,
             runtime,
             LocalSecretStore(tmp_path / "runtime.db-data"),
-            public_base_url="https://assets.example.test",
+            public_base_url=public_base_url,
         ),
     )
 

@@ -172,7 +172,7 @@ def test_queue_video_job_persists_canonical_request_and_returns_existing_duplica
     assert request["prompt"] == "Shen Qinghe turns toward the lantern."
     assert request["negative_prompt"] == "warped face"
     assert request["duration_seconds"] == 5
-    assert request["parameters"] == {"num_frames": 121}
+    assert request["parameters"] == {"frame_rate": 24, "num_frames": 121}
     assert request["asset_ids"] == asset_ids
     assert "assets" not in request
     assert "url" not in json.dumps(request)
@@ -249,12 +249,12 @@ def test_explicit_rerun_creates_next_attempt_with_overrides(tmp_path):
 
 
 def test_duration_5_seconds_maps_to_official_frame_count():
-    assert video_timing_for_duration(5) == {"num_frames": 121}
+    assert video_timing_for_duration(5) == {"frame_rate": 24, "num_frames": 121}
     assert (121 - 1) % 8 == 0
 
 
 def test_duration_10_seconds_maps_to_official_frame_count():
-    assert video_timing_for_duration(10) == {"num_frames": 241}
+    assert video_timing_for_duration(10) == {"frame_rate": 24, "num_frames": 241}
     assert (241 - 1) % 8 == 0
 
 
@@ -289,6 +289,44 @@ def test_conflicting_duration_and_num_frames_is_rejected(tmp_path):
         )
 
 
+def test_conflicting_duration_and_frame_rate_is_rejected(tmp_path):
+    runtime, _store, service, revision, canonical, _asset_ids = _ready_fixture(tmp_path)
+    canonical["shots"][0]["agnes_video_params"] = {"frame_rate": 30, "num_frames": 121}
+    object_id = runtime.write_text_object(serialize_shot_prompt_json(canonical).decode("utf-8"))
+    runtime.conn.execute(
+        "UPDATE revisions SET content_object_id = ? WHERE revision_id = ?",
+        (object_id, revision.revision_id),
+    )
+    runtime.conn.commit()
+
+    with pytest.raises(GenerationInvalidRequest, match="duration timing conflicts"):
+        service.queue_video_job(
+            prompt_revision_id=revision.revision_id,
+            shot_id="SHOT_001",
+            idempotency_key="frame-rate-conflict",
+        )
+
+
+def test_partial_timing_parameters_are_normalized_or_rejected(tmp_path):
+    runtime, _store, service, revision, canonical, _asset_ids = _ready_fixture(tmp_path)
+    canonical["shots"][0]["agnes_video_params"] = {"num_frames": 121}
+    object_id = runtime.write_text_object(serialize_shot_prompt_json(canonical).decode("utf-8"))
+    runtime.conn.execute(
+        "UPDATE revisions SET content_object_id = ? WHERE revision_id = ?",
+        (object_id, revision.revision_id),
+    )
+    runtime.conn.commit()
+
+    job = service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="partial-timing",
+    )
+
+    request = json.loads(runtime.read_text(job.request_object_id))
+    assert request["parameters"] == {"frame_rate": 24, "num_frames": 121}
+
+
 def test_rerun_duration_override_changes_provider_request(tmp_path):
     runtime, _store, service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
 
@@ -302,7 +340,7 @@ def test_rerun_duration_override_changes_provider_request(tmp_path):
 
     request = json.loads(runtime.read_text(rerun.request_object_id))
     assert request["duration_seconds"] == 10
-    assert request["parameters"] == {"num_frames": 241}
+    assert request["parameters"] == {"frame_rate": 24, "num_frames": 241}
 
 
 def test_same_key_different_shot_returns_idempotency_conflict(tmp_path):

@@ -4,7 +4,7 @@ from ai_drama_runtime.store import RuntimeStore
 from ai_drama_web.providers.base import GenerationBackend
 from ai_drama_web.providers.errors import ProviderError
 from ai_drama_web.providers.models import VideoGenerationRequest
-from ai_drama_web.services.asset_delivery import AssetDeliveryService
+from ai_drama_web.services.asset_delivery import AssetDeliveryInvalidPublicBaseUrl, AssetDeliveryService
 from ai_drama_web.store import ProductStore
 
 
@@ -46,6 +46,13 @@ class GenerationExecutionService:
                 "failed",
                 error_code=exc.code,
                 error_message="video provider failed",
+            )
+        except AssetDeliveryInvalidPublicBaseUrl:
+            return self.product_store.transition_generation_job(
+                submitting.job_id,
+                "failed",
+                error_code="input_unreachable",
+                error_message="video input asset is not provider reachable",
             )
         except Exception:
             return self.product_store.transition_generation_job(

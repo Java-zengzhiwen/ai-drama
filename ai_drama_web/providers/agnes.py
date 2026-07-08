@@ -174,7 +174,7 @@ class AgnesImageBackend(GenerationBackend):
 
         parameters = dict(request.parameters)
         mode = parameters.get("mode")
-        for field in ("num_frames", "seed"):
+        for field in ("frame_rate", "num_frames", "seed"):
             if field in parameters:
                 payload[field] = parameters[field]
 

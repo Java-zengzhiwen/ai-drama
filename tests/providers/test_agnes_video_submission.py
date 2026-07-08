@@ -38,7 +38,7 @@ def test_create_video_job_posts_official_payload_and_uses_video_id_as_provider_j
                 negative_prompt="warped face, broken hands",
                 duration_seconds=5,
                 input_images=["https://assets.example.test/public/assets/asset-1?expires=1&signature=s"],
-                parameters={"num_frames": 121},
+                parameters={"frame_rate": 24, "num_frames": 121},
             )
         )
 
@@ -53,6 +53,7 @@ def test_create_video_job_posts_official_payload_and_uses_video_id_as_provider_j
         "prompt": "Camera pushes in while Shen Qinghe turns toward the lantern.",
         "negative_prompt": "warped face, broken hands",
         "image": "https://assets.example.test/public/assets/asset-1?expires=1&signature=s",
+        "frame_rate": 24,
         "num_frames": 121,
     }
     raw = json.dumps(job.raw)
@@ -129,7 +130,11 @@ def test_provider_payload_uses_only_allowlisted_fields():
                 duration_seconds=5,
                 input_images=["https://assets.example.test/asset.png"],
                 parameters={
+                    "frame_rate": 24,
+                    "height": 720,
+                    "num_frames": 121,
                     "seed": 123,
+                    "width": 1280,
                     "model": "evil-model",
                     "endpoint": "https://evil.example.test",
                     "authorization": "Bearer leaked",
@@ -143,7 +148,31 @@ def test_provider_payload_uses_only_allowlisted_fields():
     payload = json.loads(route.calls.last.request.content)
     assert payload["model"] == "agnes-video-v2.0"
     assert payload["image"] == "https://assets.example.test/asset.png"
+    assert payload["frame_rate"] == 24
+    assert payload["num_frames"] == 121
     assert payload["seed"] == 123
     assert "endpoint" not in payload
     assert "authorization" not in payload
+    assert "height" not in payload
+    assert "width" not in payload
     assert "video_id" not in payload
+
+
+def test_provider_payload_allows_frame_rate_for_duration_control():
+    backend = AgnesImageBackend(api_key=API_KEY)
+
+    with respx.mock(assert_all_called=True) as router:
+        route = router.post(AGNES_VIDEO_ENDPOINT).mock(
+            return_value=httpx.Response(200, json={"task_id": "task_1", "video_id": "video_1", "status": "queued"})
+        )
+        backend.create_video_job(
+            VideoGenerationRequest(
+                prompt="clip",
+                duration_seconds=5,
+                parameters={"frame_rate": 24, "num_frames": 121},
+            )
+        )
+
+    payload = json.loads(route.calls.last.request.content)
+    assert payload["frame_rate"] == 24
+    assert payload["num_frames"] == 121
