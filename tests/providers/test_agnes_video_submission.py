@@ -122,3 +122,36 @@ def test_create_video_job_requires_video_id_in_provider_response():
     assert exc_info.value.code == "unknown_provider_error"
     assert "video_id" in str(exc_info.value)
     assert API_KEY not in json.dumps(exc_info.value.raw)
+
+
+def test_provider_payload_uses_only_allowlisted_fields():
+    backend = AgnesImageBackend(api_key=API_KEY)
+
+    with respx.mock(assert_all_called=True) as router:
+        route = router.post(AGNES_VIDEO_ENDPOINT).mock(
+            return_value=httpx.Response(200, json={"task_id": "task_1", "video_id": "video_1", "status": "queued"})
+        )
+        backend.create_video_job(
+            VideoGenerationRequest(
+                prompt="clip",
+                duration_seconds=5,
+                input_images=["https://assets.example.test/asset.png"],
+                parameters={
+                    "num_frames": 121,
+                    "frame_rate": 24,
+                    "model": "evil-model",
+                    "endpoint": "https://evil.example.test",
+                    "authorization": "Bearer leaked",
+                    "image": "https://evil.example.test/image.png",
+                    "extra_body": {"image": ["https://evil.example.test/key.png"]},
+                    "video_id": "evil-video-id",
+                },
+            )
+        )
+
+    payload = json.loads(route.calls.last.request.content)
+    assert payload["model"] == "agnes-video-v2.0"
+    assert payload["image"] == "https://assets.example.test/asset.png"
+    assert "endpoint" not in payload
+    assert "authorization" not in payload
+    assert "video_id" not in payload

@@ -31,6 +31,13 @@ def _app_client(data_root):
     return TestClient(app)
 
 
+def _install_generation_backend(client, backend):
+    client.app.state.generation_backend = backend
+    if hasattr(client.app.state, "generation_poller"):
+        client.app.state.generation_poller.backend = backend
+        client.app.state.generation_poller.execution_service.backend = backend
+
+
 def _ready_chapter(tmp_path):
     data_root = tmp_path / "runtime-data"
     runtime = RuntimeStore(data_root / "runtime.db", data_root / "objects")
@@ -205,13 +212,14 @@ def test_generation_job_detail_includes_saved_request_preview(tmp_path):
     assert body["request"]["prompt"] == "Shen Qinghe turns toward the lantern."
     assert body["request"]["negative_prompt"] == "warped face"
     assert body["request"]["parameters"] == {"frame_rate": 24, "num_frames": 121}
-    assert body["request"]["assets"][0]["url"].startswith("https://assets.example.test/public/assets/")
+    assert body["request"]["asset_ids"]
+    assert "url" not in json.dumps(body["request"])
 
 
-def test_refresh_generation_job_submits_queued_video_job(tmp_path):
+def test_refresh_generation_job_does_not_submit_queued_video_job(tmp_path):
     data_root, chapter, revision, _canonical = _ready_chapter(tmp_path)
     with _app_client(data_root) as client:
-        client.app.state.generation_backend = ApiVideoBackend()
+        _install_generation_backend(client, ApiVideoBackend())
         created = client.post(
             f"/api/chapters/{chapter.chapter_id}/generation/video-jobs",
             json={
@@ -224,15 +232,15 @@ def test_refresh_generation_job_submits_queued_video_job(tmp_path):
 
     assert refreshed.status_code == 200, refreshed.text
     body = refreshed.json()
-    assert body["internal_status"] == "submitted"
-    assert body["ui_status"] == "generating"
-    assert body["provider_job_id"] == "api-video-1"
+    assert body["internal_status"] == "queued"
+    assert body["ui_status"] == "queued"
+    assert body["provider_job_id"] == ""
 
 
 def test_results_api_lists_selects_and_reviews_generation_result(tmp_path):
     data_root, chapter, revision, _canonical = _ready_chapter(tmp_path)
     with _app_client(data_root) as client:
-        client.app.state.generation_backend = CompletedApiVideoBackend()
+        _install_generation_backend(client, CompletedApiVideoBackend())
         created = client.post(
             f"/api/chapters/{chapter.chapter_id}/generation/video-jobs",
             json={
@@ -241,8 +249,8 @@ def test_results_api_lists_selects_and_reviews_generation_result(tmp_path):
                 "idempotency_key": "submit-1",
             },
         ).json()
-        submitted = client.post(f"/api/generation/jobs/{created['job_id']}/refresh").json()
-        completed = client.post(f"/api/generation/jobs/{submitted['job_id']}/refresh").json()
+        client.portal.call(client.app.state.generation_poller.run_cycle)
+        completed = client.post(f"/api/generation/jobs/{created['job_id']}/refresh").json()
         listed = client.get(f"/api/chapters/{chapter.chapter_id}/results")
         result_id = listed.json()[0]["results"][0]["result_id"]
         selected = client.post(f"/api/shots/SHOT_001/results/{result_id}/select")
@@ -254,6 +262,7 @@ def test_results_api_lists_selects_and_reviews_generation_result(tmp_path):
                 "note": "current cut",
             },
         )
+        content = client.get(f"/api/results/{result_id}/content")
 
     assert completed["internal_status"] == "completed"
     assert listed.status_code == 200, listed.text
@@ -262,15 +271,17 @@ def test_results_api_lists_selects_and_reviews_generation_result(tmp_path):
             "shot_id": "SHOT_001",
             "current_result_id": "",
             "results": [
-                {
-                    "result_id": result_id,
-                    "job_id": completed["job_id"],
-                    "attempt_number": 1,
-                    "media_type": "video/mp4",
-                    "source_url": "https://cdn.example.test/video.mp4",
-                    "local_result_available": True,
-                    "created_at": listed.json()[0]["results"][0]["created_at"],
-                }
+                    {
+                        "result_id": result_id,
+                        "job_id": completed["job_id"],
+                        "attempt_number": 1,
+                        "media_type": "video/mp4",
+                        "source_url": "https://cdn.example.test/video.mp4",
+                        "source_url_state": "source_url_active",
+                        "local_result_available": True,
+                        "local_content_url": f"/api/results/{result_id}/content",
+                        "created_at": listed.json()[0]["results"][0]["created_at"],
+                    }
             ],
         }
     ]
@@ -278,6 +289,83 @@ def test_results_api_lists_selects_and_reviews_generation_result(tmp_path):
     assert selected.json()["result_id"] == result_id
     assert reviewed.status_code == 200, reviewed.text
     assert reviewed.json()["decision"] == "passed"
+
+    assert content.status_code == 200
+    assert content.content == b"mp4-bytes"
+    assert "object" not in content.headers
+
+
+def test_results_api_distinguishes_expired_source_url_states(tmp_path):
+    data_root, chapter, revision, _canonical = _ready_chapter(tmp_path)
+    with _app_client(data_root) as client:
+        def seed_results():
+            store = client.app.state.product_store
+            runtime = client.app.state.runtime_store
+            local_job = store.create_generation_job(
+                provider="agnes",
+                job_type="video",
+                project_id=chapter.project_id,
+                chapter_id=chapter.chapter_id,
+                shot_id="SHOT_001",
+                prompt_revision_id=revision.revision_id,
+                idempotency_key="expired-local",
+                request_hash="hash-local",
+                request_object_id=runtime.write_text_object("{}"),
+                attempt_number=1,
+            )
+            local_job = store.transition_generation_job(local_job.job_id, "queued")
+            local_job = store.transition_generation_job(local_job.job_id, "submitting")
+            local_job = store.attach_generation_provider_job(
+                local_job.job_id,
+                provider_job_id="provider-local",
+                response_object_id=runtime.write_text_object("{}"),
+            )
+            completed_job = store.complete_generation_job_with_result(
+                job_id=local_job.job_id,
+                object_id=runtime.write_bytes_object(b"local"),
+                media_type="video/mp4",
+                source_url="https://cdn.example.test/expired-local.mp4",
+                source_url_state="source_url_expired",
+                metadata_object_id=runtime.write_text_object("{}"),
+            )
+            missing_job = store.create_generation_job(
+                provider="agnes",
+                job_type="video",
+                project_id=chapter.project_id,
+                chapter_id=chapter.chapter_id,
+                shot_id="SHOT_001",
+                prompt_revision_id=revision.revision_id,
+                idempotency_key="expired-missing",
+                request_hash="hash-missing",
+                request_object_id=runtime.write_text_object("{}"),
+                attempt_number=2,
+            )
+            missing_result = store.create_generation_result(
+                job_id=missing_job.job_id,
+                chapter_id=chapter.chapter_id,
+                shot_id="SHOT_001",
+                object_id="",
+                media_type="video/mp4",
+                source_url="https://cdn.example.test/expired-missing.mp4",
+                source_url_state="source_url_expired",
+                metadata_object_id=runtime.write_text_object("{}"),
+            )
+            return completed_job.provider_result_id, missing_result.result_id
+
+        local_result, missing_result_id = client.portal.call(seed_results)
+        listed = client.get(f"/api/chapters/{chapter.chapter_id}/results")
+        missing_content = client.get(f"/api/results/{missing_result_id}/content")
+
+    assert listed.status_code == 200, listed.text
+    by_result_id = {result["result_id"]: result for result in listed.json()[0]["results"]}
+    assert by_result_id[local_result]["source_url_state"] == "source_url_expired"
+    assert by_result_id[local_result]["local_result_available"] is True
+    assert by_result_id[local_result]["local_content_url"] == f"/api/results/{local_result}/content"
+    assert by_result_id[missing_result_id]["source_url_state"] == "source_url_expired"
+    assert by_result_id[missing_result_id]["local_result_available"] is False
+    assert by_result_id[missing_result_id]["local_content_url"] == ""
+    assert missing_content.status_code == 409
+    assert missing_content.json()["error_code"] == "local_result_missing"
 
 
 def test_rerun_api_creates_new_attempt_with_prompt_and_asset_overrides(tmp_path):
@@ -314,7 +402,64 @@ def test_rerun_api_creates_new_attempt_with_prompt_and_asset_overrides(tmp_path)
     assert body["new_job"]["internal_status"] == "queued"
     request = detail.json()["request"]
     assert request["prompt"] == "Override prompt"
-    assert [asset["asset_id"] for asset in request["assets"]] == [replacement["asset_id"]]
+    assert request["asset_ids"] == [replacement["asset_id"]]
+
+
+def test_rerun_rejects_unknown_parameter(tmp_path):
+    data_root, chapter, revision, _canonical = _ready_chapter(tmp_path)
+    with _app_client(data_root) as client:
+        source = client.post(
+            f"/api/chapters/{chapter.chapter_id}/generation/video-jobs",
+            json={
+                "prompt_revision_id": revision.revision_id,
+                "shot_id": "SHOT_001",
+                "idempotency_key": "source",
+            },
+        ).json()
+        response = client.post(
+            f"/api/generation/jobs/{source['job_id']}/rerun",
+            json={"idempotency_key": "rerun-bad", "parameters": {"model": "override"}},
+        )
+
+    assert response.status_code == 422
+
+
+def test_review_result_validates_failure_category_rules(tmp_path):
+    data_root, chapter, revision, _canonical = _ready_chapter(tmp_path)
+    with _app_client(data_root) as client:
+        _install_generation_backend(client, CompletedApiVideoBackend())
+        created = client.post(
+            f"/api/chapters/{chapter.chapter_id}/generation/video-jobs",
+            json={
+                "prompt_revision_id": revision.revision_id,
+                "shot_id": "SHOT_001",
+                "idempotency_key": "submit-review",
+            },
+        ).json()
+        client.portal.call(client.app.state.generation_poller.run_cycle)
+        client.post(f"/api/generation/jobs/{created['job_id']}/refresh")
+        result_id = client.get(f"/api/chapters/{chapter.chapter_id}/results").json()[0]["results"][0]["result_id"]
+        passed_with_category = client.post(
+            f"/api/results/{result_id}/review",
+            json={"decision": "passed", "failure_category": "generation_failed"},
+        )
+        failed_without_category = client.post(
+            f"/api/results/{result_id}/review",
+            json={"decision": "failed", "failure_category": ""},
+        )
+        failed_unknown_category = client.post(
+            f"/api/results/{result_id}/review",
+            json={"decision": "failed", "failure_category": "freeform"},
+        )
+        failed_valid_category = client.post(
+            f"/api/results/{result_id}/review",
+            json={"decision": "failed", "failure_category": "generation_failed"},
+        )
+
+    assert passed_with_category.status_code == 422
+    assert failed_without_category.status_code == 422
+    assert failed_unknown_category.status_code == 422
+    assert failed_valid_category.status_code == 200
 
 
 def test_queue_video_job_endpoint_blocks_unready_shot(tmp_path):
@@ -336,6 +481,22 @@ def test_queue_video_job_endpoint_blocks_unready_shot(tmp_path):
     }
 
 
+def test_initial_submission_rejects_overrides(tmp_path):
+    data_root, chapter, revision, _canonical = _ready_chapter(tmp_path)
+    with _app_client(data_root) as client:
+        response = client.post(
+            f"/api/chapters/{chapter.chapter_id}/generation/video-jobs",
+            json={
+                "prompt_revision_id": revision.revision_id,
+                "shot_id": "SHOT_001",
+                "idempotency_key": "submit",
+                "overrides": {"prompt": "not allowed"},
+            },
+        )
+
+    assert response.status_code == 422
+
+
 class ApiVideoBackend:
     def create_video_job(self, request):
         return ProviderJob(
@@ -346,14 +507,14 @@ class ApiVideoBackend:
 
 
 class CompletedApiVideoBackend(ApiVideoBackend):
-    def get_job_status(self, provider_job_id):
+    def get_video_job_status(self, provider_job_id):
         return ProviderJob(
             provider_job_id=provider_job_id,
             status="completed",
             raw={"provider": "api-video", "status": "completed"},
         )
 
-    def fetch_result(self, provider_job_id):
+    def fetch_video_result(self, provider_job_id):
         return ProviderResult(
             provider_job_id=provider_job_id,
             media_type="video/mp4",
@@ -361,3 +522,9 @@ class CompletedApiVideoBackend(ApiVideoBackend):
             content=b"mp4-bytes",
             raw={"provider": "api-video", "url": "https://cdn.example.test/video.mp4"},
         )
+
+    def get_job_status(self, provider_job_id):
+        return self.get_video_job_status(provider_job_id)
+
+    def fetch_result(self, provider_job_id):
+        return self.fetch_video_result(provider_job_id)

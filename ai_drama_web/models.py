@@ -113,6 +113,7 @@ class GenerationResultRecord:
     object_id: str
     media_type: str
     source_url: str
+    source_url_state: str
     metadata_object_id: str
     created_at: str
 

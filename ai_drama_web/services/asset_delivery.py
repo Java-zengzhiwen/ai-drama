@@ -1,7 +1,8 @@
 import hmac
+import ipaddress
 import time
 from hashlib import sha256
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_web.secrets import LocalSecretStore
@@ -37,6 +38,8 @@ class AssetDeliveryService:
 
     def signed_asset_url(self, asset_id: str, *, ttl_seconds: int = 900) -> str:
         self._require_provider_reachable_base_url()
+        if ttl_seconds < 1 or ttl_seconds > 3600:
+            raise ValueError("ttl_seconds must be between 1 and 3600")
         expires = int(time.time()) + ttl_seconds
         signature = self.sign(asset_id, expires)
         return "%s/public/assets/%s?expires=%s&signature=%s" % (
@@ -68,9 +71,25 @@ class AssetDeliveryService:
         ).hexdigest()
 
     def _require_provider_reachable_base_url(self) -> None:
-        normalized = self.public_base_url.lower()
-        if not normalized.startswith("https://"):
+        parsed = urlparse(self.public_base_url)
+        if parsed.scheme != "https":
             raise AssetDeliveryInvalidPublicBaseUrl
-        blocked_fragments = ("localhost", "127.0.0.1", "[::1]")
-        if any(fragment in normalized for fragment in blocked_fragments):
+        if parsed.username or parsed.password:
+            raise AssetDeliveryInvalidPublicBaseUrl
+        hostname = parsed.hostname
+        if not hostname:
+            raise AssetDeliveryInvalidPublicBaseUrl
+        if hostname.lower() == "localhost":
+            raise AssetDeliveryInvalidPublicBaseUrl
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError:
+            return
+        if (
+            address.is_loopback
+            or address.is_private
+            or address.is_link_local
+            or address.is_reserved
+            or address.is_unspecified
+        ):
             raise AssetDeliveryInvalidPublicBaseUrl

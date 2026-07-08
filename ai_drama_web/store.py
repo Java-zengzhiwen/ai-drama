@@ -153,6 +153,7 @@ class ProductStore:
               object_id TEXT NOT NULL,
               media_type TEXT NOT NULL,
               source_url TEXT NOT NULL,
+              source_url_state TEXT NOT NULL DEFAULT 'source_url_active',
               metadata_object_id TEXT NOT NULL,
               created_at TEXT NOT NULL
             );
@@ -185,6 +186,7 @@ class ProductStore:
         self._ensure_column("asset_bindings", "is_current", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("asset_bindings", "project_id", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("asset_bindings", "chapter_id", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("generation_results", "source_url_state", "TEXT NOT NULL DEFAULT 'source_url_active'")
         self._backfill_asset_binding_scope()
         self._normalize_current_asset_bindings()
         self.conn.execute("DROP INDEX IF EXISTS asset_bindings_current_role_idx")
@@ -871,6 +873,7 @@ class ProductStore:
         media_type,
         source_url,
         metadata_object_id,
+        source_url_state="source_url_active",
     ):
         created_at = now_iso()
         result_id = uuid.uuid4().hex
@@ -878,8 +881,8 @@ class ProductStore:
             """
             INSERT INTO generation_results
             (result_id, job_id, chapter_id, shot_id, object_id, media_type,
-             source_url, metadata_object_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             source_url, source_url_state, metadata_object_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 result_id,
@@ -889,12 +892,67 @@ class ProductStore:
                 object_id,
                 media_type,
                 source_url,
+                source_url_state,
                 metadata_object_id,
                 created_at,
             ),
         )
         self.conn.commit()
         return self.get_generation_result(result_id)
+
+    def complete_generation_job_with_result(
+        self,
+        *,
+        job_id,
+        object_id,
+        media_type,
+        source_url,
+        metadata_object_id,
+        source_url_state="source_url_active",
+    ):
+        current = self.get_generation_job(job_id)
+        if current is None:
+            return None
+        if current.internal_status not in {"submitted", "polling"}:
+            raise ValueError(
+                "invalid generation job transition: %s -> completed"
+                % current.internal_status
+            )
+        created_at = now_iso()
+        result_id = uuid.uuid4().hex
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO generation_results
+                (result_id, job_id, chapter_id, shot_id, object_id, media_type,
+                 source_url, source_url_state, metadata_object_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    result_id,
+                    current.job_id,
+                    current.chapter_id,
+                    current.shot_id,
+                    object_id,
+                    media_type,
+                    source_url,
+                    source_url_state,
+                    metadata_object_id,
+                    created_at,
+                ),
+            )
+            self.conn.execute(
+                """
+                UPDATE generation_jobs
+                SET internal_status = 'completed',
+                    provider_result_id = ?,
+                    completed_at = ?,
+                    updated_at = ?
+                WHERE job_id = ?
+                """,
+                (result_id, created_at, created_at, current.job_id),
+            )
+        return self.get_generation_job(current.job_id)
 
     def get_generation_result(self, result_id):
         row = self.conn.execute(

@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from ai_drama_runtime.store import RuntimeStore
 
 from .config import Settings
+from .providers.factory import create_generation_backend
 from .routers.asset_delivery import router as asset_delivery_router
 from .routers.asset_requirements import router as asset_requirements_router
 from .routers.assets import router as assets_router
@@ -20,6 +21,9 @@ from .routers.settings import router as settings_router
 from .routers.shot_prompts import router as shot_prompts_router
 from .routers.storyboards import router as storyboards_router
 from .secrets import LocalSecretStore
+from .services.asset_delivery import AssetDeliveryService
+from .services.generation_execution import GenerationExecutionService
+from .services.generation_poller import GenerationPoller
 from .store import ProductStore
 
 DEFAULT_MAX_ASSET_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -41,10 +45,43 @@ def create_app(
     async def lifespan(app: FastAPI):
         runtime_store = RuntimeStore(settings.data_root / "runtime.db", settings.data_root / "objects")
         app.state.runtime_store = runtime_store
-        app.state.product_store = ProductStore(runtime_store)
+        product_store = ProductStore(runtime_store)
+        app.state.product_store = product_store
+        if getattr(app.state, "generation_backend", None) is None:
+            try:
+                app.state.generation_backend = create_generation_backend(settings, app.state.secret_store)
+            except RuntimeError as exc:
+                if not str(exc).startswith("unsupported runtime provider:"):
+                    raise
+                app.state.generation_backend = None
+        if app.state.generation_backend is not None:
+            asset_delivery = AssetDeliveryService(
+                product_store,
+                runtime_store,
+                app.state.secret_store,
+                public_base_url=settings.public_base_url,
+            )
+            app.state.generation_poller = GenerationPoller(
+                product_store,
+                runtime_store,
+                app.state.generation_backend,
+                rpm=settings.agnes_video_rpm,
+                poll_interval_seconds=settings.agnes_poll_interval_seconds,
+                execution_service=GenerationExecutionService(
+                    product_store,
+                    runtime_store,
+                    app.state.generation_backend,
+                    asset_delivery=asset_delivery,
+                ),
+            )
+            await app.state.generation_poller.start()
+        else:
+            app.state.generation_poller = None
         try:
             yield
         finally:
+            if app.state.generation_poller is not None:
+                await app.state.generation_poller.stop()
             runtime_store.close()
 
     app = FastAPI(title="AI Drama Web Production MVP", lifespan=lifespan)

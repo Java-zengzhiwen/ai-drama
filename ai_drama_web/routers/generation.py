@@ -2,6 +2,7 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.responses import Response
 
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_web.config import Settings
@@ -19,10 +20,15 @@ from ai_drama_web.schemas.generation import (
 )
 from ai_drama_web.secrets import LocalSecretStore
 from ai_drama_web.services.asset_delivery import AssetDeliveryInvalidPublicBaseUrl
-from ai_drama_web.providers.fake import FakeGenerationBackend
 from ai_drama_web.providers.base import GenerationBackend
+from ai_drama_web.services.asset_delivery import AssetDeliveryService
 from ai_drama_web.services.generation_execution import GenerationExecutionService
-from ai_drama_web.services.generation_jobs import GenerationJobBlocked, GenerationJobService
+from ai_drama_web.services.generation_jobs import (
+    GenerationIdempotencyConflict,
+    GenerationInvalidRequest,
+    GenerationJobBlocked,
+    GenerationJobService,
+)
 from ai_drama_web.store import ProductStore
 
 router = APIRouter(prefix="/api")
@@ -50,8 +56,7 @@ def get_secret_store(request: Request) -> LocalSecretStore:
 def get_generation_backend(request: Request) -> GenerationBackend:
     backend = getattr(request.app.state, "generation_backend", None)
     if backend is None:
-        backend = FakeGenerationBackend()
-        request.app.state.generation_backend = backend
+        raise RuntimeError("generation backend is not configured")
     return backend
 
 
@@ -70,11 +75,22 @@ def get_service(
 
 
 def get_execution_service(
+    request: Request,
     product_store: ProductStore = Depends(get_product_store),
     runtime_store: RuntimeStore = Depends(get_runtime_store),
     backend: GenerationBackend = Depends(get_generation_backend),
 ) -> GenerationExecutionService:
-    return GenerationExecutionService(product_store, runtime_store, backend)
+    return GenerationExecutionService(
+        product_store,
+        runtime_store,
+        backend,
+        asset_delivery=AssetDeliveryService(
+            product_store,
+            runtime_store,
+            request.app.state.secret_store,
+            public_base_url=request.app.state.settings.public_base_url,
+        ),
+    )
 
 
 @router.post(
@@ -91,10 +107,14 @@ async def queue_video_job(
             prompt_revision_id=payload.prompt_revision_id,
             shot_id=payload.shot_id,
             idempotency_key=payload.idempotency_key,
-            overrides=payload.overrides,
+            expected_chapter_id=chapter_id,
         )
     except GenerationJobBlocked as exc:
         return _error(409, "shot_prompt_blocked", str(exc))
+    except GenerationInvalidRequest as exc:
+        return _error(422, "invalid_request", str(exc))
+    except GenerationIdempotencyConflict as exc:
+        return _error(409, "idempotency_conflict", str(exc))
     except AssetDeliveryInvalidPublicBaseUrl:
         return _error(409, "input_unreachable", "public asset delivery URL is not provider reachable")
     if job.chapter_id != chapter_id:
@@ -196,6 +216,23 @@ async def review_result(
     )
 
 
+@router.get("/results/{result_id}/content")
+async def result_content(
+    result_id: str,
+    product_store: ProductStore = Depends(get_product_store),
+    runtime_store: RuntimeStore = Depends(get_runtime_store),
+):
+    result = product_store.get_generation_result(result_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="generation result not found")
+    if not result.object_id:
+        return _error(409, "local_result_missing", "local result content is not available")
+    return Response(
+        content=runtime_store.read_bytes_object(result.object_id),
+        media_type=result.media_type,
+    )
+
+
 @router.post("/generation/jobs/{job_id}/rerun", response_model=GenerationRerunRead)
 async def rerun_generation_job(
     job_id: str,
@@ -218,6 +255,10 @@ async def rerun_generation_job(
         )
     except GenerationJobBlocked as exc:
         return _error(409, "shot_prompt_blocked", str(exc))
+    except GenerationInvalidRequest as exc:
+        return _error(422, "invalid_request", str(exc))
+    except GenerationIdempotencyConflict as exc:
+        return _error(409, "idempotency_conflict", str(exc))
     except AssetDeliveryInvalidPublicBaseUrl:
         return _error(409, "input_unreachable", "public asset delivery URL is not provider reachable")
     rerun = product_store.create_rerun_record(
@@ -277,7 +318,9 @@ def _result_read(product_store: ProductStore, result) -> dict:
         "attempt_number": 0 if job is None else job.attempt_number,
         "media_type": result.media_type,
         "source_url": result.source_url,
+        "source_url_state": result.source_url_state,
         "local_result_available": bool(result.object_id),
+        "local_content_url": "" if not result.object_id else f"/api/results/{result.result_id}/content",
         "created_at": result.created_at,
     }
 
@@ -290,8 +333,15 @@ def _rerun_overrides(payload: GenerationRerunCreate) -> dict:
         overrides["negative_prompt"] = payload.negative_prompt
     if payload.asset_ids is not None:
         overrides["asset_ids"] = list(payload.asset_ids)
-    if payload.parameters is not None:
-        overrides["parameters"] = dict(payload.parameters)
+    if payload.duration_seconds is not None:
+        overrides["duration_seconds"] = payload.duration_seconds
+    parameters = {}
+    if payload.mode is not None:
+        parameters["mode"] = payload.mode
+    if payload.seed is not None:
+        parameters["seed"] = payload.seed
+    if parameters:
+        overrides["parameters"] = parameters
     return overrides
 
 

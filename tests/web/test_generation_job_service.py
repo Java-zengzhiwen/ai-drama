@@ -11,8 +11,11 @@ from ai_drama_runtime.shot_prompt_canonical import (
 from ai_drama_runtime.store import RuntimeStore, now_iso
 from ai_drama_web.secrets import LocalSecretStore
 from ai_drama_web.services.generation_jobs import (
+    GenerationIdempotencyConflict,
+    GenerationInvalidRequest,
     GenerationJobBlocked,
     GenerationJobService,
+    video_timing_for_duration,
 )
 from ai_drama_web.store import ProductStore
 
@@ -170,8 +173,9 @@ def test_queue_video_job_persists_canonical_request_and_returns_existing_duplica
     assert request["negative_prompt"] == "warped face"
     assert request["duration_seconds"] == 5
     assert request["parameters"] == {"frame_rate": 24, "num_frames": 121}
-    assert [item["asset_id"] for item in request["assets"]] == asset_ids
-    assert all(item["url"].startswith("https://assets.example.test/public/assets/") for item in request["assets"])
+    assert request["asset_ids"] == asset_ids
+    assert "assets" not in request
+    assert "url" not in json.dumps(request)
     assert store.list_generation_jobs_for_chapter(revision.chapter_id) == [job]
 
 
@@ -206,7 +210,75 @@ def test_explicit_rerun_creates_next_attempt_with_overrides(tmp_path):
     assert rerun.attempt_number == 2
     request = json.loads(runtime.read_text(rerun.request_object_id))
     assert request["prompt"] == "Override prompt"
-    assert [asset["asset_id"] for asset in request["assets"]] == [replacement.asset_id]
+    assert request["asset_ids"] == [replacement.asset_id]
+
+
+def test_duration_5_and_10_seconds_map_to_official_frame_counts():
+    assert video_timing_for_duration(5) == {"num_frames": 121, "frame_rate": 24}
+    assert video_timing_for_duration(10) == {"num_frames": 241, "frame_rate": 24}
+
+
+def test_invalid_duration_is_rejected(tmp_path):
+    _runtime, _store, service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+
+    with pytest.raises(GenerationInvalidRequest, match="unsupported video duration"):
+        service.queue_video_job(
+            prompt_revision_id=revision.revision_id,
+            shot_id="SHOT_001",
+            idempotency_key="bad-duration",
+            explicit_rerun=True,
+            overrides={"duration_seconds": 6},
+        )
+
+
+def test_conflicting_duration_and_num_frames_is_rejected(tmp_path):
+    runtime, _store, service, revision, canonical, _asset_ids = _ready_fixture(tmp_path)
+    canonical["shots"][0]["agnes_video_params"] = {"num_frames": 241, "frame_rate": 24}
+    object_id = runtime.write_text_object(serialize_shot_prompt_json(canonical).decode("utf-8"))
+    runtime.conn.execute(
+        "UPDATE revisions SET content_object_id = ? WHERE revision_id = ?",
+        (object_id, revision.revision_id),
+    )
+    runtime.conn.commit()
+
+    with pytest.raises(GenerationInvalidRequest, match="duration timing conflicts"):
+        service.queue_video_job(
+            prompt_revision_id=revision.revision_id,
+            shot_id="SHOT_001",
+            idempotency_key="conflict",
+        )
+
+
+def test_rerun_duration_override_changes_provider_request(tmp_path):
+    runtime, _store, service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+
+    rerun = service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="duration-10",
+        explicit_rerun=True,
+        overrides={"duration_seconds": 10},
+    )
+
+    request = json.loads(runtime.read_text(rerun.request_object_id))
+    assert request["duration_seconds"] == 10
+    assert request["parameters"] == {"frame_rate": 24, "num_frames": 241}
+
+
+def test_same_key_different_shot_returns_idempotency_conflict(tmp_path):
+    _runtime, _store, service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+    service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="same-key",
+    )
+
+    with pytest.raises(GenerationIdempotencyConflict):
+        service.queue_video_job(
+            prompt_revision_id=revision.revision_id,
+            shot_id="MISSING_SHOT",
+            idempotency_key="same-key",
+        )
 
 
 def test_queue_video_job_blocks_unready_or_unusable_inputs(tmp_path):

@@ -16,7 +16,6 @@ from ai_drama_web.schemas.assets import (
     AssetUploadFields,
 )
 from ai_drama_web.providers.errors import ProviderError
-from ai_drama_web.providers.fake import FakeGenerationBackend
 from ai_drama_web.services.asset_generation import (
     AssetGenerationResultFetchFailed,
     AssetGenerationResultMissing,
@@ -54,8 +53,7 @@ def get_generation_service(
 ) -> AssetGenerationService:
     backend = getattr(request.app.state, "generation_backend", None)
     if backend is None:
-        backend = FakeGenerationBackend()
-        request.app.state.generation_backend = backend
+        raise RuntimeError("generation backend is not configured")
     return AssetGenerationService(product_store, runtime_store, backend)
 
 

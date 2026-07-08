@@ -81,7 +81,7 @@ def test_unknown_job_ids_raise_clear_errors():
         backend.fetch_result("missing-job")
 
 
-def test_create_video_job_is_explicitly_unsupported_and_does_not_record_state():
+def test_create_video_job_records_video_and_explicit_video_result():
     backend = FakeGenerationBackend()
     request = VideoGenerationRequest(
         prompt="slow push-in on the family hall",
@@ -91,8 +91,11 @@ def test_create_video_job_is_explicitly_unsupported_and_does_not_record_state():
         parameters={"camera": "push-in"},
     )
 
-    with pytest.raises(NotImplementedError, match="fake backend does not support video generation"):
-        backend.create_video_job(request)
+    job = backend.create_video_job(request)
+    status = backend.get_video_job_status(job.provider_job_id)
+    result = backend.fetch_video_result(job.provider_job_id)
 
-    with pytest.raises(KeyError, match="unknown provider job id"):
-        backend.get_job_status("fake-video-anything")
+    assert job.provider_job_id.startswith("fake-video-")
+    assert status.status == "completed"
+    assert result.media_type == "video/mp4"
+    assert result.content == b"fake-mp4-bytes"

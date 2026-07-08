@@ -43,6 +43,7 @@ class AgnesImageBackend(GenerationBackend):
         self._video_model = video_model or settings.agnes_video_model
         self._timeout_seconds = resolved_timeout
         self._jobs: dict[str, ProviderJob] = {}
+        self._video_job_ids: set[str] = set()
 
     def create_image_job(self, request: ImageGenerationRequest) -> ProviderJob:
         payload = self._build_image_payload(request)
@@ -86,37 +87,22 @@ class AgnesImageBackend(GenerationBackend):
             ),
         )
         self._jobs[video_id] = _copy_job(job)
+        self._video_job_ids.add(video_id)
         return _copy_job(job)
 
     def get_job_status(self, provider_job_id: str) -> ProviderJob:
-        if self._should_query_video_status(provider_job_id):
-            return self._video_job_from_response(
-                provider_job_id,
-                self._get_video_status_response(provider_job_id),
-            )
+        if provider_job_id in self._video_job_ids:
+            # ponytail: legacy/test compatibility; M3 video execution calls get_video_job_status().
+            return self.get_video_job_status(provider_job_id)
         try:
             return _copy_job(self._jobs[provider_job_id])
         except KeyError as exc:
             raise KeyError(f"unknown provider job id: {provider_job_id}") from exc
 
     def fetch_result(self, provider_job_id: str) -> ProviderResult:
-        if self._should_query_video_status(provider_job_id):
-            response_body = self._get_video_status_response(provider_job_id)
-            video_url = self._extract_video_result_url(provider_job_id, response_body)
-            return ProviderResult(
-                provider_job_id=provider_job_id,
-                media_type="video/mp4",
-                url=video_url,
-                content=None,
-                raw=_sanitize_raw(
-                    {
-                        "provider": "agnes",
-                        "media_type": "video/mp4",
-                        "provider_response": response_body,
-                    },
-                    secrets=(self._api_key,),
-                ),
-            )
+        if provider_job_id in self._video_job_ids:
+            # ponytail: legacy/test compatibility; M3 video execution calls fetch_video_result().
+            return self.fetch_video_result(provider_job_id)
         job = self.get_job_status(provider_job_id)
         image_url = job.raw.get("result_url")
         if not isinstance(image_url, str) or not image_url:
@@ -142,6 +128,31 @@ class AgnesImageBackend(GenerationBackend):
             ),
         )
 
+    def get_video_job_status(self, provider_job_id: str) -> ProviderJob:
+        return self._video_job_from_response(
+            provider_job_id,
+            self._get_video_status_response(provider_job_id),
+        )
+
+    def fetch_video_result(self, provider_job_id: str) -> ProviderResult:
+        response_body = self._get_video_status_response(provider_job_id)
+        video_url = self._extract_video_result_url(provider_job_id, response_body)
+        video_content, media_type = self._download_video_result(video_url)
+        return ProviderResult(
+            provider_job_id=provider_job_id,
+            media_type=media_type,
+            url=video_url,
+            content=video_content,
+            raw=_sanitize_raw(
+                {
+                    "provider": "agnes",
+                    "media_type": media_type,
+                    "provider_response": response_body,
+                },
+                secrets=(self._api_key,),
+            ),
+        )
+
     def _build_image_payload(self, request: ImageGenerationRequest) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": self._model,
@@ -162,8 +173,10 @@ class AgnesImageBackend(GenerationBackend):
             payload["negative_prompt"] = request.negative_prompt
 
         parameters = dict(request.parameters)
-        mode = parameters.pop("mode", None)
-        payload.update(parameters)
+        mode = parameters.get("mode")
+        for field in ("height", "width", "num_frames", "frame_rate", "num_inference_steps", "seed"):
+            if field in parameters:
+                payload[field] = parameters[field]
 
         if len(request.input_images) == 1:
             payload["image"] = request.input_images[0]
@@ -407,11 +420,67 @@ class AgnesImageBackend(GenerationBackend):
             )
         return video_url
 
-    def _should_query_video_status(self, provider_job_id: str) -> bool:
-        job = self._jobs.get(provider_job_id)
-        if job is not None:
-            return job.raw.get("media_type") == "video"
-        return provider_job_id.startswith("video")
+    def _download_video_result(self, url: str) -> tuple[bytes, str]:
+        try:
+            response = httpx.get(url, timeout=self._timeout_seconds)
+        except httpx.TimeoutException as exc:
+            raise ProviderError(
+                "timeout",
+                "agnes video download timed out",
+                provider="agnes",
+                raw={"url": url},
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise ProviderError(
+                "unknown_provider_error",
+                "agnes video download failed",
+                provider="agnes",
+                raw={"url": url, "error": str(exc)},
+            ) from exc
+        if response.status_code in {404, 410}:
+            raise ProviderError(
+                "result_expired",
+                "agnes video result URL expired",
+                provider="agnes",
+                raw={"url": url, "status_code": response.status_code},
+            )
+        if response.status_code == 429:
+            raise ProviderError(
+                "rate_limited",
+                "agnes video download rate limited",
+                provider="agnes",
+                raw={"url": url, "status_code": response.status_code},
+            )
+        if 500 <= response.status_code <= 599:
+            raise ProviderError(
+                "provider_busy",
+                "agnes video download provider busy",
+                provider="agnes",
+                raw={"url": url, "status_code": response.status_code},
+            )
+        if response.status_code >= 400:
+            raise ProviderError(
+                "unknown_provider_error",
+                "agnes video download failed",
+                provider="agnes",
+                raw={"url": url, "status_code": response.status_code},
+            )
+        media_type = response.headers.get("content-type", "video/mp4").split(";")[0].strip() or "video/mp4"
+        if not media_type.startswith("video/"):
+            raise ProviderError(
+                "unknown_provider_error",
+                "agnes video download returned non-video content",
+                provider="agnes",
+                raw={"url": url, "content_type": media_type},
+            )
+        if not response.content:
+            raise ProviderError(
+                "result_expired",
+                "agnes video download returned empty content",
+                provider="agnes",
+                raw={"url": url},
+            )
+        return response.content, media_type
 
     @staticmethod
     def _image_job_id(payload: dict[str, Any], image_url: str) -> str:

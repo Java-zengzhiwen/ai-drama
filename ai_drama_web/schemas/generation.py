@@ -1,6 +1,6 @@
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def _not_blank(value: str) -> str:
@@ -15,7 +15,6 @@ class VideoJobCreate(BaseModel):
     prompt_revision_id: str
     shot_id: str
     idempotency_key: str
-    overrides: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("prompt_revision_id", "shot_id", "idempotency_key")
     @classmethod
@@ -59,7 +58,9 @@ class GenerationResultRead(BaseModel):
     attempt_number: int
     media_type: str
     source_url: str
+    source_url_state: str = "source_url_active"
     local_result_available: bool
+    local_content_url: str = ""
     created_at: str
 
 
@@ -79,14 +80,29 @@ class ShotResultSelectionRead(BaseModel):
 class ResultReviewCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    decision: str
+    decision: Literal["passed", "failed"]
     failure_category: str = ""
     note: str = ""
 
-    @field_validator("decision")
-    @classmethod
-    def validate_decision(cls, value: str) -> str:
-        return _not_blank(value)
+    @model_validator(mode="after")
+    def validate_failure_category(self):
+        allowed = {
+            "authentication",
+            "rate_limited",
+            "invalid_request",
+            "input_unreachable",
+            "provider_busy",
+            "generation_failed",
+            "timeout",
+            "result_expired",
+            "unknown_provider_error",
+            "submission_outcome_unknown",
+        }
+        if self.decision == "passed" and self.failure_category:
+            raise ValueError("passed review must not include failure_category")
+        if self.decision == "failed" and self.failure_category not in allowed:
+            raise ValueError("failed review requires a stable failure_category")
+        return self
 
 
 class ResultReviewRead(BaseModel):
@@ -105,7 +121,9 @@ class GenerationRerunCreate(BaseModel):
     prompt: str | None = None
     negative_prompt: str | None = None
     asset_ids: list[str] | None = None
-    parameters: dict[str, Any] | None = None
+    duration_seconds: int | None = None
+    mode: Literal["std", "pro"] | None = None
+    seed: int | None = None
 
     @field_validator("idempotency_key")
     @classmethod

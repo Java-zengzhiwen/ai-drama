@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from ai_drama_runtime.store import RuntimeStore, now_iso
 from ai_drama_web.app import create_app
-from ai_drama_web.services.asset_delivery import AssetDeliveryService
+from ai_drama_web.services.asset_delivery import AssetDeliveryInvalidPublicBaseUrl, AssetDeliveryService
 
 
 PNG_BYTES = (
@@ -96,9 +96,16 @@ def test_signed_public_asset_url_rejects_altered_asset_or_signature(client):
 
 def test_signed_public_asset_url_rejects_expired_url(client):
     asset = _image_asset(client)
-    url = _signed_url(client, asset["asset_id"], ttl_seconds=-1)
+    service = AssetDeliveryService(
+        client.app.state.product_store,
+        client.app.state.runtime_store,
+        client.app.state.secret_store,
+        public_base_url=client.app.state.settings.public_base_url,
+    )
+    expires = int(time.time()) - 1
+    signature = service.sign(asset["asset_id"], expires)
 
-    response = client.get(_path_and_query(url))
+    response = client.get(f"/public/assets/{asset['asset_id']}?expires={expires}&signature={signature}")
 
     assert response.status_code == 403
 
@@ -127,3 +134,45 @@ def test_signed_public_asset_url_rejects_non_image_assets(client):
     response = client.get(_path_and_query(url))
 
     assert response.status_code == 415
+
+
+@pytest.mark.parametrize(
+    "public_base_url",
+    [
+        "http://assets.example.test",
+        "https://user:pass@assets.example.test",
+        "https://localhost",
+        "https://127.0.0.1",
+        "https://10.1.2.3",
+        "https://172.16.0.1",
+        "https://192.168.1.10",
+        "https://[::1]",
+        "file:///tmp/assets",
+    ],
+)
+def test_signed_asset_url_rejects_unreachable_public_base_urls(client, public_base_url):
+    asset = _image_asset(client)
+    service = AssetDeliveryService(
+        client.app.state.product_store,
+        client.app.state.runtime_store,
+        client.app.state.secret_store,
+        public_base_url=public_base_url,
+    )
+
+    with pytest.raises(AssetDeliveryInvalidPublicBaseUrl):
+        service.signed_asset_url(asset["asset_id"])
+
+
+def test_signed_asset_url_rejects_ttl_outside_server_bounds(client):
+    asset = _image_asset(client)
+    service = AssetDeliveryService(
+        client.app.state.product_store,
+        client.app.state.runtime_store,
+        client.app.state.secret_store,
+        public_base_url=client.app.state.settings.public_base_url,
+    )
+
+    with pytest.raises(ValueError, match="ttl_seconds"):
+        service.signed_asset_url(asset["asset_id"], ttl_seconds=0)
+    with pytest.raises(ValueError, match="ttl_seconds"):
+        service.signed_asset_url(asset["asset_id"], ttl_seconds=3601)

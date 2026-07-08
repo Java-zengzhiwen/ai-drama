@@ -41,7 +41,7 @@ def test_get_video_job_status_queries_by_video_id_and_normalizes_status(provider
             )
         )
 
-        job = backend.get_job_status("video_456")
+        job = backend.get_video_job_status("video_456")
 
     assert job.provider_job_id == "video_456"
     assert job.status == expected_status
@@ -51,7 +51,7 @@ def test_get_video_job_status_queries_by_video_id_and_normalizes_status(provider
     assert API_KEY not in json.dumps(job.raw)
 
 
-def test_fetch_video_result_returns_completed_url_without_downloading_bytes():
+def test_agnes_fetch_result_downloads_video_bytes():
     backend = AgnesImageBackend(api_key=API_KEY)
 
     with respx.mock(assert_all_called=True) as router:
@@ -69,15 +69,33 @@ def test_fetch_video_result_returns_completed_url_without_downloading_bytes():
                 },
             )
         )
+        router.get("https://platform-outputs.agnes-ai.space/videos/video_456.mp4").mock(
+            return_value=httpx.Response(200, content=b"mp4-bytes", headers={"content-type": "video/mp4"})
+        )
 
-        result = backend.fetch_result("video_456")
+        result = backend.fetch_video_result("video_456")
 
     assert isinstance(result, ProviderResult)
     assert result.provider_job_id == "video_456"
     assert result.media_type == "video/mp4"
     assert result.url == "https://platform-outputs.agnes-ai.space/videos/video_456.mp4"
-    assert result.content is None
+    assert result.content == b"mp4-bytes"
     assert result.raw["provider_response"]["status"] == "completed"
+
+
+def test_result_download_maps_404_to_result_expired():
+    backend = AgnesImageBackend(api_key=API_KEY)
+
+    with respx.mock(assert_all_called=True) as router:
+        router.get(AGNES_STATUS_ENDPOINT).mock(
+            return_value=httpx.Response(200, json={"video_id": "video_456", "status": "completed", "url": "https://cdn.example.test/missing.mp4"})
+        )
+        router.get("https://cdn.example.test/missing.mp4").mock(return_value=httpx.Response(404))
+
+        with pytest.raises(ProviderError) as exc_info:
+            backend.fetch_video_result("video_456")
+
+    assert exc_info.value.code == "result_expired"
 
 
 @pytest.mark.parametrize(
@@ -97,7 +115,7 @@ def test_video_poll_http_errors_map_to_stable_error_codes(status_code, expected_
         )
 
         with pytest.raises(ProviderError) as exc_info:
-            backend.get_job_status("video_456")
+            backend.get_video_job_status("video_456")
 
     assert exc_info.value.code == expected_code
     assert API_KEY not in json.dumps(exc_info.value.raw)
@@ -110,7 +128,7 @@ def test_video_poll_timeout_maps_to_timeout():
         router.get(AGNES_STATUS_ENDPOINT).mock(side_effect=httpx.TimeoutException("read timed out"))
 
         with pytest.raises(ProviderError) as exc_info:
-            backend.get_job_status("video_456")
+            backend.get_video_job_status("video_456")
 
     assert exc_info.value.code == "timeout"
 
@@ -122,7 +140,7 @@ def test_video_poll_malformed_response_maps_to_unknown_provider_error():
         router.get(AGNES_STATUS_ENDPOINT).mock(return_value=httpx.Response(200, content="not json"))
 
         with pytest.raises(ProviderError) as exc_info:
-            backend.get_job_status("video_456")
+            backend.get_video_job_status("video_456")
 
     assert exc_info.value.code == "unknown_provider_error"
 
@@ -139,6 +157,13 @@ def test_completed_video_without_url_maps_to_result_expired():
         )
 
         with pytest.raises(ProviderError) as exc_info:
-            backend.fetch_result("video_456")
+            backend.fetch_video_result("video_456")
 
     assert exc_info.value.code == "result_expired"
+
+
+def test_generic_image_get_job_status_rejects_unknown_image_job():
+    backend = AgnesImageBackend(api_key=API_KEY)
+
+    with pytest.raises(KeyError, match="unknown provider job id: missing-job"):
+        backend.get_job_status("missing-job")

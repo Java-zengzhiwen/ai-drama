@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 
 from ai_drama_runtime.shot_prompt_canonical import (
     CONTENT_PROFILE,
@@ -14,6 +15,22 @@ from ai_drama_web.store import ProductStore
 
 class GenerationJobBlocked(Exception):
     pass
+
+
+class GenerationIdempotencyConflict(Exception):
+    pass
+
+
+class GenerationInvalidRequest(Exception):
+    pass
+
+
+def video_timing_for_duration(duration_seconds: int) -> dict:
+    if duration_seconds == 5:
+        return {"num_frames": 121, "frame_rate": 24}
+    if duration_seconds == 10:
+        return {"num_frames": 241, "frame_rate": 24}
+    raise GenerationInvalidRequest("unsupported video duration")
 
 
 class GenerationJobService:
@@ -40,14 +57,26 @@ class GenerationJobService:
         prompt_revision_id: str,
         shot_id: str,
         idempotency_key: str,
+        expected_chapter_id: str | None = None,
         explicit_rerun: bool = False,
         overrides: dict | None = None,
     ):
         revision = self._shot_prompt_revision(prompt_revision_id)
+        if expected_chapter_id is not None and revision.chapter_id != expected_chapter_id:
+            raise GenerationJobBlocked("shot prompt revision is not available")
+        existing = self.product_store._generation_job_by_idempotency("agnes", idempotency_key)
+        if existing is not None and (
+            existing.chapter_id != revision.chapter_id
+            or existing.shot_id != shot_id
+            or existing.prompt_revision_id != revision.revision_id
+            or existing.job_type != "video"
+        ):
+            raise GenerationIdempotencyConflict("idempotency key was already used for a different request")
         canonical = self._canonical_for_revision(revision)
         shot = self._ready_shot(revision.revision_id, canonical, shot_id)
         request = self._request_for_shot(shot, overrides or {})
         request_text = _canonical_json(request)
+        request_hash = sha256(request_text.encode("utf-8")).hexdigest()
         request_object_id = self.runtime_store.write_text_object(request_text)
         attempt_number = 1
         if explicit_rerun:
@@ -65,10 +94,12 @@ class GenerationJobService:
             shot_id=shot_id,
             prompt_revision_id=revision.revision_id,
             idempotency_key=idempotency_key,
-            request_hash=request_object_id,
+            request_hash=request_hash,
             request_object_id=request_object_id,
             attempt_number=attempt_number,
         )
+        if job.request_hash != request_hash:
+            raise GenerationIdempotencyConflict("idempotency key was already used for a different request")
         if job.internal_status == "draft":
             return self.product_store.transition_generation_job(job.job_id, "queued")
         return job
@@ -113,7 +144,6 @@ class GenerationJobService:
         return "draft"
 
     def _request_for_shot(self, shot: dict, overrides: dict) -> dict:
-        assets = []
         asset_ids = overrides.get("asset_ids") or shot["asset_refs"]
         for asset_id in asset_ids:
             asset = self.product_store.get_asset(asset_id)
@@ -123,20 +153,32 @@ class GenerationJobService:
                 raise GenerationJobBlocked("asset is not usable")
             if not asset.media_type.startswith("image/"):
                 raise GenerationJobBlocked("asset is not an image")
-            assets.append(
-                {
-                    "asset_id": asset.asset_id,
-                    "media_type": asset.media_type,
-                    "url": self.asset_delivery.signed_asset_url(asset.asset_id),
-                }
-            )
+        duration_seconds = overrides.get("duration_seconds") or shot["duration_seconds"]
+        parameters = dict(shot["agnes_video_params"])
+        if "duration_seconds" in overrides:
+            parameters.pop("num_frames", None)
+            parameters.pop("frame_rate", None)
+            parameters.update(video_timing_for_duration(duration_seconds))
+        else:
+            expected_timing = video_timing_for_duration(duration_seconds)
+            actual_timing = {
+                "num_frames": parameters.get("num_frames"),
+                "frame_rate": parameters.get("frame_rate"),
+            }
+            if actual_timing != expected_timing:
+                raise GenerationInvalidRequest("duration timing conflicts with provider parameters")
+        for key, value in dict(overrides.get("parameters") or {}).items():
+            if key in {"mode", "seed"}:
+                parameters[key] = value
+            else:
+                raise GenerationInvalidRequest("unsupported video parameter")
         return {
             "shot_id": shot["shot_id"],
             "prompt": overrides.get("prompt") or shot["positive_prompt"],
             "negative_prompt": overrides.get("negative_prompt") or shot["negative_prompt"],
-            "duration_seconds": shot["duration_seconds"],
-            "assets": assets,
-            "parameters": dict(overrides.get("parameters") or shot["agnes_video_params"]),
+            "duration_seconds": duration_seconds,
+            "asset_ids": list(asset_ids),
+            "parameters": parameters,
         }
 
 

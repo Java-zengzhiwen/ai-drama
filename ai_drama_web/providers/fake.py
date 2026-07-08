@@ -21,6 +21,8 @@ FAKE_PNG_BYTES = (
     b"\x00\x00\x00\x00IEND\xaeB`\x82"
 )
 
+FAKE_MP4_BYTES = b"fake-mp4-bytes"
+
 
 class FakeGenerationBackend(GenerationBackend):
     def __init__(self) -> None:
@@ -46,7 +48,25 @@ class FakeGenerationBackend(GenerationBackend):
         return _copy_job(job)
 
     def create_video_job(self, request: VideoGenerationRequest) -> ProviderJob:
-        raise NotImplementedError("fake backend does not support video generation")
+        request_raw = {
+            "prompt": request.prompt,
+            "negative_prompt": request.negative_prompt,
+            "duration_seconds": request.duration_seconds,
+            "input_images": list(request.input_images),
+            "parameters": dict(request.parameters),
+        }
+        provider_job_id = self._video_job_id(request_raw)
+        job = ProviderJob(
+            provider_job_id=provider_job_id,
+            status="submitted",
+            raw={
+                "provider": "fake",
+                "media_type": "video",
+                "request": request_raw,
+            },
+        )
+        self._jobs[provider_job_id] = _copy_job(job)
+        return _copy_job(job)
 
     def get_job_status(self, provider_job_id: str) -> ProviderJob:
         try:
@@ -70,11 +90,37 @@ class FakeGenerationBackend(GenerationBackend):
             },
         )
 
+    def get_video_job_status(self, provider_job_id: str) -> ProviderJob:
+        job = self.get_job_status(provider_job_id)
+        if job.raw.get("media_type") != "video":
+            raise ValueError(f"unsupported provider job media type: {job.raw.get('media_type')}")
+        return ProviderJob(provider_job_id=job.provider_job_id, status="completed", raw=deepcopy(job.raw))
+
+    def fetch_video_result(self, provider_job_id: str) -> ProviderResult:
+        job = self.get_video_job_status(provider_job_id)
+        return ProviderResult(
+            provider_job_id=provider_job_id,
+            media_type="video/mp4",
+            url=f"fake://videos/{provider_job_id}.mp4",
+            content=FAKE_MP4_BYTES,
+            raw={
+                "provider": "fake",
+                "media_type": "video/mp4",
+                "source_job": deepcopy(job.raw),
+            },
+        )
+
     @staticmethod
     def _image_job_id(request_raw: dict) -> str:
         payload = json.dumps(request_raw, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
         return f"fake-image-{digest}"
+
+    @staticmethod
+    def _video_job_id(request_raw: dict) -> str:
+        payload = json.dumps(request_raw, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+        return f"fake-video-{digest}"
 
 
 def _copy_job(job: ProviderJob) -> ProviderJob:
