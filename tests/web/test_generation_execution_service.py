@@ -28,13 +28,62 @@ def test_submit_queued_video_job_sends_saved_request_and_persists_provider_job(t
     assert backend.requests[0].prompt == "Shen Qinghe turns toward the lantern."
     assert backend.requests[0].negative_prompt == "warped face"
     assert backend.requests[0].duration_seconds == 5
-    assert backend.requests[0].parameters == {"frame_rate": 24, "num_frames": 121}
+    assert backend.requests[0].parameters == {"num_frames": 121}
     assert all(url.startswith("https://assets.example.test/public/assets/") for url in backend.requests[0].input_images)
     persisted_request = json.loads(runtime.read_text(queued.request_object_id))
     assert "url" not in json.dumps(persisted_request)
     response = json.loads(runtime.read_text(submitted.response_object_id))
     assert response["provider"] == "fake-video"
     assert response["request_prompt"] == "Shen Qinghe turns toward the lantern."
+
+
+def test_execution_materializes_fresh_signed_urls(tmp_path, monkeypatch):
+    runtime, store, queue_service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+    queued = queue_service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="fresh-url",
+    )
+    backend = CapturingVideoBackend()
+    monkeypatch.setattr("ai_drama_web.services.asset_delivery.time.time", lambda: 100)
+
+    _execution_service(tmp_path, runtime, store, backend).submit_queued_job(queued.job_id)
+
+    assert "expires=1000" in backend.requests[0].input_images[0]
+    persisted_request = json.loads(runtime.read_text(queued.request_object_id))
+    assert "signature" not in json.dumps(persisted_request)
+
+
+def test_restarted_queued_job_uses_new_signed_urls(tmp_path, monkeypatch):
+    runtime, store, queue_service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+    queued = queue_service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="restart-fresh-url",
+    )
+    backend = CapturingVideoBackend()
+    monkeypatch.setattr("ai_drama_web.services.asset_delivery.time.time", lambda: 200)
+
+    _execution_service(tmp_path, runtime, store, backend).submit_queued_job(queued.job_id)
+
+    assert "expires=1100" in backend.requests[0].input_images[0]
+
+
+def test_expired_old_signature_does_not_affect_submit(tmp_path, monkeypatch):
+    runtime, store, queue_service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+    queued = queue_service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="ignore-old-signature",
+    )
+    old_signed_url = queue_service.asset_delivery.signed_asset_url(_asset_ids[0], ttl_seconds=1)
+    backend = CapturingVideoBackend()
+    monkeypatch.setattr("ai_drama_web.services.asset_delivery.time.time", lambda: 5000)
+
+    _execution_service(tmp_path, runtime, store, backend).submit_queued_job(queued.job_id)
+
+    assert old_signed_url not in backend.requests[0].input_images
+    assert "expires=5900" in backend.requests[0].input_images[0]
 
 
 def test_submit_queued_video_job_records_provider_error_without_leaking_raw_message(tmp_path):
@@ -51,6 +100,21 @@ def test_submit_queued_video_job_records_provider_error_without_leaking_raw_mess
     assert failed.error_code == "provider_busy"
     assert failed.error_message == "video provider failed"
     assert "provider-secret" not in failed.error_message
+
+
+def test_missing_agnes_key_marks_job_failed_with_authentication_or_configuration_error(tmp_path):
+    runtime, store, queue_service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+    queued = queue_service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="submit-missing-key",
+    )
+
+    failed = _execution_service(tmp_path, runtime, store, MissingAgnesKeyBackend()).submit_queued_job(queued.job_id)
+
+    assert failed.internal_status == "failed"
+    assert failed.error_code in {"authentication", "configuration_error"}
+    assert failed.error_message == "video provider failed"
 
 
 def test_submit_queued_video_job_records_unknown_exception_without_sticking_submitting(tmp_path):
@@ -227,6 +291,11 @@ class FailingVideoBackend:
             provider="fake-video",
             raw={"provider-secret": "leak"},
         )
+
+
+class MissingAgnesKeyBackend:
+    def create_video_job(self, request):
+        raise ProviderError("authentication", "missing Agnes API key", provider="agnes")
 
 
 class NotImplementedVideoBackend:

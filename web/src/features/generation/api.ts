@@ -26,7 +26,7 @@ export type GenerationJobDetailRead = GenerationJobRead & {
     prompt: string;
     negative_prompt: string;
     duration_seconds: number;
-    assets: Array<{ asset_id: string; media_type: string; url: string }>;
+    asset_ids: string[];
     parameters: Record<string, unknown>;
   };
 };
@@ -43,7 +43,9 @@ export type GenerationResultRead = {
   attempt_number: number;
   media_type: string;
   source_url: string;
+  source_url_state: "source_url_active" | "source_url_expired";
   local_result_available: boolean;
+  local_content_url: string;
   created_at: string;
 };
 
@@ -83,5 +85,31 @@ export async function listGenerationResults(chapterId: string): Promise<ShotResu
 
 export async function selectGenerationResult(shotId: string, resultId: string) {
   const response = await apiClient.post(`/shots/${shotId}/results/${resultId}/select`);
+  return response.data;
+}
+
+export type ResultReviewCreate = {
+  decision: "passed" | "failed";
+  failure_category: string;
+  note: string;
+};
+
+export async function reviewGenerationResult(resultId: string, payload: ResultReviewCreate) {
+  const response = await apiClient.post(`/results/${resultId}/review`, payload);
+  return response.data;
+}
+
+export type GenerationRerunCreate = {
+  idempotency_key: string;
+  prompt?: string;
+  negative_prompt?: string;
+  asset_ids?: string[];
+  duration_seconds?: number;
+  mode?: "std" | "pro";
+  seed?: number;
+};
+
+export async function rerunGenerationJob(jobId: string, payload: GenerationRerunCreate) {
+  const response = await apiClient.post(`/generation/jobs/${jobId}/rerun`, payload);
   return response.data;
 }

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Skeleton, Tag, Typography } from "antd";
+import { Alert, Button, Checkbox, Skeleton, Tag, Typography } from "antd";
 import { useMemo, useState } from "react";
 import type { ChapterRead } from "../projects/api";
 import type { ShotPromptRevisionRead, ShotPromptShot } from "../prompts/api";
@@ -21,6 +21,8 @@ export function AgnesGenerationTab({ chapter, revision }: AgnesGenerationTabProp
   const queryClient = useQueryClient();
   const jobsQueryKey = ["generation-jobs", chapter.chapter_id];
   const [selectedShotId, setSelectedShotId] = useState(revision.shots[0]?.shot_id ?? "");
+  const [checkedShotIds, setCheckedShotIds] = useState<string[]>([]);
+  const [batchSummary, setBatchSummary] = useState("");
   const jobsQuery = useQuery({
     queryKey: jobsQueryKey,
     queryFn: () => listGenerationJobs(chapter.chapter_id),
@@ -40,6 +42,35 @@ export function AgnesGenerationTab({ chapter, revision }: AgnesGenerationTabProp
       }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: jobsQueryKey }),
   });
+  const batchMutation = useMutation({
+    mutationFn: async (shots: ShotPromptShot[]) => {
+      let created = 0;
+      let existing = 0;
+      let failed = 0;
+      for (const shot of shots) {
+        try {
+          const job = await queueVideoJob(chapter.chapter_id, {
+            prompt_revision_id: revision.revision_id,
+            shot_id: shot.shot_id,
+            idempotency_key: `${revision.revision_id}:${shot.shot_id}:source`,
+          });
+          if (job.created_at === job.updated_at) {
+            created += 1;
+          } else {
+            existing += 1;
+          }
+        } catch {
+          failed += 1;
+        }
+      }
+      return { created, existing, failed };
+    },
+    onSuccess: (summary) => {
+      setBatchSummary(`提交完成：created ${summary.created} / existing ${summary.existing} / failed ${summary.failed}`);
+      setCheckedShotIds([]);
+      void queryClient.invalidateQueries({ queryKey: jobsQueryKey });
+    },
+  });
   const refreshMutation = useMutation({
     mutationFn: (jobId: string) => refreshGenerationJob(jobId),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: jobsQueryKey }),
@@ -54,6 +85,10 @@ export function AgnesGenerationTab({ chapter, revision }: AgnesGenerationTabProp
     [jobs, revision.readiness, revision.shots],
   );
   const hasActiveJobs = jobs.some((job) => !terminalStatuses.has(job.internal_status));
+  const readyShotIds = rows.filter((row) => row.readiness === "ready").map((row) => row.shot.shot_id);
+  const selectedReadyShots = rows
+    .filter((row) => row.readiness === "ready" && checkedShotIds.includes(row.shot.shot_id))
+    .map((row) => row.shot);
 
   if (jobsQuery.isLoading) {
     return <Skeleton active paragraph={{ rows: 8 }} />;
@@ -70,20 +105,36 @@ export function AgnesGenerationTab({ chapter, revision }: AgnesGenerationTabProp
 
       {hasActiveJobs ? (
         <Alert
+          aria-label="自动轮询状态"
           message="自动轮询已开启"
           description="存在 queued/submitting/generating 任务，列表会定时刷新。手动刷新不会停止自动轮询。"
           showIcon
           type="info"
+          role="status"
         />
       ) : null}
-      {queueMutation.isError || refreshMutation.isError ? (
+      <Typography.Text aria-live="polite" role="status" type="secondary">
+        {batchSummary || `已选择 ready 镜头 ${selectedReadyShots.length} 个。RPM 限制由后端 poller 控制。`}
+      </Typography.Text>
+      {queueMutation.isError || refreshMutation.isError || batchMutation.isError ? (
         <Alert message="Agnes 生成操作失败" showIcon type="error" />
       ) : null}
 
       <div style={workspaceGridStyle}>
         <section aria-label="Agnes generation rows" style={panelStyle}>
           <div style={toolbarStyle}>
-            <Button disabled={!hasReady(rows) || queueMutation.isPending}>
+            <Checkbox
+              aria-label="全选 ready 镜头"
+              checked={readyShotIds.length > 0 && checkedShotIds.length === readyShotIds.length}
+              disabled={readyShotIds.length === 0 || batchMutation.isPending}
+              indeterminate={checkedShotIds.length > 0 && checkedShotIds.length < readyShotIds.length}
+              onChange={(event) => setCheckedShotIds(event.target.checked ? readyShotIds : [])}
+            />
+            <Button
+              disabled={selectedReadyShots.length === 0 || batchMutation.isPending}
+              loading={batchMutation.isPending}
+              onClick={() => batchMutation.mutate(selectedReadyShots)}
+            >
               批量提交 ready
             </Button>
             <Button onClick={() => void jobsQuery.refetch()}>手动刷新</Button>
@@ -92,8 +143,10 @@ export function AgnesGenerationTab({ chapter, revision }: AgnesGenerationTabProp
           <table style={tableStyle}>
             <thead>
               <tr>
+                <th style={thStyle}>选择</th>
                 <th style={thStyle}>Shot</th>
                 <th style={thStyle}>Ready</th>
+                <th style={thStyle}>Duration</th>
                 <th style={thStyle}>Job</th>
                 <th style={thStyle}>Attempt</th>
                 <th style={thStyle}>状态</th>
@@ -104,7 +157,30 @@ export function AgnesGenerationTab({ chapter, revision }: AgnesGenerationTabProp
               {rows.map(({ shot, readiness, job }) => {
                 const ready = readiness === "ready";
                 return (
-                  <tr key={shot.shot_id}>
+                  <tr
+                    key={shot.shot_id}
+                    onClick={(event) => {
+                      if ((event.target as HTMLElement).closest("button,input,label")) {
+                        return;
+                      }
+                      setSelectedShotId(shot.shot_id);
+                    }}
+                    style={shot.shot_id === selectedShot?.shot_id ? selectedRowStyle : undefined}
+                  >
+                    <td style={tdStyle}>
+                      <Checkbox
+                        aria-label={`选择 ${shot.shot_id}`}
+                        checked={checkedShotIds.includes(shot.shot_id)}
+                        disabled={!ready || batchMutation.isPending}
+                        onChange={(event) =>
+                          setCheckedShotIds((current) =>
+                            event.target.checked
+                              ? [...new Set([...current, shot.shot_id])]
+                              : current.filter((shotId) => shotId !== shot.shot_id),
+                          )
+                        }
+                      />
+                    </td>
                     <td style={tdStyle}>
                       <Button type="link" onClick={() => setSelectedShotId(shot.shot_id)}>
                         {shot.shot_id}
@@ -113,6 +189,7 @@ export function AgnesGenerationTab({ chapter, revision }: AgnesGenerationTabProp
                     <td style={tdStyle}>
                       <Tag color={ready ? "success" : "default"}>{ready ? "ready" : "blocked"}</Tag>
                     </td>
+                    <td style={tdStyle}>{shot.duration_seconds ?? "-"}</td>
                     <td style={tdStyle}>{job?.job_id.slice(0, 8) ?? "-"}</td>
                     <td style={tdStyle}>{job?.attempt_number ?? "-"}</td>
                     <td style={tdStyle}>{job ? <StatusTag job={job} /> : <Tag>waiting</Tag>}</td>
@@ -179,10 +256,6 @@ function latestJobForShot(jobs: GenerationJobRead[], shotId: string) {
   return [...jobs].reverse().find((job) => job.shot_id === shotId);
 }
 
-function hasReady(rows: Array<{ readiness: string }>) {
-  return rows.some((row) => row.readiness === "ready");
-}
-
 const headerStyle = { display: "grid", gap: 4 };
 const titleStyle = { fontSize: 18, margin: 0 };
 const sectionTitleStyle = { fontSize: 16, margin: 0 };
@@ -199,6 +272,7 @@ const toolbarStyle = { alignItems: "center", display: "flex", flexWrap: "wrap" a
 const tableStyle = { borderCollapse: "collapse" as const, width: "100%" };
 const thStyle = { borderBottom: "1px solid #d9dee8", padding: 8, textAlign: "left" as const };
 const tdStyle = { borderBottom: "1px solid #eef1f6", padding: 8, verticalAlign: "top" as const };
+const selectedRowStyle = { background: "#f5f8ff" };
 const videoFrameStyle = {
   alignItems: "center",
   aspectRatio: "16 / 9",

@@ -79,7 +79,7 @@ def _ready_chapter(tmp_path):
                 "positive_prompt": "Shen Qinghe turns toward the lantern.",
                 "negative_prompt": "warped face",
                 "continuity_notes": ["preserve blue robe"],
-                "agnes_video_params": {"num_frames": 121, "frame_rate": 24},
+                "agnes_video_params": {},
             }
         ],
     }
@@ -211,7 +211,7 @@ def test_generation_job_detail_includes_saved_request_preview(tmp_path):
     body = detail.json()
     assert body["request"]["prompt"] == "Shen Qinghe turns toward the lantern."
     assert body["request"]["negative_prompt"] == "warped face"
-    assert body["request"]["parameters"] == {"frame_rate": 24, "num_frames": 121}
+    assert body["request"]["parameters"] == {"num_frames": 121}
     assert body["request"]["asset_ids"]
     assert "url" not in json.dumps(body["request"])
 

@@ -38,10 +38,7 @@ def test_create_video_job_posts_official_payload_and_uses_video_id_as_provider_j
                 negative_prompt="warped face, broken hands",
                 duration_seconds=5,
                 input_images=["https://assets.example.test/public/assets/asset-1?expires=1&signature=s"],
-                parameters={
-                    "num_frames": 121,
-                    "frame_rate": 24,
-                },
+                parameters={"num_frames": 121},
             )
         )
 
@@ -57,7 +54,6 @@ def test_create_video_job_posts_official_payload_and_uses_video_id_as_provider_j
         "negative_prompt": "warped face, broken hands",
         "image": "https://assets.example.test/public/assets/asset-1?expires=1&signature=s",
         "num_frames": 121,
-        "frame_rate": 24,
     }
     raw = json.dumps(job.raw)
     assert "task_123" in raw
@@ -86,8 +82,6 @@ def test_create_video_job_preserves_multi_image_keyframe_parameters():
                 ],
                 parameters={
                     "mode": "keyframes",
-                    "num_frames": 121,
-                    "frame_rate": 24,
                     "seed": 123,
                 },
             )
@@ -101,8 +95,6 @@ def test_create_video_job_preserves_multi_image_keyframe_parameters():
         ],
         "mode": "keyframes",
     }
-    assert payload["num_frames"] == 121
-    assert payload["frame_rate"] == 24
     assert payload["seed"] == 123
     assert "image" not in payload
     assert "mode" not in payload
@@ -137,8 +129,7 @@ def test_provider_payload_uses_only_allowlisted_fields():
                 duration_seconds=5,
                 input_images=["https://assets.example.test/asset.png"],
                 parameters={
-                    "num_frames": 121,
-                    "frame_rate": 24,
+                    "seed": 123,
                     "model": "evil-model",
                     "endpoint": "https://evil.example.test",
                     "authorization": "Bearer leaked",
@@ -152,6 +143,7 @@ def test_provider_payload_uses_only_allowlisted_fields():
     payload = json.loads(route.calls.last.request.content)
     assert payload["model"] == "agnes-video-v2.0"
     assert payload["image"] == "https://assets.example.test/asset.png"
+    assert payload["seed"] == 123
     assert "endpoint" not in payload
     assert "authorization" not in payload
     assert "video_id" not in payload

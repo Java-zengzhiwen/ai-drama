@@ -56,7 +56,7 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
   });
 
   const status = statusQuery.data;
-  const currentPromptRevision = (shotPromptRevisionsQuery.data ?? []).find((revision) => revision.current) ?? (shotPromptRevisionsQuery.data ?? [])[0];
+  const currentPromptRevision = (shotPromptRevisionsQuery.data ?? []).find((revision) => revision.current);
   const agnesOpen = Boolean(currentPromptRevision);
   const resultsOpen = (generationJobsQuery.data ?? []).length > 0;
   const rail = useWorkflowRail(status, statusQuery.isError, statusQuery.isLoading, agnesOpen, resultsOpen);

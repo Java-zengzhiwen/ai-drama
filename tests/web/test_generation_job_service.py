@@ -72,7 +72,7 @@ def _ready_fixture(tmp_path):
                 "positive_prompt": "Shen Qinghe turns toward the lantern.",
                 "negative_prompt": "warped face",
                 "continuity_notes": ["preserve blue robe"],
-                "agnes_video_params": {"num_frames": 121, "frame_rate": 24},
+                "agnes_video_params": {},
             }
         ],
     }
@@ -172,11 +172,46 @@ def test_queue_video_job_persists_canonical_request_and_returns_existing_duplica
     assert request["prompt"] == "Shen Qinghe turns toward the lantern."
     assert request["negative_prompt"] == "warped face"
     assert request["duration_seconds"] == 5
-    assert request["parameters"] == {"frame_rate": 24, "num_frames": 121}
+    assert request["parameters"] == {"num_frames": 121}
     assert request["asset_ids"] == asset_ids
     assert "assets" not in request
     assert "url" not in json.dumps(request)
     assert store.list_generation_jobs_for_chapter(revision.chapter_id) == [job]
+
+
+def test_canonical_request_contains_asset_ids_not_signed_urls(tmp_path):
+    runtime, _store, service, revision, _canonical, asset_ids = _ready_fixture(tmp_path)
+
+    job = service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="asset-ids-only",
+    )
+
+    request = json.loads(runtime.read_text(job.request_object_id))
+    assert request["asset_ids"] == asset_ids
+    assert "assets" not in request
+    assert "signature" not in json.dumps(request)
+    assert "expires" not in json.dumps(request)
+    assert "https://" not in json.dumps(request)
+
+
+def test_request_hash_is_stable_across_time(tmp_path, monkeypatch):
+    _runtime, _store, service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+    monkeypatch.setattr("ai_drama_web.services.asset_delivery.time.time", lambda: 100)
+    first = service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="hash-1",
+    )
+    monkeypatch.setattr("ai_drama_web.services.asset_delivery.time.time", lambda: 999)
+    second = service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="hash-2",
+    )
+
+    assert first.request_hash == second.request_hash
 
 
 def test_explicit_rerun_creates_next_attempt_with_overrides(tmp_path):
@@ -213,9 +248,14 @@ def test_explicit_rerun_creates_next_attempt_with_overrides(tmp_path):
     assert request["asset_ids"] == [replacement.asset_id]
 
 
-def test_duration_5_and_10_seconds_map_to_official_frame_counts():
-    assert video_timing_for_duration(5) == {"num_frames": 121, "frame_rate": 24}
-    assert video_timing_for_duration(10) == {"num_frames": 241, "frame_rate": 24}
+def test_duration_5_seconds_maps_to_official_frame_count():
+    assert video_timing_for_duration(5) == {"num_frames": 121}
+    assert (121 - 1) % 8 == 0
+
+
+def test_duration_10_seconds_maps_to_official_frame_count():
+    assert video_timing_for_duration(10) == {"num_frames": 241}
+    assert (241 - 1) % 8 == 0
 
 
 def test_invalid_duration_is_rejected(tmp_path):
@@ -233,7 +273,7 @@ def test_invalid_duration_is_rejected(tmp_path):
 
 def test_conflicting_duration_and_num_frames_is_rejected(tmp_path):
     runtime, _store, service, revision, canonical, _asset_ids = _ready_fixture(tmp_path)
-    canonical["shots"][0]["agnes_video_params"] = {"num_frames": 241, "frame_rate": 24}
+    canonical["shots"][0]["agnes_video_params"] = {"num_frames": 241}
     object_id = runtime.write_text_object(serialize_shot_prompt_json(canonical).decode("utf-8"))
     runtime.conn.execute(
         "UPDATE revisions SET content_object_id = ? WHERE revision_id = ?",
@@ -262,7 +302,7 @@ def test_rerun_duration_override_changes_provider_request(tmp_path):
 
     request = json.loads(runtime.read_text(rerun.request_object_id))
     assert request["duration_seconds"] == 10
-    assert request["parameters"] == {"frame_rate": 24, "num_frames": 241}
+    assert request["parameters"] == {"num_frames": 241}
 
 
 def test_same_key_different_shot_returns_idempotency_conflict(tmp_path):

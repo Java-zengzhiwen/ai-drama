@@ -27,9 +27,9 @@ class GenerationInvalidRequest(Exception):
 
 def video_timing_for_duration(duration_seconds: int) -> dict:
     if duration_seconds == 5:
-        return {"num_frames": 121, "frame_rate": 24}
+        return {"num_frames": 121}
     if duration_seconds == 10:
-        return {"num_frames": 241, "frame_rate": 24}
+        return {"num_frames": 241}
     raise GenerationInvalidRequest("unsupported video duration")
 
 
@@ -157,16 +157,12 @@ class GenerationJobService:
         parameters = dict(shot["agnes_video_params"])
         if "duration_seconds" in overrides:
             parameters.pop("num_frames", None)
-            parameters.pop("frame_rate", None)
             parameters.update(video_timing_for_duration(duration_seconds))
         else:
             expected_timing = video_timing_for_duration(duration_seconds)
-            actual_timing = {
-                "num_frames": parameters.get("num_frames"),
-                "frame_rate": parameters.get("frame_rate"),
-            }
-            if actual_timing != expected_timing:
+            if "num_frames" in parameters and parameters["num_frames"] != expected_timing["num_frames"]:
                 raise GenerationInvalidRequest("duration timing conflicts with provider parameters")
+            parameters.update(expected_timing)
         for key, value in dict(overrides.get("parameters") or {}).items():
             if key in {"mode", "seed"}:
                 parameters[key] = value
