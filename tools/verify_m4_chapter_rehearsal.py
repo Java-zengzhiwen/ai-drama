@@ -338,10 +338,20 @@ def _build_report(
         current_selection[shot_id] = "" if selection is None else selection.result_id
 
     report = {
+        "schema_version": "m4-chapter-rehearsal-report-v1",
+        "generated_at": now_iso(),
+        "environment": {
+            "provider": "mock",
+            "real_agnes_request_made": False,
+        },
         "project_id": seeded["project_id"],
         "chapter_id": seeded["chapter_id"],
         "shot_prompt_revision_id": seeded["revision_id"],
         "asset_ids": seeded["asset_ids"],
+        "source_job_ids": {
+            shot_id: source_jobs[shot_id]["job_id"]
+            for shot_id in shot_ids
+        },
         "source_job_id": source_jobs["SHOT_001"]["job_id"],
         "source_result_id": shot_001_result["result_id"],
         "selected_result_id": shot_001_result["result_id"],
@@ -366,9 +376,41 @@ def _build_report(
         },
         "result_versions": result_versions,
         "current_selection": current_selection,
+        "scenarios": {
+            "SHOT_001": {
+                "expected": "source_success",
+                "actual": "source_success",
+                "passed": True,
+            },
+            "SHOT_002": {
+                "expected": "source_failed_then_rerun_success",
+                "actual": "source_failed_then_rerun_success",
+                "passed": True,
+            },
+        },
+        "reviews": {
+            "SHOT_001": {
+                "review_id": shot_001_review["review_id"],
+                "result_id": shot_001_result["result_id"],
+                "decision": shot_001_review.get("decision", "passed"),
+            },
+            "SHOT_002": {
+                "review_id": shot_002_review["review_id"],
+                "result_id": shot_002_result["result_id"],
+                "decision": shot_002_review.get("decision", "passed"),
+            },
+        },
         "failure_categories_tested": ["generation_failed"],
         "local_content_urls": local_content_urls,
         "object_ids": object_ids,
+        "operator_checklist": [
+            "Confirm SHOT_001 source job completed and selected.",
+            "Confirm SHOT_002 first attempt failed with generation_failed.",
+            "Confirm SHOT_002 rerun completed and is selected.",
+            "Confirm local result artifacts are readable through content URLs.",
+            "Confirm no real Agnes request was made.",
+        ],
+        "deferred_items": ["AUTHORIZE_REAL_AGNES_VIDEO_SMOKE_TEST"],
         "verification_summary": {
             "source_material": True,
             "generation_queue": True,
@@ -401,20 +443,89 @@ def _write_reports(report: dict) -> tuple[Path, Path]:
             [
                 "# M4 Chapter Rehearsal Report",
                 "",
+                "## Executive Summary",
+                "",
+                f"- schema_version: `{report['schema_version']}`",
+                f"- generated_at: `{report['generated_at']}`",
                 f"- project_id: `{report['project_id']}`",
                 f"- chapter_id: `{report['chapter_id']}`",
                 f"- shot_prompt_revision_id: `{report['shot_prompt_revision_id']}`",
-                f"- source_job_id: `{report['source_job_id']}`",
-                f"- source_result_id: `{report['source_result_id']}`",
-                f"- rerun_job_id: `{report['rerun_job_id']}`",
-                f"- rerun_result_id: `{report['rerun_result_id']}`",
+                "- provider: `mock`",
                 "- real_agnes_request_made: `false`",
+                "- SHOT_001: source success",
+                "- SHOT_002: source failed + rerun success",
                 "",
-                "## Verification Summary",
+                "## Scenario Matrix",
+                "",
+                "| Shot | Expected | Actual | Passed |",
+                "| --- | --- | --- | --- |",
+                *[
+                    f"| {shot_id} | {scenario['expected']} | {scenario['actual']} | {str(scenario['passed']).lower()} |"
+                    for shot_id, scenario in report["scenarios"].items()
+                ],
+                "",
+                "## Shot Timeline",
+                "",
+                "| Shot | Attempt | Job ID | Status | Error Code |",
+                "| --- | ---: | --- | --- | --- |",
+                *[
+                    f"| {shot_id} | {job['attempt_number']} | `{job['job_id']}` | {job['status']} | {job['error_code'] or ''} |"
+                    for shot_id, jobs in report["job_status_timeline"].items()
+                    for job in jobs
+                ],
+                "",
+                "## Result Version History",
+                "",
+                "| Shot | Result ID | Source Job | Local Content URL | Object ID |",
+                "| --- | --- | --- | --- | --- |",
+                *[
+                    f"| {shot_id} | `{result['result_id']}` | `{result['job_id']}` | `{report['local_content_urls'][result['result_id']]}` | `{report['object_ids'][result['result_id']]}` |"
+                    for shot_id, results in report["result_versions"].items()
+                    for result in results
+                ],
+                "",
+                "## Current Selection",
                 "",
                 *[
-                    f"- {key}: `{value}`"
-                    for key, value in report["verification_summary"].items()
+                    f"- {shot_id}: `{result_id}`"
+                    for shot_id, result_id in report["current_selection"].items()
+                ],
+                "",
+                "## Reviews",
+                "",
+                "| Shot | Review ID | Result ID | Decision |",
+                "| --- | --- | --- | --- |",
+                *[
+                    f"| {shot_id} | `{review['review_id']}` | `{review['result_id']}` | {review['decision']} |"
+                    for shot_id, review in report["reviews"].items()
+                ],
+                "",
+                "## Failure Coverage",
+                "",
+                *[
+                    f"- {category}"
+                    for category in report["failure_categories_tested"]
+                ],
+                "",
+                "## Local Result Artifacts",
+                "",
+                *[
+                    f"- `{result_id}`: url=`{url}`, object_id=`{report['object_ids'][result_id]}`"
+                    for result_id, url in report["local_content_urls"].items()
+                ],
+                "",
+                "## Operator Checklist",
+                "",
+                *[
+                    f"- [ ] {item}"
+                    for item in report["operator_checklist"]
+                ],
+                "",
+                "## Deferred Items",
+                "",
+                *[
+                    f"- {item}"
+                    for item in report["deferred_items"]
                 ],
                 "",
             ]
