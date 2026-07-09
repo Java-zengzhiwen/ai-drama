@@ -1,550 +1,648 @@
-## Phase 1 — Storyboard Canonicalization
 
-Before any Phase 1 planning, implementation, testing, review, commit,
-or push, read these files in full:
-
-- `docs/superpowers/specs/2026-06-28-storyboard-canonical-shot-prompt-foundation-design.md`
-- `docs/superpowers/specs/2026-06-29-phase-1-agent-execution-acceptance-contract.md`
-
-Rules:
-
-- Treat both documents as frozen and read-only.
-- The Foundation Design defines the architecture.
-- The Phase 1 contract defines execution, stop conditions, scope,
-  verification, and completion.
-- Do not modify either frozen document.
-- Do not implement Phase 2 or later scope while performing Phase 1 work.
-- The main agent is the only code-writing agent.
-- Subagents are read-only unless the contract explicitly says otherwise.
-- Stop and ask the user only when a contract Stop Condition is triggered.
-- Do not weaken tests, schemas, fixtures, golden outputs, or acceptance checks.
-- Do not declare completion without the unified Phase 1 verification PASS.
-- Do not commit or push partial work after a Stop Condition.
+This repository is governed by milestone-specific agent rules. Agents must follow the active milestone rules first, while preserving all completed milestone baselines.
 
 ---
 
-## AI Drama Web Production MVP — Milestone 3
-
-Milestone 1 and Milestone 2 are complete and together form the required
-implementation baseline.
-
-The active product milestone is:
+## Current Active Milestone
 
 ```text
-Milestone 3 — Agnes Video Generation, Persistent Jobs, Results, and Rerun
+Milestone 5 — Real Provider Readiness and Agnes Smoke Test
 ```
 
-### Authority Order
+M5 does **not** mean full production launch.
 
-Before any Milestone 3 design, planning, implementation, testing, review,
-commit, or push, read the following documents in full:
+M5 means:
 
-1. Product scope authority:
+```text
+One explicitly authorized real Agnes smoke test can be run safely, inspected, persisted, reported, and reviewed.
+```
 
-   `docs/superpowers/specs/2026-07-05-ai-drama-web-production-mvp-design-v2.md`
+Until the user explicitly authorizes a real provider request, M5 work is limited to planning, readiness checks, dry-run verification, safety review, and documentation.
 
-2. Program and milestone sequencing authority:
+The current real provider authorization token is:
 
-   `docs/superpowers/plans/2026-07-05-ai-drama-web-production-mvp-implementation-program.md`
+```text
+AUTHORIZE_REAL_AGNES_VIDEO_SMOKE_TEST
+```
 
-3. Current implementation authority:
+No real Agnes request may be made without this exact user-provided token.
 
-   `docs/superpowers/plans/2026-07-05-m3-agnes-generation-results-rerun.md`
+---
 
-4. Existing visual-system baseline:
+## Historical Baseline
 
-   `docs/product-design/m1/`
-   `docs/product-design/m2/`
+The following milestones are complete and must be preserved as implementation baseline:
 
-5. Milestone 3 Product Design authority, after it is approved:
+```text
+Milestone 1 — Web workflow baseline
+Milestone 2 — Assets, prompts, and shot prompt baseline
+Milestone 3 — Agnes Video Generation, Persistent Jobs, Results, and Rerun
+Milestone 4 — Mock-provider chapter rehearsal, reporting, runbook, and read-only UI visibility
+```
 
-   `docs/product-design/m3/`
+M3 and M4 are no longer active milestones. Their implementation, tests, verifiers, and documented safety rules remain binding baseline.
 
-6. Current runtime, provider, Web, and test implementation:
+Do not regress:
 
-   `ai_drama_runtime/`
-   `ai_drama_web/`
-   `web/`
-   `tests/`
+* M1 web workflow behavior;
+* M2 asset and shot prompt behavior;
+* M3 generation jobs, result persistence, rerun, poller, provider abstraction, asset delivery, and results UI;
+* M4 mock-provider chapter rehearsal verifier;
+* M4 JSON/Markdown report;
+* M4 rehearsal runbook;
+* M4 UI visibility plan;
+* M4 Phase 1 read-only rehearsal visibility panel.
 
-7. Current official Agnes Video documentation.
+---
 
-8. Secondary Agnes support material only:
+## Authority Order
 
-   `https://github.com/lj1270998580-crypto/Agnes-help-skill`
+Before any M5 design, planning, implementation, testing, review, commit, or push, read the relevant documents in this order:
+
+1. `AGENTS.md` current M5 rules.
+2. `docs/milestones/m4-final-closeout.md`
+3. `docs/milestones/m3-baseline-summary.md`
+4. `docs/milestones/m3-real-provider-readiness.md`
+5. `docs/milestones/m4-rehearsal-runbook.md`
+6. `docs/milestones/m4-ui-visibility-plan.md`
+7. `docs/milestones/m5-readiness-plan.md` after it is approved.
+8. Current runtime, provider, Web, and test implementation:
+
+   * `ai_drama_runtime/`
+   * `ai_drama_web/`
+   * `web/`
+   * `tests/`
+   * `tools/`
+   * `migration/`
+9. Current official Agnes Video documentation.
+10. Secondary Agnes support material only:
+
+* `https://github.com/lj1270998580-crypto/Agnes-help-skill`
 
 When documents conflict, apply this priority:
 
 ```text
-MVP Design Spec
-→ M3 Implementation Plan
-→ approved M3 Product Design handoff
-→ existing runtime and M1/M2 contracts and tests
+M5 safety gate
+→ M4 final closeout
+→ M3 baseline
+→ approved M5 readiness plan
+→ current implementation
 → current official Agnes Video documentation
-→ Agnes Help Skill as secondary guidance
+→ secondary Agnes material
 ```
 
-Product Design documents control page layout, interaction, component behavior,
-screen states, and visual continuity. They do not override runtime,
-persistence, job-state, idempotency, provider-contract, or security
-architecture.
+Official Agnes documentation may update the provider contract only after the conflict is explicitly reported and reviewed. Do not silently change the provider contract.
 
-### Branches
+---
+
+## Branch Roles
 
 Use these branch roles:
 
 ```text
-docs/m3-product-design
-→ M3 Product Design documents and prototype evidence only
+docs/m5-agents-governance
+→ AGENTS.md governance alignment only
 
-feat/mvp-agnes-generation
-→ M3 production implementation only
+docs/m5-readiness-plan
+→ M5 readiness plan, checklist, dry-run design, and smoke-test gate documentation only
+
+feat/m5-real-provider-smoke-test
+→ future real smoke-test implementation only after readiness plan approval and explicit user authorization
+
+main
+→ protected integration branch
 ```
 
-Do not implement production code on `docs/m3-product-design`.
+Do not implement real provider execution on documentation branches.
 
-Do not perform open-ended Product Design exploration on
-`feat/mvp-agnes-generation`.
+Do not merge to `main` unless the user explicitly requests final merge after review.
 
-Do not continue M3 work on the merged Milestone 2 branch.
+Do not force push.
 
-### Product Design Gate
+Do not squash unless explicitly requested.
 
-Before any Milestone 3 production implementation, all of the following must
-exist and be approved:
+Prefer fast-forward merges for approved milestone branches.
 
-- `docs/product-design/m3/brief.md`
-- `docs/product-design/m3/information-architecture.md`
-- `docs/product-design/m3/workflow-map.md`
-- `docs/product-design/m3/interaction-spec.md`
-- `docs/product-design/m3/screen-states.md`
-- `docs/product-design/m3/component-inventory.md`
-- `docs/product-design/m3/visual-tokens.md`
-- `docs/product-design/m3/selected-direction.md`
-- `docs/product-design/m3/implementation-handoff.md`
+---
 
-`selected-direction.md` must identify exactly one approved direction.
+## M5 Authorization Gate
 
-`implementation-handoff.md` must define:
-
-- chapter-workspace routes and tab structure;
-- Generation and Results/Rerun page composition;
-- primary components;
-- API data dependencies;
-- waiting, queued, submitting, submitted, polling, completed, failed,
-  cancelled, result-expired, and submission-outcome-unknown states;
-- empty, loading, blocked, retryable, terminal, and recovered states;
-- batch-submit and duplicate-click behavior;
-- polling indicators and manual refresh;
-- video preview behavior;
-- result version history and current selection;
-- rerun drawer fields and allowed overrides;
-- responsive behavior;
-- reusable Milestone 1 and Milestone 2 components;
-- design decisions the implementation agent must not change.
-
-If these files are missing, incomplete, or unapproved:
-
-- do not write Milestone 3 business code;
-- do not infer a final UI from the implementation plan;
-- output `M3_PREFLIGHT_BLOCKED_BY_DESIGN`;
-- stop and request completion or approval of the M3 Product Design package.
-
-### Authorization Gate
+### Without Real Smoke-Test Authorization
 
 Before the user sends:
 
 ```text
-AUTHORIZE_M3_IMPLEMENTATION
+AUTHORIZE_REAL_AGNES_VIDEO_SMOKE_TEST
 ```
 
-the agent may only:
+agents may only:
 
-- inspect the repository;
-- read specifications, plans, code, tests, and design files;
-- install existing declared dependencies to establish a baseline;
-- run tests, builds, verifiers, and read-only analysis;
-- verify the current official Agnes Video request and polling contract;
-- prepare and report a Milestone 3 Preflight;
-- work on the dedicated Product Design documentation branch when explicitly
-  instructed to perform the M3 Product Design Sprint.
+* inspect repository files;
+* read specifications, plans, code, tests, and docs;
+* run existing tests, builds, verifiers, and dry-run checks;
+* prepare M5 readiness documentation;
+* prepare readiness checklist;
+* inspect environment-variable presence without exposing values;
+* verify LocalSecretStore presence without printing secrets;
+* verify public URL validation logic;
+* verify signed asset URL construction logic in dry-run mode;
+* prepare final review reports.
 
-Before authorization, do not:
+Before authorization, agents must not:
 
-- create or alter production database tables;
-- modify runtime, API, Poller, Provider, or production frontend code;
-- submit Agnes video requests;
-- create implementation commits.
+* submit an Agnes video request;
+* poll a real Agnes job;
+* download a real Agnes result;
+* create a real provider execution script that can run by default;
+* configure or print a real API key;
+* expose any secret to browser, logs, artifacts, reports, exceptions, or Git history;
+* bypass public HTTPS asset checks;
+* run batch provider requests;
+* run retries beyond an explicitly authorized single smoke request.
 
-A valid implementation preflight must end with exactly one of:
+### With Real Smoke-Test Authorization
+
+The token:
 
 ```text
-M3_PREFLIGHT_READY
-M3_PREFLIGHT_BLOCKED
-M3_PREFLIGHT_BLOCKED_BY_DESIGN
+AUTHORIZE_REAL_AGNES_VIDEO_SMOKE_TEST
 ```
 
-Only `M3_PREFLIGHT_READY` followed by the explicit authorization token permits
-production implementation.
+authorizes at most one controlled real Agnes smoke test, and only if the readiness checklist is already GO.
 
-### Milestone 3 In Scope
+The agent must still stop if any readiness item is NO-GO.
 
-Implement only the Milestone 3 plan.
+Authorization does not permit:
 
-#### Generation Job and Result Persistence
+* batch production;
+* full chapter production;
+* unlimited retries;
+* provider abstraction rewrite;
+* database schema expansion;
+* LibTV execution;
+* subtitles, BGM, final timeline, or export work.
 
-Implement additive persistence for:
+---
 
-- generation jobs;
-- provider job identifiers;
-- job attempts;
-- request hashes;
-- idempotency keys;
-- provider request and response object references;
-- result records;
-- result metadata;
-- one current selected result per chapter shot;
-- result reviews;
-- immutable rerun records.
+## M5 Multi-Agent Collaboration Rules
 
-The required internal job states are:
+Use multi-agent review for M5 planning and readiness work.
+
+Required roles:
+
+### Product Agent
+
+Responsibilities:
+
+* define M5 product goal;
+* define user acceptance criteria;
+* define what “real smoke test passed” means;
+* confirm M5 does not imply full production launch.
+
+Required output:
+
+* findings;
+* risks;
+* checklist items;
+* go / no-go criteria.
+
+### Backend Agent
+
+Responsibilities:
+
+* inspect existing Agnes provider implementation;
+* inspect generation execution service;
+* inspect poller behavior;
+* inspect result persistence;
+* inspect result content endpoint;
+* inspect asset delivery service;
+* inspect provider parameter allowlist;
+* inspect duration mapping.
+
+Required output:
+
+* findings;
+* risks;
+* checklist items;
+* go / no-go criteria.
+
+### Ops Agent
+
+Responsibilities:
+
+* inspect environment variable requirements;
+* inspect public HTTPS requirements;
+* inspect `AI_DRAMA_PUBLIC_BASE_URL`;
+* inspect rate-limit settings;
+* inspect rollback and cleanup requirements;
+* inspect operator runbook requirements.
+
+Required output:
+
+* findings;
+* risks;
+* checklist items;
+* go / no-go criteria.
+
+### QA Agent
+
+Responsibilities:
+
+* design readiness checklist;
+* design dry-run verification;
+* design failure categories;
+* design regression commands;
+* verify that default tests do not make real provider requests.
+
+Required output:
+
+* findings;
+* risks;
+* checklist items;
+* go / no-go criteria.
+
+### Security Agent
+
+Responsibilities:
+
+* inspect `LocalSecretStore`;
+* inspect settings endpoint behavior;
+* inspect secret redaction;
+* inspect signed URL safety;
+* inspect log/report/artifact leakage risks;
+* inspect safety grep results.
+
+Required output:
+
+* findings;
+* risks;
+* checklist items;
+* go / no-go criteria.
+
+### Orchestrator
+
+Responsibilities:
+
+* coordinate agents;
+* resolve conflicts;
+* integrate findings;
+* produce final M5 readiness decision;
+* ensure no real request is made without authorization.
+
+Only the main agent may commit.
+
+Subagents are read-only unless explicitly authorized.
+
+No subagent may execute a real Agnes request.
+
+No subagent may expose secrets.
+
+---
+
+## M5 Scope
+
+M5 is in scope for:
+
+* real provider readiness checklist;
+* public HTTPS asset delivery readiness;
+* Agnes API key readiness;
+* runtime provider switching readiness;
+* signed asset URL reachability check;
+* dry-run safety verification;
+* one-shot real smoke-test gate design;
+* expected success evidence design;
+* failure classification;
+* rollback and cleanup guidance;
+* report separation between mock evidence and real provider evidence;
+* operator go / no-go decision template.
+
+M5 may prepare a plan for a future authorized smoke test.
+
+M5 may not execute the real smoke test until explicitly authorized.
+
+---
+
+## M5 Non-Scope
+
+M5 is not in scope for:
+
+* automatic real Agnes request without authorization;
+* batch production;
+* full chapter production;
+* video quality benchmark;
+* LibTV execution;
+* dubbing;
+* subtitles;
+* BGM;
+* sound effects;
+* timeline editing;
+* video trimming;
+* video concatenation;
+* transitions;
+* color grading;
+* final episode export;
+* publishing;
+* multi-user authentication or permissions;
+* collaboration;
+* generic workflow engines;
+* generic Agent runtimes;
+* provider plugin marketplace;
+* provider abstraction rewrite;
+* distributed queues;
+* Redis;
+* Celery;
+* Kubernetes;
+* PostgreSQL migration;
+* database schema expansion unless separately approved later;
+* production launch.
+
+Documentation may mention later work, but no later-milestone implementation may be added during M5 readiness planning.
+
+---
+
+## M5 Readiness Checklist Requirements
+
+The approved M5 readiness plan must contain a checklist covering at least the following areas.
+
+### Repository Readiness
+
+Required checks:
+
+* `main` is clean;
+* M3 verifier passes;
+* M4 verifier passes;
+* Python tests pass;
+* Web tests pass;
+* Web build passes;
+* Web e2e passes;
+* migration verifier passes;
+* `git diff --check` passes.
+
+### Environment Readiness
+
+Required checks:
+
+* `AI_DRAMA_RUNTIME_PROVIDER=agnes`;
+* `AI_DRAMA_PUBLIC_BASE_URL` configured;
+* `AI_DRAMA_PUBLIC_BASE_URL` uses HTTPS;
+* `AI_DRAMA_PUBLIC_BASE_URL` is not localhost;
+* `AI_DRAMA_PUBLIC_BASE_URL` is not loopback;
+* `AI_DRAMA_PUBLIC_BASE_URL` is not private IP;
+* `AI_DRAMA_PUBLIC_BASE_URL` is not a file path;
+* `AI_DRAMA_PUBLIC_BASE_URL` has no userinfo;
+* `AI_DRAMA_AGNES_VIDEO_RPM` is configured and sane;
+* `AI_DRAMA_AGNES_POLL_INTERVAL_SECONDS` is configured and sane.
+
+### Secret Readiness
+
+Required checks:
+
+* Agnes API key exists in `LocalSecretStore`;
+* API key is never printed;
+* API key is never committed;
+* API key is never returned to browser;
+* settings endpoint reports configured/unconfigured status only;
+* logs redact Authorization headers and API-key-like fields;
+* reports do not contain secret values.
+
+### Public Asset Readiness
+
+Required checks:
+
+* signed asset URL can be generated;
+* signed asset URL is HTTPS;
+* signed asset URL rejects invalid signature;
+* signed asset URL rejects expired signature;
+* signed asset URL rejects non-image assets;
+* signed asset URL does not contain Agnes API key;
+* referenced image asset is externally reachable before real provider submission;
+* localhost, loopback, private IP, local file paths, and userinfo are rejected for real submissions.
+
+### Provider Readiness
+
+Required checks:
+
+* provider uses explicit video status/result path;
+* provider does not silently substitute `task_id` for `video_id`;
+* duration mapping uses:
+
+  * 5 seconds → 121 frames, 24 fps;
+  * 10 seconds → 241 frames, 24 fps;
+* provider params allowlist remains strict;
+* canonical request stores asset IDs, not temporary signed URLs;
+* local result persistence is enabled;
+* provider result bytes are downloaded and stored locally;
+* previous results are retained;
+* current result selection is explicit;
+* poller handles:
+
+  * queued;
+  * submitting;
+  * submitted;
+  * polling;
+  * completed;
+  * failed;
+  * cancelled;
+  * submission outcome unknown.
+
+### Safety Readiness
+
+Required checks:
+
+* dry-run mode makes no real Agnes request;
+* real smoke test requires exact token:
+  `AUTHORIZE_REAL_AGNES_VIDEO_SMOKE_TEST`;
+* no retries beyond approved single smoke request;
+* no default test calls real Agnes;
+* no CI job calls real Agnes by default;
+* no API key leakage;
+* generated report separates mock evidence from real provider evidence.
+
+---
+
+## M5 Smoke Test Scenario
+
+The minimum real smoke test scenario must be planned as follows, but not executed without authorization.
+
+Input:
 
 ```text
-draft
-queued
-submitting
-submitted
-polling
-completed
-failed
-cancelled
+one existing usable image asset
+one short video generation job
+duration_seconds = 5
+provider = agnes
+one idempotency key
+one shot id
 ```
 
-Allowed transitions must be enforced centrally:
+Expected flow:
 
 ```text
-draft -> queued
-queued -> submitting | cancelled
-submitting -> submitted | failed
-submitted -> polling | completed | failed
-polling -> polling | completed | failed
-completed | failed | cancelled -> terminal
+create signed asset URL
+verify signed asset URL is externally reachable
+submit Agnes video request
+receive provider job/video id
+persist internal generation job id
+poll provider status
+receive completed URL or failed status
+download mp4 if completed
+persist local result bytes
+persist result metadata
+expose /api/results/{result_id}/content
+show result in existing generation results UI
+show evidence in M4.3 visibility panel
+write smoke test report
 ```
 
-Do not allow arbitrary state mutation from routers or React components.
+The real smoke test must be one-shot unless the user separately authorizes another attempt.
 
-#### Controlled Asset Delivery
+---
 
-Implement signed temporary image delivery for provider-reachable inputs.
+## Expected Success Evidence
 
-Required baseline route:
+A successful M5 smoke test must produce evidence including:
+
+* provider job id / video id;
+* internal generation job id;
+* result id;
+* local object id;
+* local content URL;
+* poll status timeline;
+* downloaded mp4 byte size;
+* result selection state;
+* no secret leakage confirmation;
+* report path;
+* UI visibility confirmation;
+* explicit statement that this was a single authorized real provider smoke test.
+
+The report must separate:
 
 ```text
-GET /public/assets/{asset_id}?expires=...&signature=...
+mock M4 rehearsal evidence
+real M5 smoke-test evidence
 ```
 
-Rules:
+---
 
-- use HMAC SHA-256;
-- verify signatures with `hmac.compare_digest()`;
-- reject altered asset IDs, altered expiry, and invalid signatures;
-- reject expired URLs;
-- reject non-image assets;
-- use `AI_DRAMA_PUBLIC_BASE_URL`;
-- reject localhost, loopback, local file paths, and otherwise
-  provider-unreachable URLs for real Agnes submissions;
-- never include the Agnes API key in a signed asset URL.
+## Failure Categories
 
-#### Agnes Video Provider Integration
-
-Implement Agnes Video behind the existing provider abstraction.
-
-At implementation time, verify the current official contract for:
-
-- submission endpoint;
-- polling endpoint;
-- result endpoint or response field;
-- model identifier;
-- text-to-video input;
-- image-to-video input;
-- multi-image or keyframe input;
-- prompt field;
-- negative-prompt support;
-- duration support;
-- aspect-ratio or resolution support;
-- `video_id`;
-- `task_id`;
-- provider status values;
-- error response format;
-- rate limits;
-- result URL lifetime.
-
-Current expected baseline:
+M5 readiness and smoke-test reporting must classify failures using these categories:
 
 ```text
-model: agnes-video-v2.0
-provider job identifier: video_id
-task_id: raw provider metadata only
+missing_api_key
+invalid_public_base_url
+input_asset_unreachable
+provider_submit_failed
+provider_poll_failed
+provider_failed
+provider_timeout
+result_download_failed
+local_persistence_failed
+ui_visibility_failed
+secret_leak_detected
+unexpected_real_request
+unknown
 ```
 
-Do not silently substitute `task_id` for `video_id`.
+Each category must define:
 
-If the current official Agnes documentation conflicts with the expected
-baseline, stop and report the exact conflict before changing the contract.
+* meaning;
+* operator action;
+* whether retry is allowed;
+* whether user authorization is required again.
 
-#### Idempotent GenerationJobService
-
-The GenerationJobService must:
-
-- accept only current ready Shot Prompt revisions;
-- require usable and provider-reachable assets;
-- build a canonical provider request;
-- persist the request in immutable object storage;
-- compute a deterministic request hash;
-- enforce provider plus idempotency-key uniqueness;
-- persist `queued` before returning;
-- return the existing job for duplicate normal submissions;
-- create a new attempt only through an explicit rerun;
-- keep prior jobs and prior results unchanged.
-
-Canonical request hashes must use deterministic JSON serialization:
-
-```python
-json.dumps(
-    payload,
-    ensure_ascii=False,
-    sort_keys=True,
-    separators=(",", ":"),
-    allow_nan=False,
-)
-```
-
-#### Persistent Single-Process Poller
-
-Implement a SQLite-backed, single-process Poller started through FastAPI
-lifespan.
-
-Required configuration:
+Default retry rule:
 
 ```text
-AI_DRAMA_AGNES_VIDEO_RPM
-AI_DRAMA_AGNES_POLL_INTERVAL_SECONDS
+Any new real provider submission requires explicit user authorization again unless the approved smoke-test plan says otherwise.
 ```
 
-Required behaviors:
+---
 
-- persist `submitting` before the submission network call;
-- persist the provider job ID immediately after successful submission;
-- poll only nonterminal due jobs;
-- respect the configured submission rate limit;
-- recover queued, submitted, and polling jobs after application restart;
-- avoid duplicate submission after restart;
-- when a job is `submitting` without a known provider job ID, mark it with
-  `submission_outcome_unknown` rather than blindly resubmitting;
-- persist the next poll time;
-- make one-cycle execution directly testable.
+## Secret and Security Rules
 
-Do not add Redis, Celery, distributed locks, or external queue infrastructure.
+* Read the Agnes API key only through `LocalSecretStore`.
+* Never accept Agnes API key in generation request bodies.
+* Never return the full key to browser.
+* Never write the key to logs.
+* Never write the key to artifacts.
+* Never write the key to provider metadata.
+* Never write the key to test snapshots.
+* Never write the key to exceptions.
+* Never write the key to exported bundles.
+* Never write the key to Git history.
+* Sanitize Authorization headers.
+* Sanitize API-key fields.
+* Sanitize token-like strings.
+* Signed public asset URLs must not contain provider secrets.
+* Use constant-time comparison for signatures.
+* Real provider tests must be explicit opt-in.
+* Default test suites must use fake provider or mocked Agnes HTTP contracts.
 
-#### Result Persistence and Selection
+---
 
-The result service must:
+## Static Safety Checks
 
-- fetch exact provider result bytes;
-- persist result bytes in immutable object storage;
-- persist metadata separately;
-- retain all prior result versions;
-- maintain one selected result per chapter shot through a selection record;
-- never delete prior results when selection changes;
-- record result reviews and failure categories;
-- handle expired provider URLs explicitly.
+M5 planning and readiness review must include safety grep:
 
-Normalize provider and workflow failures to:
-
-```text
-authentication
-rate_limited
-invalid_request
-input_unreachable
-provider_busy
-generation_failed
-timeout
-result_expired
-unknown_provider_error
-submission_outcome_unknown
+```bash
+grep -RniE 'apihub.agnes-ai.com|AUTHORIZE_REAL_AGNES_VIDEO_SMOKE_TEST|AI_DRAMA_PUBLIC_BASE_URL|LocalSecretStore|AgnesImageBackend' \
+  docs tools tests ai_drama_web web/src
 ```
 
-#### Immutable Rerun Workflow
+Allowed hits:
 
-An explicit rerun may override only approved fields, including:
+* docs/readiness checklist;
+* existing Agnes provider implementation;
+* settings UI/backend;
+* test mocks/assertions;
+* deferred-token docs/UI copy.
 
-- positive prompt;
-- negative prompt;
-- selected assets;
-- generation mode;
-- duration;
-- provider-supported video parameters approved by the M3 design and API
-  contract.
+Disallowed hits:
 
-A rerun must:
+* new unguarded real Agnes execution;
+* API key printed to logs;
+* API key committed;
+* real request path outside explicit authorization;
+* browser path that directly calls real Agnes.
 
-- preserve the source job;
-- preserve prior results;
-- create a new generation job;
-- increment attempt number;
-- persist the exact overrides in immutable object storage;
-- persist a rerun record linking source and new job.
+---
 
-#### Generation, Results, and Rerun APIs
+## Stop Conditions
 
-Implement the M3 API surface defined by the implementation plan, including:
+Stop and report instead of improvising when:
 
-```text
-POST /api/chapters/{chapter_id}/generation/video-jobs
-GET  /api/chapters/{chapter_id}/generation/jobs
-GET  /api/generation/jobs/{job_id}
-POST /api/generation/jobs/{job_id}/refresh
-GET  /api/chapters/{chapter_id}/results
-POST /api/shots/{shot_id}/results/{result_id}/select
-POST /api/results/{result_id}/review
-POST /api/generation/jobs/{job_id}/rerun
-```
+* the user has not sent `AUTHORIZE_REAL_AGNES_VIDEO_SMOKE_TEST` and a real request would be needed;
+* `AI_DRAMA_PUBLIC_BASE_URL` is missing;
+* public base URL is not HTTPS;
+* public base URL is localhost, loopback, private IP, file path, or contains userinfo;
+* Agnes API key is missing;
+* Agnes API key would be exposed to browser, logs, artifacts, reports, exceptions, or Git history;
+* signed asset URL cannot be externally reached;
+* official Agnes Video documentation conflicts with current implementation;
+* provider does not return a stable queryable video identifier;
+* provider requires an input mode unsupported by current M3/M4 implementation;
+* real request would require unapproved retries;
+* real request would require batch execution;
+* any safety grep finds a new unguarded real provider path;
+* baseline M3/M4 tests fail for unrelated reasons;
+* a proposed change requires provider abstraction rewrite;
+* a proposed change requires database schema expansion not separately approved;
+* a proposed change requires LibTV, subtitles, BGM, final timeline, or production export;
+* a secret would need to be exposed to proceed.
 
-Routers must only map HTTP inputs and outputs.
+Do not commit or push partial work after a Stop Condition unless the user explicitly instructs a documentation-only blocked report.
 
-Job transitions, idempotency, provider calls, result persistence, selection,
-and rerun logic belong in services and stores.
+---
 
-#### Generation and Results Web UI
+## Testing and Development Rules
 
-Implement the approved M3 Product Design for:
-
-- Agnes Generation tab;
-- Results and Rerun tab;
-- ready and blocked shots;
-- batch submit;
-- single-shot submit;
-- prompt, asset, and parameter preview;
-- waiting, generating, success, failed, and recovered states;
-- React Query polling only while nonterminal jobs exist;
-- manual refresh;
-- duplicate-click protection;
-- non-autoplay video preview;
-- version history;
-- current-result selection;
-- source job, prompt, asset, and attempt details;
-- failure review categories;
-- rerun drawer;
-- retention of prior result versions.
-
-Milestone 3 unlocks:
-
-```text
-Agnes 生成
-结果与重跑
-```
-
-### Milestone 3 Out of Scope
-
-Do not implement:
-
-- LibTVBackend or LibTV execution;
-- dubbing;
-- subtitles;
-- BGM;
-- sound effects;
-- timeline editing;
-- video trimming;
-- video concatenation;
-- transitions;
-- color grading;
-- final episode export;
-- publishing;
-- multi-user authentication or permissions;
-- collaboration;
-- generic workflow engines;
-- generic Agent runtimes;
-- provider plugin marketplaces;
-- PostgreSQL;
-- Redis;
-- Celery;
-- distributed queues;
-- distributed workers;
-- microservices;
-- Kubernetes;
-- Milestone 4 real-chapter acceptance work;
-- historical Phase 3B–3E governance, qualification, or verifier expansion.
-
-Navigation or documentation for later work may exist, but no later-milestone
-implementation may be added.
-
-### Existing Behavior That Must Be Preserved
-
-Preserve all Milestone 1, Milestone 2, and historical runtime behavior:
-
-- `RuntimeStore`;
-- immutable object storage;
-- Artifact and Revision semantics;
-- Approval and Validator behavior;
-- Script Workflow;
-- Storyboard Workflow;
-- Canonical Storyboard validation and rendering;
-- Bundle behavior;
-- Phase 3A Shot Prompt artifact and business-key foundation;
-- project, chapter, and source persistence;
-- persistent chapter discovery;
-- Production Profiles;
-- Asset Studio;
-- Agnes Image generation;
-- Asset Requirement Analysis;
-- Shot Prompt canonical format;
-- Shot Prompt Skill;
-- ShotPromptService;
-- M1 and M2 Web APIs;
-- M1 and M2 chapter-workspace UI;
-- all M1 and M2 verifiers and tests.
-
-Do not duplicate existing runtime logic inside FastAPI routers or React
-components.
-
-Do not change Shot Prompt readiness semantics merely to allow video submission.
-
-### Persistence Rules
-
-- New tables and columns must be additive.
-- Do not destructively rewrite historical tables.
-- Use the existing SQLite database and immutable object store.
-- Provider request bodies, provider responses, result bytes, result metadata,
-  and rerun overrides must be stored according to the M3 implementation plan.
-- Store object identifiers and hashes in relational rows.
-- Preserve referential integrity and project/chapter/shot scoping.
-- Migrations must remain compatible with existing migration preview and
-  current-version checks.
-- A rerun of migrations must be idempotent.
-- Result selection must not delete or overwrite prior result records.
-
-### Secret and Security Rules
-
-- Read the Agnes API key only through the existing `LocalSecretStore`.
-- Never accept an Agnes API key in generation request bodies.
-- Never return the full key to the browser.
-- Never write the key to logs, artifacts, provider metadata, test snapshots,
-  exceptions, exported bundles, or Git history.
-- Sanitize Authorization headers, API-key fields, tokens, and secret-like
-  strings from provider request and response evidence.
-- Signed public asset URLs must not contain secrets beyond the URL signature.
-- Use constant-time comparison for signatures.
-- Real provider tests must be explicit opt-in and must not run in the default
-  test suite.
-
-### Testing and Development Rules
-
-Use test-driven development.
+Use test-driven development for any implementation work after readiness planning.
 
 For every implementation task:
 
 1. write the focused failing test;
-2. run it and confirm the expected failure;
+2. run it and confirm expected failure;
 3. implement the minimum code required;
 4. run focused tests;
 5. run affected regression tests;
@@ -553,123 +651,168 @@ For every implementation task:
 8. fix findings;
 9. rerun focused and affected tests;
 10. create one focused commit;
-11. continue to the next task.
+11. continue to the next task only after the current task passes.
 
-Do not weaken, skip, delete, or rewrite existing tests merely to make a change
-pass.
+Do not weaken tests.
 
-Keep implementation aligned with the exact task order in:
+Do not skip tests merely to pass.
 
-`docs/superpowers/plans/2026-07-05-m3-agnes-generation-results-rerun.md`
+Do not delete acceptance checks.
 
-### Agent Collaboration Rules
+Do not rewrite golden outputs without explicit justification.
 
-- Use subagent-driven development after authorization.
-- The main agent coordinates, reviews, integrates, and owns final decisions.
-- At most one code-writing implementer may operate at a time.
-- Read-only exploration, test analysis, official-document verification, and
-  review agents may run in parallel.
-- Subagents must receive the current task scope and forbidden-scope list.
-- Do not allow multiple write agents to modify overlapping files.
-- Do not begin the next task until the current task has passed focused tests,
-  review, and commit.
+Do not let real provider tests run by default.
 
-### Commit and Push Rules
+---
 
-- Keep one focused commit per implementation task.
-- Do not combine all Milestone 3 work into a single commit.
-- Do not amend or rewrite historical Milestone 1 or Milestone 2 commits.
-- Do not push unless the user explicitly authorizes publication.
-- Do not merge to `main`.
-- Do not begin Milestone 4 after Milestone 3 completion.
+## M5 Verification Baseline
 
-### Stop Conditions
-
-Stop and report instead of improvising when:
-
-- required M3 Product Design files are missing or not approved;
-- the selected M3 design direction is ambiguous;
-- the current branch does not contain the complete merged M1 and M2 baseline;
-- current official Agnes Video documentation conflicts with the planned
-  provider contract;
-- the provider does not return a stable queryable job identifier;
-- the provider requires an input mode unsupported by the approved M3 design;
-- a real submission would require localhost, a local file path, or another
-  provider-unreachable asset URL;
-- a required migration would destructively alter historical data;
-- baseline tests fail for reasons unrelated to the current task;
-- the implementation plan conflicts materially with the approved MVP Design;
-- a proposed change requires LibTV, post-production, distributed
-  infrastructure, or Milestone 4 scope;
-- a secret would need to be exposed to the browser, logs, artifacts, or
-  repository;
-- restart recovery cannot avoid duplicate or unknown-outcome submissions
-  without changing the approved architecture.
-
-Do not commit or push partial work after a Stop Condition.
-
-### Milestone 3 Verification
-
-Before declaring completion, run all verification commands required by the M3
-implementation plan, including at minimum:
+For M5 planning/readiness work, run at minimum:
 
 ```bash
-python3 tools/verify_m1_web_workflow.py
-python3 tools/verify_m2_assets_shot_prompts.py
+python3 tools/verify_m4_chapter_rehearsal.py
 python3 tools/verify_m3_agnes_generation.py
-python3 migration/tools/verify_migration.py
-PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' python3 -m pytest -q
+python3 -m pytest -q
 npm --prefix web run test -- --run
 npm --prefix web run build
 npm --prefix web run test:e2e
+python3 migration/tools/verify_migration.py
+git diff --check
 ```
 
-Default verification must use the fake provider or mocked Agnes HTTP
-contracts. Real Agnes network tests are opt-in only.
+If M5 only changes documentation, focused document validation plus `git diff --check` may be enough, but the final report must say which verification was run and why broader tests were or were not run.
 
-Browser or Playwright verification must cover:
+Before any real smoke-test implementation or execution, rerun the full verification baseline.
 
-- ready-shot selection;
-- blocked-shot explanation;
-- single-shot submission;
-- batch submission;
-- duplicate-click protection;
-- waiting, generating, completed, and failed states;
-- manual refresh;
-- nonterminal polling;
-- result preview without autoplay;
-- result version history;
-- result selection;
-- failure category review;
-- rerun creation;
-- prior result retention;
-- restart recovery;
-- no LibTV or post-production implementation.
+---
 
-### Completion Status
+## Commit and Push Rules
 
-Only declare Milestone 3 complete when:
+* Keep one focused commit per task.
+* Do not combine unrelated M5 work into a single commit.
+* Do not amend or rewrite historical M1/M2/M3/M4 commits.
+* Do not push unless the user explicitly authorizes publication.
+* Do not merge to `main` without user approval.
+* Prefer fast-forward merges after review.
+* Do not force push.
+* Do not squash unless the user explicitly requests it.
+* Do not delete milestone branches until the user approves cleanup.
 
-- all M3 implementation-plan tasks are complete;
-- all focused and regression tests pass;
-- migration verification passes;
-- the M1 verifier still passes;
-- the M2 verifier still passes;
-- the M3 verifier passes;
-- frontend tests and build pass;
-- M3 E2E and Browser QA pass;
-- fake-provider restart recovery passes;
-- idempotency and duplicate-submission tests pass;
-- no secret is exposed;
-- the working tree is clean;
-- no Milestone 4, LibTV, or post-production scope was implemented.
+---
 
-The final status must be exactly one of:
+## Go / No-Go Decision Template
+
+M5 readiness reports must include:
 
 ```text
-M3_COMPLETE
-M3_BLOCKED
-M3_FAILED
+M5 Readiness Decision:
+- Repository readiness: GO / NO-GO
+- Environment readiness: GO / NO-GO
+- Secret readiness: GO / NO-GO
+- Public asset readiness: GO / NO-GO
+- Provider readiness: GO / NO-GO
+- Safety readiness: GO / NO-GO
+
+Overall:
+- M5_REAL_PROVIDER_SMOKE_TEST_READY
+or
+- M5_REAL_PROVIDER_SMOKE_TEST_NOT_READY
+
+Reason:
+...
+
+Required fixes:
+...
 ```
 
-After `M3_COMPLETE`, stop. Do not start Milestone 4.
+No real Agnes smoke test may run unless the overall decision is:
+
+```text
+M5_REAL_PROVIDER_SMOKE_TEST_READY
+```
+
+and the user separately provides:
+
+```text
+AUTHORIZE_REAL_AGNES_VIDEO_SMOKE_TEST
+```
+
+---
+
+## Completion Tokens
+
+Allowed M5 governance and readiness tokens:
+
+```text
+M5_AGENTS_GOVERNANCE_READY_FOR_REVIEW
+M5_AGENTS_GOVERNANCE_BLOCKED
+M5_READINESS_PLAN_READY_FOR_REVIEW
+M5_READINESS_PLAN_BLOCKED
+M5_REAL_PROVIDER_SMOKE_TEST_READY
+M5_REAL_PROVIDER_SMOKE_TEST_NOT_READY
+M5_REAL_PROVIDER_SMOKE_TEST_READY_FOR_REVIEW
+M5_REAL_PROVIDER_SMOKE_TEST_BLOCKED
+M5_REAL_PROVIDER_SMOKE_TEST_COMPLETE
+M5_REAL_PROVIDER_SMOKE_TEST_FAILED
+```
+
+Do not use `M3_COMPLETE` as the active milestone completion token.
+
+M3 remains historical baseline only.
+
+M4 remains closed historical baseline only.
+
+---
+
+## M5 Planning Completion
+
+Only declare M5 readiness planning complete when:
+
+* `docs/milestones/m5-readiness-plan.md` exists;
+* multi-agent review is included;
+* readiness checklist is included;
+* environment requirements are included;
+* secret management requirements are included;
+* public asset delivery requirements are included;
+* real smoke-test gate is included;
+* smoke-test scenario is included;
+* expected evidence is included;
+* failure categories are included;
+* safety rules are included;
+* verification commands are included;
+* go / no-go template is included;
+* user acceptance gate is included;
+* no real Agnes request was made;
+* working tree is clean.
+
+Final status for readiness planning must be exactly one of:
+
+```text
+M5_READINESS_PLAN_READY_FOR_REVIEW
+M5_READINESS_PLAN_BLOCKED
+```
+
+---
+
+## M5 Real Smoke-Test Completion
+
+Only declare a real provider smoke test complete when:
+
+* readiness decision was GO;
+* user explicitly provided `AUTHORIZE_REAL_AGNES_VIDEO_SMOKE_TEST`;
+* exactly one authorized real Agnes smoke request was submitted;
+* provider job/video id was recorded;
+* polling timeline was recorded;
+* result was either completed and locally persisted, or failed with classified failure;
+* no secret leaked;
+* report separates real provider evidence from mock evidence;
+* UI visibility was checked if a result exists;
+* working tree is clean or changes are explicitly reported.
+
+Final status for real smoke testing must be exactly one of:
+
+```text
+M5_REAL_PROVIDER_SMOKE_TEST_COMPLETE
+M5_REAL_PROVIDER_SMOKE_TEST_FAILED
+M5_REAL_PROVIDER_SMOKE_TEST_BLOCKED
+```
