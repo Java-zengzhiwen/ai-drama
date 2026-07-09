@@ -5,6 +5,7 @@ import { listAssets } from "../assets/api";
 import type { ChapterRead } from "../projects/api";
 import {
   getGenerationJob,
+  listGenerationJobs,
   listGenerationResults,
   rerunGenerationJob,
   reviewGenerationResult,
@@ -12,6 +13,7 @@ import {
   type GenerationResultRead,
   type ShotResultsRead,
 } from "./api";
+import { RehearsalVisibilityPanel } from "./RehearsalVisibilityPanel";
 
 type GenerationResultsTabProps = {
   chapter: ChapterRead;
@@ -26,6 +28,10 @@ export function GenerationResultsTab({ chapter }: GenerationResultsTabProps) {
   const resultsQuery = useQuery({
     queryKey: resultsQueryKey,
     queryFn: () => listGenerationResults(chapter.chapter_id),
+  });
+  const jobsQuery = useQuery({
+    queryKey: jobsQueryKey,
+    queryFn: () => listGenerationJobs(chapter.chapter_id),
   });
   const assetsQuery = useQuery({
     queryKey: ["assets", chapter.chapter_id],
@@ -79,6 +85,9 @@ export function GenerationResultsTab({ chapter }: GenerationResultsTabProps) {
       {resultsQuery.isError || selectMutation.isError || reviewMutation.isError || rerunMutation.isError ? (
         <Alert message="结果加载、选择、审核或重跑失败。请重试。" showIcon type="error" />
       ) : null}
+      {jobsQuery.isError ? <Alert message="生成任务加载失败，演练可视化不可用。" showIcon type="error" /> : null}
+
+      <RehearsalVisibilityPanel jobs={jobsQuery.data ?? []} resultGroups={groups} />
 
       {groups.length === 0 ? (
         <Alert message="暂无视频结果。提交 Agnes 生成后会显示结果版本。" showIcon type="info" />
