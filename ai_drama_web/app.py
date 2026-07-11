@@ -134,4 +134,5 @@ def main() -> None:
         factory=True,
         host="127.0.0.1",
         port=8000,
+        access_log=False,
     )
