@@ -1,4 +1,9 @@
 import json
+import math
+import re
+from copy import deepcopy
+from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_web.providers.base import GenerationBackend
@@ -41,11 +46,13 @@ class GenerationExecutionService:
                 )
             )
         except ProviderError as exc:
+            response_object_id = self._provider_error_object_id(exc)
             return self.product_store.transition_generation_job(
                 submitting.job_id,
                 "failed",
                 error_code=exc.code,
                 error_message="video provider failed",
+                response_object_id=response_object_id,
             )
         except AssetDeliveryInvalidPublicBaseUrl:
             return self.product_store.transition_generation_job(
@@ -63,7 +70,7 @@ class GenerationExecutionService:
             )
         response_object_id = self.runtime_store.write_text_object(
             json.dumps(
-                provider_job.raw,
+                _sanitize_persisted_provider_metadata(provider_job.raw),
                 ensure_ascii=False,
                 sort_keys=True,
                 separators=(",", ":"),
@@ -96,11 +103,13 @@ class GenerationExecutionService:
             if provider_job.status in {"polling", "processing", "running", "in_progress"}:
                 return self.product_store.transition_generation_job(job.job_id, "polling")
             if provider_job.status == "failed":
+                response_object_id = self._provider_status_object_id(provider_job)
                 return self.product_store.transition_generation_job(
                     job.job_id,
                     "failed",
                     error_code="generation_failed",
                     error_message="video provider failed",
+                    response_object_id=response_object_id,
                 )
             if provider_job.status != "completed":
                 return self.product_store.transition_generation_job(
@@ -114,11 +123,13 @@ class GenerationExecutionService:
             else:
                 result = self.backend.fetch_result(job.provider_job_id)
         except ProviderError as exc:
+            response_object_id = self._provider_error_object_id(exc)
             return self.product_store.transition_generation_job(
                 job.job_id,
                 "failed",
                 error_code=exc.code,
                 error_message="video provider failed",
+                response_object_id=response_object_id,
             )
         object_id = ""
         if result.content is not None:
@@ -132,7 +143,7 @@ class GenerationExecutionService:
             )
         metadata_object_id = self.runtime_store.write_text_object(
             json.dumps(
-                {
+                _sanitize_persisted_provider_metadata({
                     "provider_job": provider_job.raw,
                     "provider_result": {
                         "provider_job_id": result.provider_job_id,
@@ -140,26 +151,182 @@ class GenerationExecutionService:
                         "url": result.url,
                         "raw": result.raw,
                     },
-                },
+                }),
                 ensure_ascii=False,
                 sort_keys=True,
                 separators=(",", ":"),
                 allow_nan=False,
             )
         )
+        source_url, source_url_state = _persisted_source_url(result.url)
         return self.product_store.complete_generation_job_with_result(
             job_id=job.job_id,
             object_id=object_id,
             media_type=result.media_type,
-            source_url=result.url,
-            source_url_state="source_url_active",
+            source_url=source_url,
+            source_url_state=source_url_state,
             metadata_object_id=metadata_object_id,
+        )
+
+    def _provider_error_object_id(self, error: ProviderError) -> str:
+        evidence = _sanitize_persisted_provider_metadata(
+            {
+                "provider": error.provider,
+                "error_code": error.code,
+                "raw": error.raw,
+            }
+        )
+        return self.runtime_store.write_text_object(
+            json.dumps(
+                evidence,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        )
+
+    def _provider_status_object_id(self, provider_job) -> str:
+        provider = provider_job.raw.get("provider", "agnes")
+        evidence = _sanitize_persisted_provider_metadata(
+            {
+                "provider": provider,
+                "status": provider_job.status,
+                "raw": provider_job.raw,
+            }
+        )
+        return self.runtime_store.write_text_object(
+            json.dumps(
+                evidence,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
         )
 
     def _materialize_asset_urls(self, request: dict) -> list[str]:
         if "assets" in request:
-            return [asset["url"] for asset in request["assets"]]
-        asset_ids = request.get("asset_ids") or []
+            raise ProviderError(
+                "invalid_request",
+                "legacy inline video assets are unsupported",
+                provider="agnes",
+                raw={"legacy_asset_count": len(request["assets"])},
+            )
+        asset_ids = self._video_input_asset_ids(request)
         if self.asset_delivery is None:
             return [str(asset_id) for asset_id in asset_ids]
         return [self.asset_delivery.signed_asset_url(str(asset_id)) for asset_id in asset_ids]
+
+    def _video_input_asset_ids(self, request: dict) -> list[str]:
+        asset_ids = [str(asset_id) for asset_id in request.get("asset_ids") or []]
+        assets = []
+        for asset_id in asset_ids:
+            asset = self.product_store.get_asset(asset_id)
+            if asset is None:
+                raise ProviderError(
+                    "invalid_request",
+                    "video input asset is missing",
+                    provider="agnes",
+                    raw={"asset_id": asset_id},
+                )
+            assets.append(asset)
+
+        mode = dict(request.get("parameters") or {}).get("mode")
+        if mode == "keyframes":
+            if not 2 <= len(assets) <= 3 or any(asset.asset_type != "shot_keyframe" for asset in assets):
+                raise ProviderError(
+                    "invalid_request",
+                    "keyframes video requires two or three ordered shot keyframes",
+                    provider="agnes",
+                    raw={"asset_count": len(assets), "mode": mode},
+                )
+            return asset_ids
+
+        keyframe_ids = [asset.asset_id for asset in assets if asset.asset_type == "shot_keyframe"]
+        if len(keyframe_ids) > 1:
+            raise ProviderError(
+                "invalid_request",
+                "standard video accepts one shot keyframe",
+                provider="agnes",
+                raw={"shot_keyframe_count": len(keyframe_ids), "mode": mode},
+            )
+        return keyframe_ids
+
+
+def _sanitize_persisted_provider_metadata(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized = {}
+        for key, item in value.items():
+            key_text = str(key)
+            normalized_key = key_text.lower().replace("-", "_").replace(" ", "_")
+            if any(
+                fragment in normalized_key
+                for fragment in (
+                    "authorization",
+                    "api_key",
+                    "apikey",
+                    "token",
+                    "secret",
+                    "signature",
+                )
+            ):
+                continue
+            sanitized_key = key_text
+            if sanitized_key in sanitized:
+                sanitized_key = f"{type(key).__name__}:{key_text}"
+            sanitized[sanitized_key] = _sanitize_persisted_provider_metadata(item)
+        return sanitized
+    if isinstance(value, list):
+        return [_sanitize_persisted_provider_metadata(item) for item in value]
+    if isinstance(value, str):
+        redacted = re.sub(
+            r"Bearer\s+[A-Za-z0-9._~+/=-]+",
+            "Bearer [REDACTED]",
+            value,
+            flags=re.IGNORECASE,
+        )
+        redacted = re.sub(
+            r"([?&]signature=)[^&#\s\"']+",
+            r"\1[REDACTED]",
+            redacted,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(
+            r"((?:api[_-]?key|access[_-]?token|token|client[_-]?secret|authorization)"
+            r"\s*[:=]\s*)[^\s;,&\"']+",
+            r"\1[REDACTED]",
+            redacted,
+            flags=re.IGNORECASE,
+        )
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if value is None or isinstance(value, (bool, int, float)):
+        return deepcopy(value)
+    return f"<{type(value).__name__}>"
+
+
+def _persisted_source_url(url: str) -> tuple[str, str]:
+    parsed = urlsplit(url)
+    filtered_query = []
+    removed_sensitive_value = bool(parsed.username or parsed.password or parsed.fragment)
+    for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+        normalized_key = key.lower().replace("-", "_")
+        if any(
+            fragment in normalized_key
+            for fragment in ("authorization", "api_key", "apikey", "token", "secret", "signature")
+        ):
+            removed_sensitive_value = True
+            continue
+        filtered_query.append((key, value))
+    persisted_url = urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc.rsplit("@", 1)[-1],
+            parsed.path,
+            urlencode(filtered_query),
+            "",
+        )
+    )
+    state = "source_url_expired" if removed_sensitive_value else "source_url_active"
+    return persisted_url, state

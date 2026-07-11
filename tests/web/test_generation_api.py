@@ -424,6 +424,44 @@ def test_rerun_rejects_unknown_parameter(tmp_path):
     assert response.status_code == 422
 
 
+def test_rerun_api_accepts_explicit_keyframes_mode(tmp_path):
+    data_root, chapter, revision, canonical = _ready_chapter(tmp_path)
+    with _app_client(data_root) as client:
+        _install_generation_backend(client, ApiVideoBackend())
+        end_keyframe = client.post(
+            f"/api/chapters/{chapter.chapter_id}/assets",
+            data={"asset_type": "shot_keyframe", "name": "End keyframe"},
+            files={"file": ("end.png", PNG_BYTES, "image/png")},
+        ).json()
+        end_keyframe = client.post(
+            f"/api/assets/{end_keyframe['asset_id']}/mark-usable"
+        ).json()
+        ordered_ids = [end_keyframe["asset_id"], canonical["shots"][0]["asset_refs"][1]]
+        source = client.post(
+            f"/api/chapters/{chapter.chapter_id}/generation/video-jobs",
+            json={
+                "prompt_revision_id": revision.revision_id,
+                "shot_id": "SHOT_001",
+                "idempotency_key": "keyframes-source",
+            },
+        ).json()
+        rerun = client.post(
+            f"/api/generation/jobs/{source['job_id']}/rerun",
+            json={
+                "idempotency_key": "keyframes-rerun",
+                "asset_ids": ordered_ids,
+                "mode": "keyframes",
+            },
+        )
+        detail = client.get(f"/api/generation/jobs/{rerun.json()['new_job']['job_id']}")
+
+    assert rerun.status_code == 200, rerun.text
+    request = rerun.json()["new_job"]
+    assert request["internal_status"] == "queued"
+    assert detail.json()["request"]["asset_ids"] == ordered_ids
+    assert detail.json()["request"]["parameters"]["mode"] == "keyframes"
+
+
 def test_review_result_validates_failure_category_rules(tmp_path):
     data_root, chapter, revision, _canonical = _ready_chapter(tmp_path)
     with _app_client(data_root) as client:

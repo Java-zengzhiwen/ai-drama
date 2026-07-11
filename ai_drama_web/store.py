@@ -783,6 +783,7 @@ class ProductStore:
         error_message="",
         next_poll_at=None,
         provider_result_id=None,
+        response_object_id=None,
     ):
         current = self.get_generation_job(job_id)
         if current is None:
@@ -808,6 +809,7 @@ class ProductStore:
                 error_message = ?,
                 next_poll_at = ?,
                 provider_result_id = ?,
+                response_object_id = ?,
                 submitted_at = ?,
                 completed_at = ?,
                 updated_at = ?
@@ -819,6 +821,7 @@ class ProductStore:
                 error_message,
                 current.next_poll_at if next_poll_at is None else next_poll_at,
                 current.provider_result_id if provider_result_id is None else provider_result_id,
+                current.response_object_id if response_object_id is None else response_object_id,
                 submitted_at,
                 completed_at,
                 updated_at,

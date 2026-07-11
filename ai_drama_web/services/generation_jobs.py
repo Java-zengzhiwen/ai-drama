@@ -145,6 +145,7 @@ class GenerationJobService:
 
     def _request_for_shot(self, shot: dict, overrides: dict) -> dict:
         asset_ids = overrides.get("asset_ids") or shot["asset_refs"]
+        assets = []
         for asset_id in asset_ids:
             asset = self.product_store.get_asset(asset_id)
             if asset is None:
@@ -153,6 +154,7 @@ class GenerationJobService:
                 raise GenerationJobBlocked("asset is not usable")
             if not asset.media_type.startswith("image/"):
                 raise GenerationJobBlocked("asset is not an image")
+            assets.append(asset)
         duration_seconds = overrides.get("duration_seconds") or shot["duration_seconds"]
         parameters = dict(shot["agnes_video_params"])
         if "duration_seconds" in overrides:
@@ -170,6 +172,15 @@ class GenerationJobService:
                 parameters[key] = value
             else:
                 raise GenerationInvalidRequest("unsupported video parameter")
+        mode = parameters.get("mode")
+        shot_keyframes = [asset for asset in assets if asset.asset_type == "shot_keyframe"]
+        if mode == "keyframes":
+            if not 2 <= len(assets) <= 3 or len(shot_keyframes) != len(assets):
+                raise GenerationInvalidRequest(
+                    "keyframes video requires two or three ordered shot keyframes"
+                )
+        elif len(shot_keyframes) > 1:
+            raise GenerationInvalidRequest("standard video accepts one shot keyframe")
         return {
             "shot_id": shot["shot_id"],
             "prompt": overrides.get("prompt") or shot["positive_prompt"],

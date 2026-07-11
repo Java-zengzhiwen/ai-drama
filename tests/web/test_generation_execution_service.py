@@ -11,8 +11,8 @@ from ai_drama_web.services.generation_execution import GenerationExecutionServic
 from test_generation_job_service import _ready_fixture
 
 
-def test_submit_queued_video_job_sends_saved_request_and_persists_provider_job(tmp_path):
-    runtime, store, queue_service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+def test_submit_queued_video_job_sends_only_the_standard_shot_keyframe(tmp_path):
+    runtime, store, queue_service, revision, _canonical, asset_ids = _ready_fixture(tmp_path)
     queued = queue_service.queue_video_job(
         prompt_revision_id=revision.revision_id,
         shot_id="SHOT_001",
@@ -29,12 +29,46 @@ def test_submit_queued_video_job_sends_saved_request_and_persists_provider_job(t
     assert backend.requests[0].negative_prompt == "warped face"
     assert backend.requests[0].duration_seconds == 5
     assert backend.requests[0].parameters == {"frame_rate": 24, "num_frames": 121}
-    assert all(url.startswith("https://assets.example.test/public/assets/") for url in backend.requests[0].input_images)
+    assert len(backend.requests[0].input_images) == 1
+    assert backend.requests[0].input_images[0].startswith("https://assets.example.test/public/assets/")
+    assert asset_ids[1] in backend.requests[0].input_images[0]
     persisted_request = json.loads(runtime.read_text(queued.request_object_id))
     assert "url" not in json.dumps(persisted_request)
     response = json.loads(runtime.read_text(submitted.response_object_id))
     assert response["provider"] == "fake-video"
     assert response["request_prompt"] == "Shen Qinghe turns toward the lantern."
+    assert response["mixed_keys"]["2"] == "two"
+    assert len(response["colliding_keys"]) == 2
+    signature = backend.requests[0].input_images[0].split("signature=", 1)[1]
+    assert signature not in json.dumps(response)
+
+
+def test_execution_rejects_legacy_queued_standard_video_with_multiple_shot_keyframes(tmp_path):
+    runtime, store, queue_service, revision, _canonical, asset_ids = _ready_fixture(tmp_path)
+    second_keyframe = store.create_generated_asset(
+        project_id=revision.project_id,
+        chapter_id=revision.chapter_id,
+        asset_type="shot_keyframe",
+        name="Second keyframe",
+        data=b"png-second-keyframe",
+        media_type="image/png",
+        source_job_id="image-job-3",
+        metadata={},
+    )
+    store.update_asset_status(second_keyframe.asset_id, "usable")
+    backend = CapturingVideoBackend()
+    service = _execution_service(tmp_path, runtime, store, backend)
+
+    with pytest.raises(ProviderError) as exc_info:
+        service._video_input_asset_ids(
+            {
+                "asset_ids": [asset_ids[1], second_keyframe.asset_id],
+                "parameters": {},
+            }
+        )
+
+    assert exc_info.value.code == "invalid_request"
+    assert backend.requests == []
 
 
 def test_execution_materializes_fresh_signed_urls(tmp_path, monkeypatch):
@@ -100,6 +134,65 @@ def test_submit_queued_video_job_records_provider_error_without_leaking_raw_mess
     assert failed.error_code == "provider_busy"
     assert failed.error_message == "video provider failed"
     assert "provider-secret" not in failed.error_message
+    assert failed.response_object_id
+    evidence = json.loads(runtime.read_text(failed.response_object_id))
+    assert evidence["provider"] == "fake-video"
+    assert evidence["error_code"] == "provider_busy"
+    assert evidence["raw"]["status_code"] == 503
+    assert evidence["raw"]["response"]["code"] == "publish_video_queue_failed"
+    assert evidence["raw"]["nonfinite"] is None
+    assert evidence["raw"]["binary"] == "<bytes>"
+    assert evidence["raw"]["mixed_keys"]["2"] == "two"
+    persisted = json.dumps(evidence)
+    for secret in (
+        "provider-api-key",
+        "provider-bearer",
+        "signed-value",
+        "inline-api-key",
+        "inline-token",
+        "url-token",
+        "dict-signature",
+        "leak",
+    ):
+        assert secret not in persisted
+
+
+def test_refresh_provider_reported_failure_persists_sanitized_evidence(tmp_path):
+    runtime, store, queue_service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+    queued = queue_service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="reported-failure",
+    )
+    service = _execution_service(tmp_path, runtime, store, ReportedFailedVideoBackend())
+    submitted = service.submit_queued_job(queued.job_id)
+
+    failed = service.refresh_job(submitted.job_id)
+
+    assert failed.internal_status == "failed"
+    assert failed.error_code == "generation_failed"
+    evidence = json.loads(runtime.read_text(failed.response_object_id))
+    assert evidence["provider"] == "fake-video"
+    assert evidence["status"] == "failed"
+    assert evidence["raw"]["provider_response"]["error"]["code"] == "generation_failed"
+    assert "reported-failure-token" not in json.dumps(evidence)
+
+
+def test_legacy_inline_assets_cannot_bypass_video_input_validation(tmp_path):
+    runtime, store, _queue_service, _revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+    service = _execution_service(tmp_path, runtime, store, CapturingVideoBackend())
+
+    with pytest.raises(ProviderError) as exc_info:
+        service._materialize_asset_urls(
+            {
+                "assets": [
+                    {"url": "https://assets.example.test/character.png"},
+                    {"url": "https://assets.example.test/keyframe.png"},
+                ]
+            }
+        )
+
+    assert exc_info.value.code == "invalid_request"
 
 
 def test_submit_queued_video_job_maps_invalid_public_base_url_to_input_unreachable(tmp_path):
@@ -196,6 +289,29 @@ def test_refresh_submitted_video_job_persists_completed_result(tmp_path):
     assert metadata["provider_result"]["provider_job_id"] == "video-provider-1"
 
 
+def test_completed_result_does_not_persist_or_expose_signed_source_url(tmp_path):
+    runtime, store, queue_service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+    queued = queue_service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="signed-result-url",
+    )
+    service = _execution_service(tmp_path, runtime, store, SignedResultVideoBackend())
+    submitted = service.submit_queued_job(queued.job_id)
+
+    completed = service.refresh_job(submitted.job_id)
+
+    result = store.get_generation_result(completed.provider_result_id)
+    assert result.source_url == "https://cdn.example.test/signed.mp4?expires=123"
+    assert result.source_url_state == "source_url_expired"
+    assert "result-signature" not in result.source_url
+    assert "result-token" not in result.source_url
+    assert "result-user" not in result.source_url
+    assert "result-password" not in result.source_url
+    assert "fragment-token" not in result.source_url
+    assert runtime.read_bytes_object(result.object_id) == b"signed-mp4-bytes"
+
+
 def test_m3_video_execution_uses_explicit_video_status_method(tmp_path):
     backend = ExplicitVideoBackend("abc123")
     completed = _completed_with_backend(tmp_path, backend)
@@ -250,6 +366,13 @@ def test_refresh_submitted_video_job_records_result_expired(tmp_path):
     assert failed.internal_status == "failed"
     assert failed.error_code == "result_expired"
     assert failed.error_message == "video provider failed"
+    evidence = json.loads(runtime.read_text(failed.response_object_id))
+    assert evidence["provider"] == "fake-video"
+    assert evidence["error_code"] == "result_expired"
+    assert evidence["raw"]["phase"] == "download"
+    persisted = json.dumps(evidence)
+    assert "refresh-secret" not in persisted
+    assert "refresh-signature" not in persisted
 
 
 def test_completed_job_requires_local_result_bytes(tmp_path):
@@ -319,6 +442,9 @@ class CapturingVideoBackend:
             raw={
                 "provider": "fake-video",
                 "request_prompt": request.prompt,
+                "request_images": list(request.input_images),
+                "mixed_keys": {"ok": 1, 2: "two"},
+                "colliding_keys": {"1": "string", 1: "integer"},
             },
         )
 
@@ -329,7 +455,22 @@ class FailingVideoBackend:
             "provider_busy",
             "provider-secret unavailable",
             provider="fake-video",
-            raw={"provider-secret": "leak"},
+            raw={
+                "status_code": 503,
+                "response": {
+                    "code": "publish_video_queue_failed",
+                    "api_key": "provider-api-key",
+                },
+                "authorization": "Bearer provider-bearer",
+                "provider-secret": "leak",
+                "url": "https://assets.example.test/input.png?expires=1&signature=signed-value",
+                "detail": "api_key=inline-api-key token=inline-token",
+                "callback": "https://example.test/callback?access_token=url-token",
+                "signature": "dict-signature",
+                "nonfinite": float("nan"),
+                "binary": b"binary-secret",
+                "mixed_keys": {"ok": 1, 2: "two"},
+            },
         )
 
 
@@ -367,6 +508,20 @@ class CompletingVideoBackend(CapturingVideoBackend):
         return self.fetch_video_result(provider_job_id)
 
 
+class SignedResultVideoBackend(CompletingVideoBackend):
+    def fetch_video_result(self, provider_job_id):
+        return ProviderResult(
+            provider_job_id=provider_job_id,
+            media_type="video/mp4",
+            url=(
+                "https://result-user:result-password@cdn.example.test/signed.mp4?expires=123"
+                "&signature=result-signature&access_token=result-token#access_token=fragment-token"
+            ),
+            content=b"signed-mp4-bytes",
+            raw={"provider": "fake-video"},
+        )
+
+
 class ExpiredResultVideoBackend(CapturingVideoBackend):
     def get_video_job_status(self, provider_job_id):
         return ProviderJob(
@@ -380,9 +535,30 @@ class ExpiredResultVideoBackend(CapturingVideoBackend):
             "result_expired",
             "provider url expired",
             provider="fake-video",
-            raw={"url": "https://cdn.example.test/expired.mp4"},
+            raw={
+                "phase": "download",
+                "client_secret": "refresh-secret",
+                "url": "https://cdn.example.test/expired.mp4?signature=refresh-signature",
+            },
         )
 
+
+class ReportedFailedVideoBackend(CapturingVideoBackend):
+    def get_video_job_status(self, provider_job_id):
+        return ProviderJob(
+            provider_job_id=provider_job_id,
+            status="failed",
+            raw={
+                "provider": "fake-video",
+                "provider_response": {
+                    "status": "failed",
+                    "error": {
+                        "code": "generation_failed",
+                        "access_token": "reported-failure-token",
+                    },
+                },
+            },
+        )
 
 class UrlOnlyVideoBackend(CompletingVideoBackend):
     def fetch_video_result(self, provider_job_id):

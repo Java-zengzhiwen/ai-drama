@@ -174,19 +174,32 @@ class AgnesImageBackend(GenerationBackend):
 
         parameters = dict(request.parameters)
         mode = parameters.get("mode")
+        if mode == "keyframes":
+            if not 2 <= len(request.input_images) <= 3:
+                raise ProviderError(
+                    "invalid_request",
+                    "agnes keyframes video requires two or three input images",
+                    provider="agnes",
+                    raw={"input_image_count": len(request.input_images), "mode": mode},
+                )
+        elif len(request.input_images) > 1:
+            raise ProviderError(
+                "invalid_request",
+                "agnes standard video accepts at most one input image",
+                provider="agnes",
+                raw={"input_image_count": len(request.input_images), "mode": mode},
+            )
         for field in ("frame_rate", "num_frames", "seed"):
             if field in parameters:
                 payload[field] = parameters[field]
 
         if len(request.input_images) == 1:
             payload["image"] = request.input_images[0]
-        elif len(request.input_images) > 1:
-            extra_body: dict[str, Any] = {"image": list(request.input_images)}
-            if mode:
-                extra_body["mode"] = mode
-            payload["extra_body"] = extra_body
-        elif mode:
-            payload["extra_body"] = {"mode": mode}
+        elif mode == "keyframes":
+            payload["extra_body"] = {
+                "image": list(request.input_images),
+                "mode": mode,
+            }
         return payload
 
     def _post_image_generation(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -504,7 +517,7 @@ def _http_error_code(status_code: int) -> str:
 
 def _normalize_video_status(response_body: dict[str, Any]) -> str:
     status = str(response_body.get("status", "")).strip().lower()
-    if status == "queued":
+    if status in {"pending", "queued"}:
         return "submitted"
     if status in {"in_progress", "processing", "running"}:
         return "polling"

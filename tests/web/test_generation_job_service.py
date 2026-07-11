@@ -248,6 +248,74 @@ def test_explicit_rerun_creates_next_attempt_with_overrides(tmp_path):
     assert request["asset_ids"] == [replacement.asset_id]
 
 
+def test_standard_video_rejects_multiple_shot_keyframes_before_queue(tmp_path):
+    _runtime, store, service, revision, _canonical, asset_ids = _ready_fixture(tmp_path)
+    second_keyframe = store.create_generated_asset(
+        project_id=revision.project_id,
+        chapter_id=revision.chapter_id,
+        asset_type="shot_keyframe",
+        name="Second keyframe",
+        data=b"png-second-keyframe",
+        media_type="image/png",
+        source_job_id="image-job-3",
+        metadata={},
+    )
+    store.update_asset_status(second_keyframe.asset_id, "usable")
+
+    with pytest.raises(GenerationInvalidRequest, match="one shot keyframe"):
+        service.queue_video_job(
+            prompt_revision_id=revision.revision_id,
+            shot_id="SHOT_001",
+            idempotency_key="multiple-standard-keyframes",
+            overrides={"asset_ids": [asset_ids[1], second_keyframe.asset_id]},
+        )
+
+
+def test_keyframes_video_persists_two_ordered_shot_keyframes(tmp_path):
+    runtime, store, service, revision, _canonical, asset_ids = _ready_fixture(tmp_path)
+    end_keyframe = store.create_generated_asset(
+        project_id=revision.project_id,
+        chapter_id=revision.chapter_id,
+        asset_type="shot_keyframe",
+        name="End keyframe",
+        data=b"png-end-keyframe",
+        media_type="image/png",
+        source_job_id="image-job-3",
+        metadata={},
+    )
+    store.update_asset_status(end_keyframe.asset_id, "usable")
+    ordered_ids = [end_keyframe.asset_id, asset_ids[1]]
+
+    job = service.queue_video_job(
+        prompt_revision_id=revision.revision_id,
+        shot_id="SHOT_001",
+        idempotency_key="ordered-keyframes",
+        overrides={
+            "asset_ids": ordered_ids,
+            "parameters": {"mode": "keyframes"},
+        },
+    )
+
+    request = json.loads(runtime.read_text(job.request_object_id))
+    assert request["asset_ids"] == ordered_ids
+    assert request["parameters"]["mode"] == "keyframes"
+
+
+def test_keyframes_video_rejects_general_reference_assets(tmp_path):
+    _runtime, _store, service, revision, _canonical, asset_ids = _ready_fixture(tmp_path)
+
+    with pytest.raises(GenerationInvalidRequest, match="ordered shot keyframes"):
+        service.queue_video_job(
+            prompt_revision_id=revision.revision_id,
+            shot_id="SHOT_001",
+            idempotency_key="invalid-keyframes",
+            overrides={
+                "asset_ids": asset_ids,
+                "parameters": {"mode": "keyframes"},
+            },
+        )
+
+
 def test_duration_5_seconds_maps_to_official_frame_count():
     assert video_timing_for_duration(5) == {"frame_rate": 24, "num_frames": 121}
     assert (121 - 1) % 8 == 0
