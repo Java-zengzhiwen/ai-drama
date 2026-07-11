@@ -122,7 +122,7 @@ class GenerationRerunCreate(BaseModel):
     negative_prompt: str | None = None
     asset_ids: list[str] | None = None
     duration_seconds: int | None = None
-    mode: Literal["std", "pro"] | None = None
+    mode: Literal["std", "pro", "keyframes"] | None = None
     seed: int | None = None
 
     @field_validator("idempotency_key")

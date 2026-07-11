@@ -101,6 +101,47 @@ def test_create_video_job_preserves_multi_image_keyframe_parameters():
     assert "mode" not in payload
 
 
+def test_create_video_job_rejects_multiple_images_without_keyframes_before_http():
+    backend = AgnesImageBackend(api_key=API_KEY)
+
+    with respx.mock() as router:
+        with pytest.raises(ProviderError) as exc_info:
+            backend.create_video_job(
+                VideoGenerationRequest(
+                    prompt="Generate a stable motion from approved references.",
+                    duration_seconds=5,
+                    input_images=[
+                        "https://assets.example.test/scene.png",
+                        "https://assets.example.test/keyframe.png",
+                    ],
+                    parameters={"mode": "std"},
+                )
+            )
+
+    assert exc_info.value.code == "invalid_request"
+    assert len(router.calls) == 0
+
+
+@pytest.mark.parametrize("image_count", [0, 1, 4])
+def test_create_video_job_rejects_keyframes_without_two_or_three_images(image_count):
+    backend = AgnesImageBackend(api_key=API_KEY)
+    input_images = [f"https://assets.example.test/keyframe-{index}.png" for index in range(image_count)]
+
+    with respx.mock() as router:
+        with pytest.raises(ProviderError) as exc_info:
+            backend.create_video_job(
+                VideoGenerationRequest(
+                    prompt="Generate a smooth transition between keyframes.",
+                    duration_seconds=5,
+                    input_images=input_images,
+                    parameters={"mode": "keyframes"},
+                )
+            )
+
+    assert exc_info.value.code == "invalid_request"
+    assert len(router.calls) == 0
+
+
 def test_create_video_job_requires_video_id_in_provider_response():
     backend = AgnesImageBackend(api_key=API_KEY)
 

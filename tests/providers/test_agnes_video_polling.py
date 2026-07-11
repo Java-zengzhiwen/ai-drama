@@ -16,6 +16,7 @@ API_KEY = "agnes-video-secret"
 @pytest.mark.parametrize(
     ("provider_status", "expected_status"),
     [
+        ("pending", "submitted"),
         ("queued", "submitted"),
         ("in_progress", "polling"),
         ("processing", "polling"),

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>fun.deltadevalex.ai-drama-web</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__AI_DRAMA_WEB_BIN__</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_ROOT__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AI_DRAMA_RUNTIME_PROVIDER</key>
+    <string>agnes</string>
+    <key>AI_DRAMA_PUBLIC_BASE_URL</key>
+    <string>https://assets.deltadevalex.fun</string>
+    <key>AI_DRAMA_DATA_ROOT</key>
+    <string>__PROJECT_ROOT__/runtime-data</string>
+    <key>AI_DRAMA_SKILLS_ROOT</key>
+    <string>__PROJECT_ROOT__/skills</string>
+    <key>PYTHONUNBUFFERED</key>
+    <string>1</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/ai-drama-web/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/ai-drama-web/stderr.log</string>
+</dict>
+</plist>
