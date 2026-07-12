@@ -44,9 +44,32 @@ Deliver the approved `Supplier -> Models` product through five independently rev
 ## Collaboration
 
 - The main agent is the sole writer and committer.
-- Read-only subagents may audit schema/migration, worker isolation, runtime routing, UI/API fit, and test coverage.
+- Every M6A-M6E stage must use at least two read-only review agents after implementation and automated verification: one specification-compliance reviewer and one technical/security reviewer selected for the stage's risk profile.
+- Additional read-only reviewers may audit schema/migration, worker isolation, runtime routing, UI/API fit, accessibility, and test coverage.
 - Each subagent returns findings only; it may not edit files, expose secrets, or run a real provider request.
-- The main agent reconciles findings against the active plan before commit.
+- The main agent reproduces every blocking finding, adds or identifies regression evidence, implements any accepted correction, reruns affected verification, and requests re-review until both mandatory reviewers return `PASS` with no unresolved blocker.
+- Reviewer conclusions are advisory evidence, not substitutes for tests or main-agent verification. A disputed finding must be resolved against the authority order and documented in the stage report.
+
+Required reviewer outputs are:
+
+```text
+SPEC_REVIEW=PASS | REQUEST_CHANGES
+TECHNICAL_SECURITY_REVIEW=PASS | REQUEST_CHANGES
+BLOCKERS=<NONE or redacted finding list>
+```
+
+## M6D Product Design Approval Gate
+
+M6D production UI implementation is blocked until a Product Design checkpoint is approved by the user. After M6A-M6C APIs are stable, the main agent must:
+
+1. inspect the existing AI Drama screens and the approved `Supplier -> Models` workflows;
+2. use the Product Design workflow to produce exactly three visual directions for the supplier list, supplier detail/code/model management, and project model-binding experience;
+3. present the three directions to the user without modifying production UI code;
+4. record the selected direction, required revisions, responsive behavior, interaction states, and approval evidence in a repository design artifact;
+5. update the M6D implementation plan only when the approved visual target changes its component or test contract;
+6. begin M6D production UI code only after the user returns explicit approval.
+
+M6A-M6C backend implementation is not blocked by this visual gate. M6D may prepare a disposable prototype outside production paths, but the prototype may not contain secrets, call a real Provider, or be presented as implemented product behavior.
 
 ## TDD And Commit Contract
 
@@ -99,6 +122,7 @@ Before each implementation stage:
 3. Confirm all earlier-stage interfaces named under `Interfaces` exist with matching signatures.
 4. Run the earlier stage's focused verifier/tests.
 5. Confirm no real-provider authorization has been inferred from M5 history.
+6. For M6D, confirm the Product Design artifact and explicit user approval exist before any production UI file is created or modified.
 
 If an authoritative artifact or required interface is missing, stop with the active stage's blocked token.
 
@@ -121,6 +145,8 @@ M6E additionally runs `python3 tools/verify_supplier_model_configuration.py`.
 
 ## Review And Merge
 
+- Both mandatory read-only review agents must return `PASS`; unresolved `REQUEST_CHANGES` blocks the stage handoff.
+- The stage report records reviewer roles, reviewed commit SHA, findings, corrections, re-review status, and sanitized evidence.
 - Each stage is pushed under the Review Handoff Policy.
 - No stage merges to `main` without user approval after review.
 - Prefer fast-forward merge; no force push or squash unless explicitly requested.

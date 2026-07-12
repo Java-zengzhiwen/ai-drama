@@ -14,8 +14,26 @@
 - No marketplace, duplication, multi-account, remote management, or real model-test button.
 - Default tests and browser flows deny real network; no real Provider request is authorized.
 - All management errors render `LOCAL_MANAGEMENT_ONLY`; secrets are write-only and masked.
+- Production UI implementation is blocked until Product Design presents exactly three visual directions and the user explicitly approves one recorded visual target.
+- Before stage handoff, at least two read-only review agents must independently return PASS: specification compliance, and technical/security/UX with emphasis on visual-target fidelity, secret masking, ETags, local-only behavior, accessibility, and browser network isolation. The main agent resolves and re-verifies all blockers.
 
 ---
+
+### Task 0: Product Design Approval Checkpoint
+
+**Files:**
+- Create: `docs/superpowers/specs/2026-07-12-m6d-management-ui-visual-design.md`
+- Create: disposable prototype or visual artifacts only under the Product Design workflow's approved non-production location
+
+**Interfaces:**
+- Consumes stable M6A-C API contracts and existing AI Drama screens.
+- Produces a user-approved visual target covering supplier list, supplier config/secret/code, stable model management, project defaults/overrides, responsive behavior, error/conflict/loading/empty states, and accessibility expectations.
+
+- [ ] Use Product Design context and ideation workflows to inspect the existing product and produce exactly three visual directions without modifying production UI files.
+- [ ] Present all three directions to the user and wait for an explicit selection or revision request.
+- [ ] Record the selected direction, rejected alternatives, interaction/state requirements, visual references, and approval evidence in the design artifact.
+- [ ] Run document placeholder/secret/network scans, commit the approved visual design, and stop if explicit approval is absent.
+- [ ] Reconcile Tasks 1-6 against the approved target; if component or test contracts change, revise this plan and obtain plan approval before implementation.
 
 ### Task 1: Typed Supplier API And Navigation
 
@@ -105,4 +123,5 @@
 - [ ] Run M6A-C focused regression plus full baseline.
 - [ ] Scan built assets, logs, fixtures, and git diff for secrets/provider endpoints.
 - [ ] Confirm no schema/backend capability changed in this branch.
+- [ ] Dispatch the two mandatory read-only reviewers; record findings and resolve/retest/re-review every blocker until both return PASS.
 - [ ] Commit `test: verify m6d management ui` and push `feat/m6d-management-ui`.

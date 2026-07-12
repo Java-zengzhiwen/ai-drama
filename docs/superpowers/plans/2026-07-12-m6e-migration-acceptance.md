@@ -13,6 +13,7 @@
 - M6A-D are approved dependencies; M6E adds no new supplier capability.
 - No real provider request, production rollout, or irreversible legacy deletion.
 - All SUP-001..SUP-028 criteria require explicit PASS/FAIL/SKIPPED evidence; required criteria may not be skipped.
+- Before M6 completion handoff, at least two read-only review agents must independently return PASS: specification/acceptance coverage, and technical/security with emphasis on migration recovery, verifier determinism, full regression, rollback, and evidence redaction. The main agent resolves and re-verifies all blockers.
 
 ---
 
@@ -88,5 +89,6 @@
 - [ ] Confirm M6A-E branches/commits are reviewed and merged in order.
 - [ ] Confirm verifier token is `M6_SUPPLIER_MODEL_CONFIGURATION_PASS` and all required criteria PASS.
 - [ ] Confirm no legacy field cleanup or real-provider execution is bundled.
+- [ ] Dispatch the two mandatory read-only reviewers; record findings and resolve/retest/re-review every blocker until both return PASS.
 - [ ] Produce Review Handoff with repository, branch, commit, report path, compare/PR URL, and exact verification summary.
 - [ ] Stop for user approval; only after merge may governance record `M6_COMPLETE`.

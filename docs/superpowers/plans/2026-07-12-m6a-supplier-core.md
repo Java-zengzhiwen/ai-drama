@@ -14,6 +14,7 @@
 - Default tests deny real network; no provider request is authorized.
 - Existing global Agnes/OpenAI runtime paths remain unchanged behind feature flags.
 - Only the main agent writes; preserve the documented M6A rollback point.
+- Before stage handoff, at least two read-only review agents must independently return PASS: specification compliance, and technical/security with emphasis on schema, credential recovery, Worker isolation, and loopback enforcement. The main agent resolves and re-verifies all blockers.
 
 ---
 
@@ -117,4 +118,5 @@
 - [ ] **Step 2: Run the M1-M5/full baseline from the governance contract.**
 - [ ] **Step 3: Scan tracked diff and logs for secrets, signed URLs, unexpected endpoints, placeholders, and real-network attempts.**
 - [ ] **Step 4: Document feature-flag rollback, schema-backup recovery, commands/results, and exact base/head SHAs.**
-- [ ] **Step 5: Commit** `test: verify m6a supplier core` and push `feat/m6a-supplier-core`.
+- [ ] **Step 5: Dispatch the two mandatory read-only reviewers** against the verified commit candidate; record their required outputs and resolve/retest/re-review every blocker until both return PASS.
+- [ ] **Step 6: Commit** `test: verify m6a supplier core` and push `feat/m6a-supplier-core`.

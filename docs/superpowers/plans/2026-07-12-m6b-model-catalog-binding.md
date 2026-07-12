@@ -13,6 +13,7 @@
 - M6A is an approved dependency; default real-network denial remains active.
 - Implement SUP-010..SUP-015, SUP-018, SUP-024, SUP-026..SUP-028.
 - No production adapter/poller routing or management UI in M6B.
+- Before stage handoff, at least two read-only review agents must independently return PASS: specification compliance, and technical/security with emphasis on stable identity, revision semantics, resolver determinism, snapshots, ETags, and idempotency. The main agent resolves and re-verifies all blockers.
 
 ---
 
@@ -94,4 +95,5 @@
 - [ ] Map results to SUP-010..SUP-015 and SUP-018.
 - [ ] Verify rollback stops binding/snapshot writes while retaining M6A data and legacy paths.
 - [ ] Run placeholder/secret/network/diff scans.
+- [ ] Dispatch the two mandatory read-only reviewers; record findings and resolve/retest/re-review every blocker until both return PASS.
 - [ ] Commit `test: verify m6b model binding` and push `feat/m6b-model-catalog-binding`.

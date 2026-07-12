@@ -13,6 +13,7 @@
 - M6A and M6B interfaces are fixed dependencies.
 - Implement SUP-016..SUP-021, SUP-025..SUP-028.
 - No management UI or real provider request.
+- Before stage handoff, at least two read-only review agents must independently return PASS: specification compliance, and technical/security with emphasis on snapshot routing, poller restart safety, legacy compatibility, rerun credentials, redaction, and rollback. The main agent resolves and re-verifies all blockers.
 
 ---
 
@@ -111,4 +112,5 @@
 - [ ] Assert zero external network and no secret/signed-URL leakage.
 - [ ] Exercise feature-flag rollback to legacy adapters using the same migrated store.
 - [ ] Document SUP-016..SUP-021 and SUP-025 coverage with exact commands/SHAs.
+- [ ] Dispatch the two mandatory read-only reviewers; record findings and resolve/retest/re-review every blocker until both return PASS.
 - [ ] Commit `test: verify m6c adapter cutover` and push `feat/m6c-adapter-cutover`.
