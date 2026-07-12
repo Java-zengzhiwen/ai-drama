@@ -10,6 +10,7 @@ from ai_drama_runtime.store import RuntimeStore
 
 from .config import Settings
 from .providers.factory import create_generation_backend
+from .middleware.local_management import is_local_management_request, is_management_path
 from .routers.asset_delivery import router as asset_delivery_router
 from .routers.asset_requirements import router as asset_requirements_router
 from .routers.assets import router as assets_router
@@ -18,6 +19,7 @@ from .routers.profiles import router as profiles_router
 from .routers.projects import router as projects_router
 from .routers.scripts import router as scripts_router
 from .routers.settings import router as settings_router
+from .routers.suppliers import router as suppliers_router
 from .routers.shot_prompts import router as shot_prompts_router
 from .routers.storyboards import router as storyboards_router
 from .secrets import LocalSecretStore
@@ -94,6 +96,21 @@ def create_app(
     app.state.repo_root = repo_root
     app.state.max_asset_upload_bytes = _max_asset_upload_bytes_from_env()
     app.state.secret_store = LocalSecretStore(settings.data_root)
+
+    @app.middleware("http")
+    async def local_management_guard(request, call_next):
+        if is_management_path(request.url.path) and not is_local_management_request(
+            request, settings.trusted_management_proxy_cidrs
+        ):
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "error_code": "LOCAL_MANAGEMENT_ONLY",
+                    "error_message": "supplier and project model management is available only from the local machine",
+                },
+            )
+        return await call_next(request)
+
     app.include_router(asset_delivery_router)
     app.include_router(projects_router)
     app.include_router(asset_requirements_router)
@@ -104,6 +121,7 @@ def create_app(
     app.include_router(shot_prompts_router)
     app.include_router(storyboards_router)
     app.include_router(settings_router)
+    app.include_router(suppliers_router)
 
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(_request, exc: RequestValidationError):

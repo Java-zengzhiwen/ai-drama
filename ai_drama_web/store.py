@@ -260,6 +260,12 @@ class ProductStore:
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS supplier_creation_requests (
+              idempotency_key TEXT PRIMARY KEY,
+              request_hash TEXT NOT NULL,
+              supplier_id TEXT NOT NULL REFERENCES suppliers(supplier_id) ON DELETE RESTRICT,
+              created_at TEXT NOT NULL
+            );
             """
         )
         self._ensure_column("asset_bindings", "is_current", "INTEGER NOT NULL DEFAULT 0")
@@ -456,6 +462,79 @@ class ProductStore:
             (config_revision_id,),
         ).fetchone()
         return None if row is None else ConfigRevisionRecord(**dict(row))
+
+    def update_supplier(
+        self, supplier_id, *, display_name=None, enabled=None, expected_revision
+    ):
+        supplier = self.get_supplier(supplier_id)
+        if supplier is None:
+            raise NotFound("supplier not found: %s" % supplier_id)
+        if supplier.revision != expected_revision:
+            raise RevisionConflict("supplier revision conflict")
+        next_revision = expected_revision + 1
+        updated_at = now_iso()
+        self.conn.execute(
+            """
+            UPDATE suppliers
+            SET display_name = ?, enabled = ?, revision = ?, updated_at = ?
+            WHERE supplier_id = ?
+            """,
+            (
+                supplier.display_name if display_name is None else display_name,
+                supplier.enabled if enabled is None else int(enabled),
+                next_revision,
+                updated_at,
+                supplier_id,
+            ),
+        )
+        self.conn.commit()
+        return self.get_supplier(supplier_id)
+
+    def restore_builtin_supplier_version(self, supplier_id, *, expected_revision):
+        supplier = self.get_supplier(supplier_id)
+        if supplier is None:
+            raise NotFound("supplier not found: %s" % supplier_id)
+        if supplier.revision != expected_revision:
+            raise RevisionConflict("supplier revision conflict")
+        row = self.conn.execute(
+            """
+            SELECT supplier_version_id
+            FROM supplier_versions
+            WHERE supplier_id = ? AND built_in = 1
+            ORDER BY revision DESC
+            LIMIT 1
+            """,
+            (supplier_id,),
+        ).fetchone()
+        if row is None:
+            raise NotFound("built-in supplier version not found")
+        self.conn.execute(
+            """
+            UPDATE suppliers
+            SET current_supplier_version_id = ?, revision = ?, updated_at = ?
+            WHERE supplier_id = ?
+            """,
+            (row["supplier_version_id"], expected_revision + 1, now_iso(), supplier_id),
+        )
+        self.conn.commit()
+        return self.get_supplier(supplier_id)
+
+    def get_supplier_creation_request(self, idempotency_key):
+        return self.conn.execute(
+            "SELECT * FROM supplier_creation_requests WHERE idempotency_key = ?",
+            (idempotency_key,),
+        ).fetchone()
+
+    def record_supplier_creation_request(self, idempotency_key, request_hash, supplier_id):
+        self.conn.execute(
+            """
+            INSERT INTO supplier_creation_requests
+            (idempotency_key, request_hash, supplier_id, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (idempotency_key, request_hash, supplier_id, now_iso()),
+        )
+        self.conn.commit()
 
     def _ensure_column(self, table_name, column_name, definition):
         rows = self.conn.execute("PRAGMA table_info(%s)" % table_name).fetchall()
