@@ -66,6 +66,7 @@ try {
 const compiledCode = result.outputFiles[0].text;
 const context = vm.createContext({}, { codeGeneration: { strings: false, wasm: false } });
 let vendor;
+let runtimeExports;
 try {
   new vm.Script(
     "globalThis.module = { exports: {} }; globalThis.exports = globalThis.module.exports;",
@@ -77,11 +78,28 @@ try {
     { filename: "supplier-manifest.cjs" },
   ).runInContext(context, { timeout: 1000 });
   vendor = vendorJson ? JSON.parse(vendorJson) : undefined;
+  const exportsJson = new vm.Script(
+    "JSON.stringify(Object.keys(module.exports))",
+    { filename: "supplier-exports.cjs" },
+  ).runInContext(context, { timeout: 1000 });
+  runtimeExports = JSON.parse(exportsJson);
 } catch {
   fail("SUPPLIER_VALIDATION_FAILED", "supplier module failed local validation");
 }
 if (!vendor) fail("MISSING_VENDOR_EXPORT", "supplier must export vendor");
 if (!validateVendor(vendor)) fail("INVALID_VENDOR_MANIFEST", "vendor manifest is invalid");
+const requiredExports = {
+  text: ["textRequest"],
+  image: ["imageRequest"],
+  video: ["videoSubmit", "videoPoll", "videoFetch"],
+};
+for (const model of vendor.models) {
+  for (const exportName of requiredExports[model.capability] || []) {
+    if (!runtimeExports.includes(exportName)) {
+      fail("MISSING_RUNTIME_EXPORT", "supplier is missing required runtime export");
+    }
+  }
+}
 
 process.stdout.write(JSON.stringify({
   ok: true,

@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test src/*.test.ts"
+    "test": "node --import ./src/network-denial.mjs --test src/*.test.ts"
   },
   "dependencies": {
     "esbuild": "0.25.12"

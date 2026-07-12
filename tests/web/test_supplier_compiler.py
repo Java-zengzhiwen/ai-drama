@@ -106,3 +106,21 @@ def test_compile_supplier_validates_required_contract(tmp_path, source, code):
         compile_supplier(source, runtime_store=_runtime(tmp_path))
 
     assert exc_info.value.code == code
+
+
+def test_compile_supplier_requires_exports_for_declared_model_capabilities(tmp_path):
+    source = VALID_SOURCE.replace(
+        "models: []",
+        'models: [{ supplierModelId: "model-1", providerModelName: "model-1", '
+        'displayName: "Model 1", capability: "text" }]',
+    ).replace(
+        "export async function textRequest(request: { prompt: string }) {\n"
+        "  return { text: request.prompt };\n"
+        "}",
+        "",
+    )
+
+    with pytest.raises(SupplierCompileError) as exc_info:
+        compile_supplier(source, runtime_store=_runtime(tmp_path))
+
+    assert exc_info.value.code == "MISSING_RUNTIME_EXPORT"
