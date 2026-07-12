@@ -180,3 +180,44 @@ def test_restore_builtin_switches_pointer_without_deleting_history(tmp_path):
                 overlay.supplier_version_id
             ).source_hash
         ) == "overlay-hash"
+
+
+def test_restore_builtin_synchronizes_manifest_catalog_atomically(tmp_path):
+    source = """
+export const vendor = {
+  id: "restore", version: "1", name: "Restore", author: "Test",
+  adapterContractVersion: "ai-drama-supplier-v1",
+  helperApiVersion: "ai-drama-helper-v1",
+  rateLimitBucketKey: "restore", inputs: [], inputValues: {},
+  models: [{ supplierModelId: "55555555-5555-5555-5555-555555555555", providerModelName: "restore-text", displayName: "Restore Text", capability: "text" }]
+};
+export async function textRequest() { return { text: "fake" }; }
+"""
+    with _client(tmp_path) as client:
+        supplier = client.get("/api/suppliers").json()[0]
+        saved = client.put(
+            f"/api/suppliers/{supplier['supplier_id']}/code",
+            json={"source": source},
+            headers={"If-Match": '"supplier-1"'},
+        )
+        assert saved.status_code == 200, saved.text
+        before = client.get(f"/api/suppliers/{supplier['supplier_id']}/models").json()
+        assert len(before) == 1 and before[0]["enabled"] == 1
+
+        restored = client.post(
+            f"/api/suppliers/{supplier['supplier_id']}/restore-built-in",
+            headers={"If-Match": '"supplier-2"'},
+        )
+        assert restored.status_code == 200, restored.text
+        after = client.get(f"/api/suppliers/{supplier['supplier_id']}/models")
+        assert after.headers["etag"] == '"model-catalog-2"'
+        assert len(after.json()) == 1 and after.json()[0]["enabled"] == 0
+        assert after.json()[0]["model_revision_id"] == before[0]["model_revision_id"]
+
+        stale = client.post(
+            f"/api/suppliers/{supplier['supplier_id']}/restore-built-in",
+            headers={"If-Match": '"supplier-2"'},
+        )
+        assert stale.status_code == 409
+        unchanged = client.get(f"/api/suppliers/{supplier['supplier_id']}/models")
+        assert unchanged.headers["etag"] == '"model-catalog-2"'

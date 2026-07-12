@@ -1375,36 +1375,42 @@ class ProductStore:
         return self.get_supplier(supplier_id)
 
     def restore_builtin_supplier_version(self, supplier_id, *, expected_revision):
-        supplier = self.get_supplier(supplier_id)
-        if supplier is None:
-            raise NotFound("supplier not found: %s" % supplier_id)
-        if supplier.revision != expected_revision:
-            raise RevisionConflict("supplier revision conflict")
-        row = self.conn.execute(
-            """
-            SELECT supplier_version_id
-            FROM supplier_versions
-            WHERE supplier_id = ? AND built_in = 1
-            ORDER BY revision DESC
-            LIMIT 1
-            """,
-            (supplier_id,),
-        ).fetchone()
-        if row is None:
-            raise NotFound("built-in supplier version not found")
-        cursor = self.conn.execute(
-            """
-            UPDATE suppliers
-            SET current_supplier_version_id = ?, revision = revision + 1, updated_at = ?
-            WHERE supplier_id = ? AND revision = ?
-            """,
-            (row["supplier_version_id"], now_iso(), supplier_id, expected_revision),
-        )
-        self.conn.commit()
-        if cursor.rowcount == 0:
-            if self.get_supplier(supplier_id) is None:
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            supplier = self.get_supplier(supplier_id)
+            if supplier is None:
                 raise NotFound("supplier not found: %s" % supplier_id)
-            raise RevisionConflict("supplier revision conflict")
+            if supplier.revision != expected_revision:
+                raise RevisionConflict("supplier revision conflict")
+            row = self.conn.execute(
+                """
+                SELECT * FROM supplier_versions
+                WHERE supplier_id = ? AND built_in = 1
+                ORDER BY revision DESC LIMIT 1
+                """,
+                (supplier_id,),
+            ).fetchone()
+            if row is None or not row["manifest_object_id"]:
+                raise NotFound("built-in supplier version not found")
+            manifest_text = self.runtime.read_text(row["manifest_object_id"])
+            if hashlib.sha256(manifest_text.encode("utf-8")).hexdigest() != row["manifest_hash"]:
+                raise NotFound("built-in supplier manifest unavailable")
+            manifest = json.loads(manifest_text)
+            cursor = self.conn.execute(
+                """
+                UPDATE suppliers
+                SET current_supplier_version_id = ?, revision = revision + 1, updated_at = ?
+                WHERE supplier_id = ? AND revision = ?
+                """,
+                (row["supplier_version_id"], now_iso(), supplier_id, expected_revision),
+            )
+            if cursor.rowcount != 1:
+                raise RevisionConflict("supplier revision conflict")
+            self._sync_manifest_models_locked(supplier_id, manifest.get("models", []))
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
         return self.get_supplier(supplier_id)
 
     def get_supplier_creation_request(self, idempotency_key):
