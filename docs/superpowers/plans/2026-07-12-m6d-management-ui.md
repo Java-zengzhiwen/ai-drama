@@ -15,6 +15,7 @@
 - Default tests and browser flows deny real network; no real Provider request is authorized.
 - All management errors render `LOCAL_MANAGEMENT_ONLY`; secrets are write-only and masked.
 - Production UI implementation is blocked until Product Design presents exactly three visual directions and the user explicitly approves one recorded visual target.
+- The approved visual target is `docs/superpowers/specs/2026-07-12-m6d-management-ui-visual-design.md`, backed by `docs/product-design/m6d/assets/selected-direction-supplier-operations-workbench.png`; implementation must preserve its locked hierarchy and tokens.
 - Before stage handoff, at least two read-only review agents must independently return PASS: specification compliance, and technical/security/UX with emphasis on visual-target fidelity, secret masking, ETags, local-only behavior, accessibility, and browser network isolation. The main agent resolves and re-verifies all blockers.
 
 ---
