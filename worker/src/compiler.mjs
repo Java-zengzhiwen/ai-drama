@@ -64,14 +64,22 @@ try {
 }
 
 const compiledCode = result.outputFiles[0].text;
-const moduleObject = { exports: {} };
-const context = vm.createContext({ module: moduleObject, exports: moduleObject.exports });
+const context = vm.createContext({}, { codeGeneration: { strings: false, wasm: false } });
+let vendor;
 try {
+  new vm.Script(
+    "globalThis.module = { exports: {} }; globalThis.exports = globalThis.module.exports;",
+    { filename: "supplier-bootstrap.cjs" },
+  ).runInContext(context, { timeout: 1000 });
   new vm.Script(compiledCode, { filename: "supplier.cjs" }).runInContext(context, { timeout: 1000 });
+  const vendorJson = new vm.Script(
+    "JSON.stringify(module.exports.vendor)",
+    { filename: "supplier-manifest.cjs" },
+  ).runInContext(context, { timeout: 1000 });
+  vendor = vendorJson ? JSON.parse(vendorJson) : undefined;
 } catch {
   fail("SUPPLIER_VALIDATION_FAILED", "supplier module failed local validation");
 }
-const vendor = moduleObject.exports.vendor;
 if (!vendor) fail("MISSING_VENDOR_EXPORT", "supplier must export vendor");
 if (!validateVendor(vendor)) fail("INVALID_VENDOR_MANIFEST", "vendor manifest is invalid");
 

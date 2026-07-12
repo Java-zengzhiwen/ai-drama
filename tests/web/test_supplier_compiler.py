@@ -77,6 +77,19 @@ def test_compile_supplier_returns_safe_line_column_diagnostic(tmp_path):
     assert len(exc_info.value.message) < 300
 
 
+def test_compile_validation_blocks_constructor_chain_host_escape(tmp_path):
+    source = (
+        "const host = module.constructor.constructor('return pro' + 'cess')();\n"
+        + VALID_SOURCE
+    )
+
+    with pytest.raises(SupplierCompileError) as exc_info:
+        compile_supplier(source, runtime_store=_runtime(tmp_path))
+
+    assert exc_info.value.code == "SUPPLIER_VALIDATION_FAILED"
+    assert "process" not in exc_info.value.message.lower()
+
+
 @pytest.mark.parametrize(
     "source,code",
     [
@@ -93,4 +106,3 @@ def test_compile_supplier_validates_required_contract(tmp_path, source, code):
         compile_supplier(source, runtime_store=_runtime(tmp_path))
 
     assert exc_info.value.code == code
-
