@@ -25,6 +25,7 @@ from .services.asset_delivery import AssetDeliveryService
 from .services.generation_execution import GenerationExecutionService
 from .services.generation_poller import GenerationPoller
 from .store import ProductStore
+from .suppliers.credentials import SupplierCredentialStore
 
 DEFAULT_MAX_ASSET_UPLOAD_BYTES = 10 * 1024 * 1024
 
@@ -47,6 +48,10 @@ def create_app(
         app.state.runtime_store = runtime_store
         product_store = ProductStore(runtime_store)
         app.state.product_store = product_store
+        app.state.supplier_credential_store = SupplierCredentialStore(
+            product_store, settings.data_root
+        )
+        app.state.supplier_credential_recovery = app.state.supplier_credential_store.recover()
         if getattr(app.state, "generation_backend", None) is None:
             try:
                 app.state.generation_backend = create_generation_backend(settings, app.state.secret_store)
