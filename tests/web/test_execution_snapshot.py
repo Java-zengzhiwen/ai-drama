@@ -14,7 +14,7 @@ from ai_drama_web.suppliers.snapshots import (
     persist_snapshot,
     snapshot_hash,
 )
-from tests.web.model_test_support import create_model
+from tests.web.model_test_support import create_model, install_test_supplier_runtime
 
 
 def _resolved(tmp_path):
@@ -22,6 +22,8 @@ def _resolved(tmp_path):
     store = ProductStore(runtime)
     project = store.create_project(name="Snapshot")
     supplier = store.list_suppliers()[0]
+    install_test_supplier_runtime(store, supplier)
+    supplier = store.get_supplier(supplier.supplier_id)
     model = create_model(store, supplier, capability="text", name="snapshot-text", catalog_revision=0, key="snapshot")
     ModelBindingService(store).replace(
         project.project_id,
@@ -37,14 +39,14 @@ def test_snapshot_is_canonical_complete_and_content_addressed(tmp_path):
     snapshot = SnapshotBuilder(store).build(
         resolved,
         credential_resolution_mode="current",
-        resolved_credential_version_id="credential-version",
+        resolved_credential_version_id="",
         resolved_constraints={"temperature": 0.3},
         worker_limits={"timeout_seconds": 30, "max_output_bytes": 4194304},
         created_at="2026-07-13T00:00:00.000000Z",
     )
     raw = canonical_snapshot_json(snapshot)
     assert raw == canonical_snapshot_json(snapshot)
-    assert "credential-version" in raw
+    assert '"resolved_credential_version_id":""' in raw
     assert "plaintext" not in raw
     assert snapshot.supplier_model_id == resolved.model.supplier_model_id
     assert snapshot.model_revision_id == resolved.revision.model_revision_id
@@ -66,7 +68,7 @@ def test_material_fingerprint_changes_snapshot_hash(tmp_path):
     original = SnapshotBuilder(store).build(
         resolved,
         credential_resolution_mode="current",
-        resolved_credential_version_id="credential-version",
+        resolved_credential_version_id="",
         resolved_constraints={},
         worker_limits={"timeout_seconds": 30},
         created_at="2026-07-13T00:00:00.000000Z",
@@ -100,6 +102,7 @@ def test_historical_snapshot_keeps_old_model_revision_and_missing_object_fails_c
         definition={},
         expected_catalog_revision=1,
         expected_model_revision=1,
+        acknowledged_binding_count=1,
     )
     loaded = load_snapshot(store, record.snapshot_hash)
     assert loaded.model_revision_id == old.model_revision_id
@@ -131,3 +134,69 @@ def test_snapshotted_model_cannot_be_physically_deleted(tmp_path):
             expected_catalog_revision=1,
             expected_model_revision=1,
         )
+
+
+def test_snapshot_does_not_inflate_affected_project_binding_acknowledgement(tmp_path):
+    _runtime, store, resolved = _resolved(tmp_path)
+    snapshot = SnapshotBuilder(store).build(
+        resolved,
+        credential_resolution_mode="current",
+        resolved_credential_version_id="",
+        resolved_constraints={},
+        worker_limits={},
+        created_at="2026-07-13T00:00:00.000000Z",
+    )
+    persist_snapshot(store, snapshot)
+    revised = ModelCatalogService(store).revise_model(
+        resolved.model.supplier_model_id,
+        provider_model_name="snapshot-renamed",
+        display_name="Snapshot Renamed",
+        capability="text",
+        definition={},
+        expected_catalog_revision=1,
+        expected_model_revision=1,
+        acknowledged_binding_count=1,
+    )
+    assert revised.revision == 2
+
+
+def test_snapshot_freezes_manifest_rate_bucket_and_runtime_mismatch_fails_closed(tmp_path):
+    _runtime, store, resolved = _resolved(tmp_path)
+    version = store.get_supplier_version(resolved.supplier.current_supplier_version_id)
+    store.conn.execute(
+        "UPDATE supplier_versions SET rate_limit_bucket_key = 'custom-bucket' WHERE supplier_version_id = ?",
+        (version.supplier_version_id,),
+    )
+    store.conn.commit()
+    snapshot = SnapshotBuilder(store).build(
+        resolved,
+        credential_resolution_mode="current",
+        resolved_credential_version_id="",
+        resolved_constraints={},
+        worker_limits={},
+        created_at="2026-07-13T00:00:00.000000Z",
+    )
+    assert snapshot.rate_limit_bucket_key == "custom-bucket"
+    incompatible = replace(snapshot, worker_runtime_version="unavailable-runtime")
+    with pytest.raises(SupplierRuntimeUnavailable, match="SUPPLIER_RUNTIME_UNAVAILABLE"):
+        persist_snapshot(store, incompatible)
+
+
+def test_snapshot_rejects_forged_immutable_fields_and_unknown_credential(tmp_path):
+    _runtime, store, resolved = _resolved(tmp_path)
+    snapshot = SnapshotBuilder(store).build(
+        resolved,
+        credential_resolution_mode="current",
+        resolved_credential_version_id="",
+        resolved_constraints={},
+        worker_limits={},
+        created_at="2026-07-13T00:00:00.000000Z",
+    )
+    forged = (
+        replace(snapshot, provider_model_name="attacker-model"),
+        replace(snapshot, compiled_artifact_hash="0" * 64),
+        replace(snapshot, resolved_credential_version_id="nonexistent-credential"),
+    )
+    for candidate in forged:
+        with pytest.raises(SupplierRuntimeUnavailable, match="SUPPLIER_RUNTIME_UNAVAILABLE"):
+            persist_snapshot(store, candidate)

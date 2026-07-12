@@ -6,6 +6,14 @@ class RevisionConflict(ValueError):
     pass
 
 
+class ModelNameConflict(ValueError):
+    pass
+
+
+class ModelReferenced(ValueError):
+    pass
+
+
 @dataclass(frozen=True)
 class SupplierRecord:
     supplier_id: str
@@ -34,6 +42,8 @@ class SupplierVersionRecord:
     compiled_artifact_object_id: str
     compiled_artifact_hash: str
     manifest_hash: str
+    manifest_object_id: str
+    rate_limit_bucket_key: str
     adapter_contract_version: str
     worker_protocol_version: str
     worker_runtime_version: str

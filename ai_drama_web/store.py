@@ -20,11 +20,15 @@ from .models import (
 )
 from .suppliers.models import (
     ConfigRevisionRecord,
+    CredentialVersionRecord,
     RevisionConflict,
     SupplierRecord,
     SupplierModelRecord,
     SupplierModelRevisionRecord,
     ProjectModelBindingRecord,
+    ModelNameConflict,
+    ModelReferenced,
+    stable_builtin_model_id,
     SupplierVersionRecord,
 )
 
@@ -230,6 +234,8 @@ class ProductStore:
               compiled_artifact_object_id TEXT NOT NULL,
               compiled_artifact_hash TEXT NOT NULL,
               manifest_hash TEXT NOT NULL,
+              manifest_object_id TEXT NOT NULL DEFAULT '',
+              rate_limit_bucket_key TEXT NOT NULL DEFAULT '',
               adapter_contract_version TEXT NOT NULL DEFAULT '',
               worker_protocol_version TEXT NOT NULL DEFAULT '',
               worker_runtime_version TEXT NOT NULL DEFAULT '',
@@ -305,9 +311,9 @@ class ProductStore:
             );
             CREATE TABLE IF NOT EXISTS project_model_bindings (
               project_id TEXT PRIMARY KEY REFERENCES projects(project_id) ON DELETE RESTRICT,
-              default_text_model_id TEXT NOT NULL DEFAULT '',
-              default_image_model_id TEXT NOT NULL DEFAULT '',
-              default_video_model_id TEXT NOT NULL DEFAULT '',
+              default_text_model_id TEXT REFERENCES supplier_models(supplier_model_id) ON DELETE RESTRICT,
+              default_image_model_id TEXT REFERENCES supplier_models(supplier_model_id) ON DELETE RESTRICT,
+              default_video_model_id TEXT REFERENCES supplier_models(supplier_model_id) ON DELETE RESTRICT,
               binding_set_revision INTEGER NOT NULL DEFAULT 0,
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
@@ -356,6 +362,8 @@ class ProductStore:
         self._ensure_column("supplier_versions", "compiler_version", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("supplier_versions", "compiler_options_hash", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("supplier_versions", "helper_api_version", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("supplier_versions", "manifest_object_id", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("supplier_versions", "rate_limit_bucket_key", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("suppliers", "model_catalog_revision", "INTEGER NOT NULL DEFAULT 0")
         self._backfill_asset_binding_scope()
         self._normalize_current_asset_bindings()
@@ -378,10 +386,190 @@ class ProductStore:
             (M6B_MODEL_CATALOG_MIGRATION_ID,),
         ).fetchone():
             return
+        for supplier in self.list_suppliers():
+            if not supplier.current_supplier_version_id:
+                continue
+            version = self.get_supplier_version(supplier.current_supplier_version_id)
+            if version is None:
+                continue
+            try:
+                source = self.runtime.read_text(version.source_object_id)
+                vendor = self._read_migration_vendor(source)
+            except Exception as exc:
+                raise RuntimeError("M6B_MANIFEST_MIGRATION_FAILED") from exc
+            manifest_text = json.dumps(
+                vendor,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            manifest_object_id = self.runtime.write_text_object(manifest_text)
+            self.conn.execute(
+                """
+                UPDATE supplier_versions
+                SET manifest_object_id = ?, rate_limit_bucket_key = ?
+                WHERE supplier_version_id = ?
+                """,
+                (
+                    manifest_object_id,
+                    vendor["rateLimitBucketKey"],
+                    version.supplier_version_id,
+                ),
+            )
+            self._sync_manifest_models_locked(supplier.supplier_id, vendor.get("models", []))
         self.conn.execute(
             "INSERT INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)",
             (M6B_MODEL_CATALOG_MIGRATION_ID, now_iso()),
         )
+
+    def _read_migration_vendor(self, source):
+        prefix = "export const vendor = "
+        stripped = source.strip()
+        if stripped.startswith(prefix) and stripped.endswith(";"):
+            try:
+                return json.loads(stripped[len(prefix) : -1])
+            except json.JSONDecodeError:
+                pass
+        from .suppliers.compiler import compile_supplier
+
+        return compile_supplier(source, runtime_store=self.runtime).vendor
+
+    def _sync_manifest_models_locked(self, supplier_id, declarations):
+        changed = False
+        active_ids = set()
+        created_at = now_iso()
+        for declaration in declarations:
+            capability = str(declaration.get("capability") or "")
+            provider_name = str(
+                declaration.get("providerModelName")
+                or declaration.get("provider_model_name")
+                or ""
+            )
+            display_name = str(
+                declaration.get("displayName")
+                or declaration.get("display_name")
+                or provider_name
+            )
+            if capability not in {"text", "image", "video"} or not provider_name:
+                raise ValueError("invalid supplier model declaration")
+            declared_id = declaration.get("supplierModelId") or declaration.get("supplier_model_id")
+            try:
+                supplier_model_id = uuid.UUID(str(declared_id)).hex if declared_id else ""
+            except ValueError:
+                supplier_model_id = ""
+            if not supplier_model_id:
+                declaration_key = str(declared_id or "%s:%s" % (capability, provider_name))
+                supplier_model_id = stable_builtin_model_id(supplier_id, declaration_key)
+            active_ids.add(supplier_model_id)
+            normalized_declaration = dict(declaration)
+            normalized_declaration["supplierModelId"] = supplier_model_id
+            definition_text = json.dumps(
+                normalized_declaration,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+            definition_object_id = self.runtime.write_text_object(definition_text)
+            definition_hash = hashlib.sha256(definition_text.encode("utf-8")).hexdigest()
+            model = self.get_supplier_model(supplier_model_id)
+            duplicate = self.find_active_model_name(
+                supplier_id, capability, provider_name, exclude_id=supplier_model_id
+            )
+            if duplicate:
+                raise ModelNameConflict("MODEL_NAME_CONFLICT")
+            if model is None:
+                model_revision_id = uuid.uuid4().hex
+                self.conn.execute(
+                    """
+                    INSERT INTO supplier_models
+                    (supplier_model_id, supplier_id, current_model_revision_id, source,
+                     enabled, revision, created_at, updated_at)
+                    VALUES (?, ?, ?, 'built_in', 1, 1, ?, ?)
+                    """,
+                    (supplier_model_id, supplier_id, model_revision_id, created_at, created_at),
+                )
+                self.conn.execute(
+                    """
+                    INSERT INTO supplier_model_revisions
+                    (model_revision_id, supplier_model_id, revision, provider_model_name,
+                     display_name, capability, definition_object_id, definition_hash, created_at)
+                    VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        model_revision_id,
+                        supplier_model_id,
+                        provider_name,
+                        display_name,
+                        capability,
+                        definition_object_id,
+                        definition_hash,
+                        created_at,
+                    ),
+                )
+                changed = True
+                continue
+            if model.source != "built_in":
+                raise ModelNameConflict("MODEL_IDENTITY_CONFLICT")
+            current = self.get_supplier_model_revision(model.current_model_revision_id)
+            if (
+                current.provider_model_name != provider_name
+                or current.display_name != display_name
+                or current.capability != capability
+                or current.definition_hash != definition_hash
+                or not model.enabled
+            ):
+                next_revision = model.revision + 1
+                model_revision_id = uuid.uuid4().hex
+                self.conn.execute(
+                    """
+                    INSERT INTO supplier_model_revisions
+                    (model_revision_id, supplier_model_id, revision, provider_model_name,
+                     display_name, capability, definition_object_id, definition_hash, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        model_revision_id,
+                        supplier_model_id,
+                        next_revision,
+                        provider_name,
+                        display_name,
+                        capability,
+                        definition_object_id,
+                        definition_hash,
+                        created_at,
+                    ),
+                )
+                self.conn.execute(
+                    """
+                    UPDATE supplier_models
+                    SET current_model_revision_id = ?, enabled = 1,
+                        revision = ?, updated_at = ?
+                    WHERE supplier_model_id = ?
+                    """,
+                    (model_revision_id, next_revision, created_at, supplier_model_id),
+                )
+                changed = True
+        for model in self.list_supplier_models(supplier_id):
+            if model.source == "built_in" and model.supplier_model_id not in active_ids and model.enabled:
+                self.conn.execute(
+                    """
+                    UPDATE supplier_models SET enabled = 0, revision = revision + 1, updated_at = ?
+                    WHERE supplier_model_id = ?
+                    """,
+                    (created_at, model.supplier_model_id),
+                )
+                changed = True
+        if changed:
+            self.conn.execute(
+                """
+                UPDATE suppliers
+                SET model_catalog_revision = model_catalog_revision + 1, updated_at = ?
+                WHERE supplier_id = ?
+                """,
+                (created_at, supplier_id),
+            )
 
     def _apply_supplier_core_migration(self):
         if self.conn.execute(
@@ -547,6 +735,8 @@ class ProductStore:
                 raise NotFound("supplier not found: %s" % supplier_id)
             if supplier.model_catalog_revision != expected_catalog_revision:
                 raise RevisionConflict("model catalog revision conflict")
+            if self.find_active_model_name(supplier_id, capability, provider_model_name):
+                raise ModelNameConflict("MODEL_NAME_CONFLICT")
             self.conn.execute(
                 """
                 INSERT INTO supplier_models
@@ -627,6 +817,8 @@ class ProductStore:
                 raise NotFound("supplier not found: %s" % supplier_id)
             if supplier.model_catalog_revision != expected_catalog_revision:
                 raise RevisionConflict("model catalog revision conflict")
+            if self.find_active_model_name(supplier_id, capability, provider_model_name):
+                raise ModelNameConflict("MODEL_NAME_CONFLICT")
             self.conn.execute(
                 """
                 INSERT INTO supplier_models
@@ -692,6 +884,13 @@ class ProductStore:
         ).fetchone()
         return None if row is None else SupplierModelRevisionRecord(**dict(row))
 
+    def get_credential_version(self, credential_version_id):
+        row = self.conn.execute(
+            "SELECT * FROM credential_versions WHERE credential_version_id = ?",
+            (credential_version_id,),
+        ).fetchone()
+        return None if row is None else CredentialVersionRecord(**dict(row))
+
     def list_supplier_models(self, supplier_id):
         rows = self.conn.execute(
             "SELECT * FROM supplier_models WHERE supplier_id = ? ORDER BY created_at, supplier_model_id",
@@ -724,6 +923,7 @@ class ProductStore:
         definition,
         expected_catalog_revision,
         expected_model_revision,
+        acknowledged_binding_count=0,
     ):
         normalized = json.dumps(
             definition, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
@@ -743,6 +943,15 @@ class ProductStore:
                 or supplier.model_catalog_revision != expected_catalog_revision
             ):
                 raise RevisionConflict("model revision conflict")
+            if self.count_project_binding_references(supplier_model_id) != acknowledged_binding_count:
+                raise RevisionConflict("affected binding acknowledgement conflict")
+            if model.enabled and self.find_active_model_name(
+                model.supplier_id,
+                capability,
+                provider_model_name,
+                exclude_id=supplier_model_id,
+            ):
+                raise ModelNameConflict("MODEL_NAME_CONFLICT")
             next_revision = model.revision + 1
             self.conn.execute(
                 """
@@ -790,12 +999,21 @@ class ProductStore:
     def set_supplier_model_enabled(
         self, supplier_model_id, *, enabled, expected_catalog_revision, expected_model_revision
     ):
-        model = self.get_supplier_model(supplier_model_id)
-        if model is None:
-            raise NotFound("model not found: %s" % supplier_model_id)
         updated_at = now_iso()
         self.conn.execute("BEGIN IMMEDIATE")
         try:
+            model = self.get_supplier_model(supplier_model_id)
+            if model is None:
+                raise NotFound("model not found: %s" % supplier_model_id)
+            if enabled:
+                revision = self.get_supplier_model_revision(model.current_model_revision_id)
+                if self.find_active_model_name(
+                    model.supplier_id,
+                    revision.capability,
+                    revision.provider_model_name,
+                    exclude_id=supplier_model_id,
+                ):
+                    raise ModelNameConflict("MODEL_NAME_CONFLICT")
             model_cursor = self.conn.execute(
                 """
                 UPDATE supplier_models
@@ -833,14 +1051,28 @@ class ProductStore:
         ).fetchone()
         return int(row["n"])
 
+    def count_project_binding_references(self, supplier_model_id):
+        row = self.conn.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM project_model_bindings
+               WHERE default_text_model_id = ? OR default_image_model_id = ? OR default_video_model_id = ?)
+              + (SELECT COUNT(*) FROM project_model_operation_overrides WHERE supplier_model_id = ?) AS n
+            """,
+            (supplier_model_id,) * 4,
+        ).fetchone()
+        return int(row["n"])
+
     def delete_supplier_model(
         self, supplier_model_id, *, expected_catalog_revision, expected_model_revision
     ):
-        model = self.get_supplier_model(supplier_model_id)
-        if model is None:
-            raise NotFound("model not found: %s" % supplier_model_id)
         self.conn.execute("BEGIN IMMEDIATE")
         try:
+            model = self.get_supplier_model(supplier_model_id)
+            if model is None:
+                raise NotFound("model not found: %s" % supplier_model_id)
+            if self.count_model_references(supplier_model_id):
+                raise ModelReferenced("MODEL_REFERENCED")
             supplier = self.get_supplier(model.supplier_id)
             if (
                 model.revision != expected_model_revision
@@ -896,6 +1128,16 @@ class ProductStore:
         created_at = now_iso()
         self.conn.execute("BEGIN IMMEDIATE")
         try:
+            from .suppliers.operations import OPERATION_CAPABILITIES
+
+            for capability, model_id in defaults.items():
+                if model_id:
+                    self._assert_model_capability_locked(model_id, capability)
+            for operation_key, model_id in overrides.items():
+                capability = OPERATION_CAPABILITIES.get(operation_key)
+                if capability is None:
+                    raise ValueError("UNKNOWN_OPERATION_KEY")
+                self._assert_model_capability_locked(model_id, capability)
             current = self.get_project_model_binding(project_id)
             if current is None:
                 if expected_revision != 0:
@@ -909,9 +1151,9 @@ class ProductStore:
                     """,
                     (
                         project_id,
-                        defaults["text"],
-                        defaults["image"],
-                        defaults["video"],
+                        defaults["text"] or None,
+                        defaults["image"] or None,
+                        defaults["video"] or None,
                         created_at,
                         created_at,
                     ),
@@ -926,9 +1168,9 @@ class ProductStore:
                     WHERE project_id = ? AND binding_set_revision = ?
                     """,
                     (
-                        defaults["text"],
-                        defaults["image"],
-                        defaults["video"],
+                        defaults["text"] or None,
+                        defaults["image"] or None,
+                        defaults["video"] or None,
                         created_at,
                         project_id,
                         expected_revision,
@@ -951,6 +1193,14 @@ class ProductStore:
             self.conn.rollback()
             raise
 
+    def _assert_model_capability_locked(self, supplier_model_id, capability):
+        model = self.get_supplier_model(supplier_model_id)
+        if model is None:
+            raise ValueError("MODEL_NOT_FOUND")
+        revision = self.get_supplier_model_revision(model.current_model_revision_id)
+        if revision is None or revision.capability != capability:
+            raise ValueError("MODEL_CAPABILITY_MISMATCH")
+
     def get_supplier(self, supplier_id):
         row = self.conn.execute(
             "SELECT * FROM suppliers WHERE supplier_id = ?", (supplier_id,)
@@ -970,6 +1220,7 @@ class ProductStore:
         compiled_artifact_object_id,
         compiled_artifact_hash,
         manifest_hash,
+        manifest=None,
         adapter_contract_version="ai-drama-supplier-v1",
         worker_protocol_version="1",
         worker_runtime_version="unavailable",
@@ -977,11 +1228,20 @@ class ProductStore:
         compiler_version="unknown",
         compiler_options_hash="",
         helper_api_version="ai-drama-helper-v1",
+        rate_limit_bucket_key="",
         expected_revision,
         built_in=False,
     ):
         supplier_version_id = uuid.uuid4().hex
         created_at = now_iso()
+        manifest_text = json.dumps(
+            manifest or {},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        manifest_object_id = self.runtime.write_text_object(manifest_text) if manifest else ""
         with self.conn:
             supplier = self.get_supplier(supplier_id)
             if supplier is None:
@@ -994,10 +1254,11 @@ class ProductStore:
                 INSERT INTO supplier_versions
                 (supplier_version_id, supplier_id, revision, source_object_id,
                  source_hash, compiled_artifact_object_id, compiled_artifact_hash,
-                 manifest_hash, adapter_contract_version, worker_protocol_version,
+                 manifest_hash, manifest_object_id, rate_limit_bucket_key,
+                 adapter_contract_version, worker_protocol_version,
                  worker_runtime_version, compiler_name, compiler_version,
                  compiler_options_hash, helper_api_version, built_in, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     supplier_version_id,
@@ -1008,6 +1269,8 @@ class ProductStore:
                     compiled_artifact_object_id,
                     compiled_artifact_hash,
                     manifest_hash,
+                    manifest_object_id,
+                    rate_limit_bucket_key,
                     adapter_contract_version,
                     worker_protocol_version,
                     worker_runtime_version,
@@ -1027,6 +1290,8 @@ class ProductStore:
                 """,
                 (supplier_version_id, revision, created_at, supplier_id),
             )
+            if manifest is not None:
+                self._sync_manifest_models_locked(supplier_id, manifest.get("models", []))
         return self.get_supplier_version(supplier_version_id)
 
     def get_supplier_version(self, supplier_version_id):

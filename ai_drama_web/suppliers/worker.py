@@ -6,6 +6,22 @@ import signal
 import subprocess
 
 
+WORKER_PROTOCOL_VERSION = "1"
+HELPER_API_VERSION = "ai-drama-helper-v1"
+
+
+def current_worker_runtime_version():
+    result = subprocess.run(
+        ["node", "--version"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={"PATH": os.environ.get("PATH", ""), "LANG": "C.UTF-8", "TZ": "UTC"},
+        timeout=5,
+    )
+    return result.stdout.strip()
+
+
 @dataclass(frozen=True)
 class WorkerLimits:
     timeout_seconds: float = 30.0
@@ -38,7 +54,7 @@ class SupplierWorker:
         limits = limits or WorkerLimits()
         request = json.dumps(
             {
-                "workerProtocolVersion": "1",
+                "workerProtocolVersion": WORKER_PROTOCOL_VERSION,
                 "helperApiVersion": artifact.helper_api_version,
                 "workerRuntimeVersion": artifact.worker_runtime_version,
                 "compiledCode": artifact.compiled_code,

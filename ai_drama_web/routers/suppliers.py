@@ -111,6 +111,7 @@ async def put_supplier_code(
             compiled_artifact_object_id=artifact.compiled_artifact_object_id,
             compiled_artifact_hash=artifact.compiled_artifact_hash,
             manifest_hash=artifact.manifest_hash,
+            manifest=artifact.vendor,
             adapter_contract_version=artifact.adapter_contract_version,
             worker_protocol_version="1",
             worker_runtime_version=artifact.worker_runtime_version,
@@ -118,6 +119,7 @@ async def put_supplier_code(
             compiler_version=artifact.compiler_version,
             compiler_options_hash=artifact.compiler_options_hash,
             helper_api_version=artifact.helper_api_version,
+            rate_limit_bucket_key=artifact.vendor["rateLimitBucketKey"],
             expected_revision=revision,
         )
     except SupplierCompileError as exc:

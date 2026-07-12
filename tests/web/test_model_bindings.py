@@ -1,4 +1,5 @@
 import pytest
+import sqlite3
 
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_web.store import ProductStore
@@ -56,4 +57,18 @@ def test_binding_rejects_capability_mismatch_and_unknown_operation(tmp_path):
             defaults={"text": text.supplier_model_id, "image": "", "video": ""},
             overrides={"not_an_operation": text.supplier_model_id},
             expected_revision=0,
+        )
+
+
+def test_binding_default_columns_enforce_model_foreign_keys(tmp_path):
+    store, project, _text, _image, _video = _setup(tmp_path)
+    with pytest.raises(sqlite3.IntegrityError):
+        store.conn.execute(
+            """
+            INSERT INTO project_model_bindings
+            (project_id, default_text_model_id, default_image_model_id,
+             default_video_model_id, binding_set_revision, created_at, updated_at)
+            VALUES (?, 'missing-model', NULL, NULL, 1, 'now', 'now')
+            """,
+            (project.project_id,),
         )

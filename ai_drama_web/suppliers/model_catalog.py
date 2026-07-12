@@ -2,7 +2,7 @@ import hashlib
 import json
 import uuid
 
-from .models import RevisionConflict
+from .models import ModelNameConflict, ModelReferenced, RevisionConflict
 
 
 class ModelCatalogError(ValueError):
@@ -60,6 +60,8 @@ class ModelCatalogService:
                 idempotency_key=idempotency_key,
                 request_hash=request_hash,
             )
+        except ModelNameConflict as exc:
+            raise ModelCatalogError("MODEL_NAME_CONFLICT") from exc
         except RevisionConflict as exc:
             if "idempotency" in str(exc):
                 raise ModelCatalogError("IDEMPOTENCY_CONFLICT") from exc
@@ -78,22 +80,27 @@ class ModelCatalogService:
         acknowledged_binding_count,
     ):
         model = self._model(supplier_model_id)
-        actual = self.store.count_model_references(supplier_model_id)
-        if actual != acknowledged_binding_count:
-            raise ModelCatalogError("AFFECTED_BINDING_ACK_REQUIRED")
         if model.enabled:
             self._reject_active_duplicate(
                 model.supplier_id, capability, provider_model_name, exclude_id=supplier_model_id
             )
-        return self.store.revise_supplier_model(
-            supplier_model_id,
-            provider_model_name=provider_model_name,
-            display_name=display_name,
-            capability=capability,
-            definition=definition,
-            expected_catalog_revision=expected_catalog_revision,
-            expected_model_revision=expected_model_revision,
-        )
+        try:
+            return self.store.revise_supplier_model(
+                supplier_model_id,
+                provider_model_name=provider_model_name,
+                display_name=display_name,
+                capability=capability,
+                definition=definition,
+                expected_catalog_revision=expected_catalog_revision,
+                expected_model_revision=expected_model_revision,
+                acknowledged_binding_count=acknowledged_binding_count,
+            )
+        except ModelNameConflict as exc:
+            raise ModelCatalogError("MODEL_NAME_CONFLICT") from exc
+        except RevisionConflict as exc:
+            if "acknowledgement" in str(exc):
+                raise ModelCatalogError("AFFECTED_BINDING_ACK_REQUIRED") from exc
+            raise
 
     def set_enabled(
         self, supplier_model_id, *, enabled, expected_catalog_revision, expected_model_revision
@@ -107,12 +114,15 @@ class ModelCatalogService:
                 revision.provider_model_name,
                 exclude_id=supplier_model_id,
             )
-        return self.store.set_supplier_model_enabled(
-            supplier_model_id,
-            enabled=enabled,
-            expected_catalog_revision=expected_catalog_revision,
-            expected_model_revision=expected_model_revision,
-        )
+        try:
+            return self.store.set_supplier_model_enabled(
+                supplier_model_id,
+                enabled=enabled,
+                expected_catalog_revision=expected_catalog_revision,
+                expected_model_revision=expected_model_revision,
+            )
+        except ModelNameConflict as exc:
+            raise ModelCatalogError("MODEL_NAME_CONFLICT") from exc
 
     def delete_overlay(
         self, supplier_model_id, *, expected_catalog_revision, expected_model_revision
@@ -122,11 +132,14 @@ class ModelCatalogService:
             raise ModelCatalogError("BUILT_IN_MODEL_DELETE_FORBIDDEN")
         if self.store.count_model_references(supplier_model_id):
             raise ModelCatalogError("MODEL_REFERENCED")
-        self.store.delete_supplier_model(
-            supplier_model_id,
-            expected_catalog_revision=expected_catalog_revision,
-            expected_model_revision=expected_model_revision,
-        )
+        try:
+            self.store.delete_supplier_model(
+                supplier_model_id,
+                expected_catalog_revision=expected_catalog_revision,
+                expected_model_revision=expected_model_revision,
+            )
+        except ModelReferenced as exc:
+            raise ModelCatalogError("MODEL_REFERENCED") from exc
 
     def _model(self, supplier_model_id):
         model = self.store.get_supplier_model(supplier_model_id)

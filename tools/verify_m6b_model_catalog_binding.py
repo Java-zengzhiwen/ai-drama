@@ -20,6 +20,8 @@ from ai_drama_web.suppliers.model_catalog import ModelCatalogService
 from ai_drama_web.suppliers.models import stable_builtin_model_id
 from ai_drama_web.suppliers.resolution import ModelBindingService, ModelResolutionError, ModelResolver
 from ai_drama_web.suppliers.snapshots import SnapshotBuilder, persist_snapshot
+from ai_drama_web.suppliers.compiler import compile_supplier
+from ai_drama_web.suppliers.worker import SupplierWorker, SupplierWorkerError
 
 
 def _request(host, headers=None):
@@ -36,10 +38,48 @@ def verify():
         runtime = RuntimeStore(root / "runtime.db", root / "objects")
         store = ProductStore(runtime)
         supplier = store.list_suppliers()[0]
-        identity = stable_builtin_model_id(supplier.supplier_id, "text:fake")
-        checks["stable_identities"] = "PASS" if identity == stable_builtin_model_id(
-            supplier.supplier_id, "text:fake"
-        ) else "FAIL"
+        legacy_source = """
+export const vendor = {
+  id: "verifier", version: "1", name: "Verifier", author: "Test",
+  adapterContractVersion: "ai-drama-supplier-v1",
+  helperApiVersion: "ai-drama-helper-v1",
+  rateLimitBucketKey: "verifier-bucket", inputs: [], inputValues: {},
+  models: [{ providerModelName: "fake-base", displayName: "Fake Base", capability: "text" }]
+};
+export async function textRequest() { return { text: "fake" }; }
+"""
+        artifact = compile_supplier(legacy_source, runtime_store=runtime)
+        store.replace_supplier_version(
+            supplier.supplier_id,
+            source_object_id=artifact.source_object_id,
+            source_hash=artifact.source_hash,
+            compiled_artifact_object_id=artifact.compiled_artifact_object_id,
+            compiled_artifact_hash=artifact.compiled_artifact_hash,
+            manifest_hash=artifact.manifest_hash,
+            adapter_contract_version=artifact.adapter_contract_version,
+            worker_protocol_version="1",
+            worker_runtime_version=artifact.worker_runtime_version,
+            compiler_name=artifact.compiler_name,
+            compiler_version=artifact.compiler_version,
+            compiler_options_hash=artifact.compiler_options_hash,
+            helper_api_version=artifact.helper_api_version,
+            expected_revision=supplier.revision,
+        )
+        runtime.conn.execute("DELETE FROM supplier_model_revisions")
+        runtime.conn.execute("DELETE FROM supplier_models")
+        runtime.conn.execute(
+            "DELETE FROM schema_migrations WHERE migration_id = ?",
+            (M6B_MODEL_CATALOG_MIGRATION_ID,),
+        )
+        runtime.conn.commit()
+        runtime.close()
+
+        runtime = RuntimeStore(root / "runtime.db", root / "objects")
+        store = ProductStore(runtime)
+        supplier = store.get_supplier(supplier.supplier_id)
+        base = store.list_supplier_models(supplier.supplier_id)[0]
+        identity = stable_builtin_model_id(supplier.supplier_id, "text:fake-base")
+        checks["stable_identities"] = "PASS" if base.supplier_model_id == identity else "FAIL"
 
         catalog = ModelCatalogService(store)
         default, _ = catalog.create_overlay(
@@ -48,7 +88,7 @@ def verify():
             display_name="Fake Default",
             capability="text",
             definition={"constraints": {}},
-            expected_catalog_revision=0,
+            expected_catalog_revision=1,
             idempotency_key="default",
         )
         old_revision_id = default.current_model_revision_id
@@ -58,7 +98,7 @@ def verify():
             display_name="Fake Default V2",
             capability="text",
             definition={"constraints": {"temperature": 1}},
-            expected_catalog_revision=1,
+            expected_catalog_revision=2,
             expected_model_revision=1,
             acknowledged_binding_count=0,
         )
@@ -66,8 +106,12 @@ def verify():
             old_revision_id != default.current_model_revision_id
             and store.get_supplier_model_revision(old_revision_id).provider_model_name == "fake-default"
         ) else "FAIL"
-        checks["overlay_base_isolation"] = "PASS" if default.source == "overlay" and identity != default.supplier_model_id else "FAIL"
-        checks["catalog_etag"] = "PASS" if store.get_supplier(supplier.supplier_id).model_catalog_revision == 2 else "FAIL"
+        checks["overlay_base_isolation"] = "PASS" if (
+            base.source == "built_in"
+            and default.source == "overlay"
+            and base.supplier_model_id != default.supplier_model_id
+        ) else "FAIL"
+        checks["catalog_etag"] = "PASS" if store.get_supplier(supplier.supplier_id).model_catalog_revision == 3 else "FAIL"
 
         override, _ = catalog.create_overlay(
             supplier.supplier_id,
@@ -75,7 +119,7 @@ def verify():
             display_name="Fake Override",
             capability="text",
             definition={},
-            expected_catalog_revision=2,
+            expected_catalog_revision=3,
             idempotency_key="override",
         )
         project = store.create_project(name="M6B verifier")
@@ -130,7 +174,22 @@ def verify():
                 _request("198.51.100.10", {"x-forwarded-for": "127.0.0.1"})
             )
         ) else "FAIL"
-        checks["zero_real_network"] = "PASS"
+        network_source = """
+export const vendor = {
+  id: "network", version: "1", name: "Network", author: "Test",
+  adapterContractVersion: "ai-drama-supplier-v1",
+  helperApiVersion: "ai-drama-helper-v1",
+  rateLimitBucketKey: "network", inputs: [], inputValues: {},
+  models: [{ providerModelName: "network-text", displayName: "Network Text", capability: "text" }]
+};
+export async function textRequest(_request, helpers) { return helpers.http.request({ url: "https://example.invalid" }); }
+"""
+        network_artifact = compile_supplier(network_source, runtime_store=runtime)
+        try:
+            SupplierWorker().invoke(network_artifact, "textRequest", {}, mode="validation")
+            checks["zero_real_network"] = "FAIL"
+        except SupplierWorkerError as exc:
+            checks["zero_real_network"] = "PASS" if exc.code == "NETWORK_DISABLED_DURING_VALIDATION" else "FAIL"
         legacy_sql = runtime.conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'generation_jobs'"
         ).fetchone()["sql"]
@@ -146,7 +205,11 @@ def verify():
             "SELECT COUNT(*) AS n FROM schema_migrations WHERE migration_id = ?",
             (M6B_MODEL_CATALOG_MIGRATION_ID,),
         ).fetchone()["n"]
-        checks["migration_replay"] = "PASS" if migration_count == 1 and replay.get_project(project.project_id) else "FAIL"
+        checks["migration_replay"] = "PASS" if (
+            migration_count == 1
+            and replay.get_project(project.project_id)
+            and replay.get_supplier_model(base.supplier_model_id)
+        ) else "FAIL"
         runtime.close()
 
     result = "PASS" if all(value == "PASS" for value in checks.values()) else "FAIL"

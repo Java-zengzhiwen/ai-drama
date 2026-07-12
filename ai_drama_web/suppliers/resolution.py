@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 from ai_drama_runtime.services import NotFound
 
-from .models import ProjectModelBindingRecord
+from .models import ProjectModelBindingRecord, RevisionConflict
 from .operations import OPERATION_CAPABILITIES
 
 
@@ -50,9 +50,9 @@ class ModelBindingService:
             return BindingSet(project_id, "", "", "", 0, overrides)
         return BindingSet(
             record.project_id,
-            record.default_text_model_id,
-            record.default_image_model_id,
-            record.default_video_model_id,
+            record.default_text_model_id or "",
+            record.default_image_model_id or "",
+            record.default_video_model_id or "",
             record.binding_set_revision,
             overrides,
         )
@@ -69,12 +69,17 @@ class ModelBindingService:
             if capability is None:
                 raise BindingError("UNKNOWN_OPERATION_KEY")
             self._validate_capability(model_id, capability)
-        self.store.replace_project_model_bindings(
-            project_id,
-            defaults=normalized_defaults,
-            overrides=dict(overrides),
-            expected_revision=expected_revision,
-        )
+        try:
+            self.store.replace_project_model_bindings(
+                project_id,
+                defaults=normalized_defaults,
+                overrides=dict(overrides),
+                expected_revision=expected_revision,
+            )
+        except RevisionConflict:
+            raise
+        except ValueError as exc:
+            raise BindingError(str(exc)) from exc
         return self.get(project_id)
 
     def _validate_capability(self, supplier_model_id, expected):

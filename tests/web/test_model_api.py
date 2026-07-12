@@ -88,3 +88,44 @@ def test_model_create_requires_preconditions_and_conflicts_on_changed_replay(cli
     conflict = client.post(path, json=changed, headers=headers)
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["error_code"] == "IDEMPOTENCY_CONFLICT"
+
+
+def test_supplier_code_manifest_creates_and_revises_same_base_identity(client):
+    supplier = _supplier(client)
+    stable_id = "44444444-4444-4444-4444-444444444444"
+
+    def source(provider_name):
+        return f"""
+export const vendor = {{
+  id: "manifest-api", version: "1", name: "Manifest API", author: "Test",
+  adapterContractVersion: "ai-drama-supplier-v1",
+  helperApiVersion: "ai-drama-helper-v1",
+  rateLimitBucketKey: "manifest-api-bucket", inputs: [], inputValues: {{}},
+  models: [{{ supplierModelId: "{stable_id}", providerModelName: "{provider_name}", displayName: "Base Text", capability: "text" }}]
+}};
+export async function textRequest() {{ return {{ text: "fake" }}; }}
+"""
+
+    first = client.put(
+        f"/api/suppliers/{supplier['supplier_id']}/code",
+        json={"source": source("base-text-v1")},
+        headers={"If-Match": '"supplier-1"'},
+    )
+    assert first.status_code == 200, first.text
+    models = client.get(f"/api/suppliers/{supplier['supplier_id']}/models")
+    assert models.headers["etag"] == '"model-catalog-1"'
+    assert len(models.json()) == 1
+    model_id = models.json()[0]["supplier_model_id"]
+    assert model_id == stable_id.replace("-", "")
+    assert models.json()[0]["source"] == "built_in"
+
+    second = client.put(
+        f"/api/suppliers/{supplier['supplier_id']}/code",
+        json={"source": source("base-text-v2")},
+        headers={"If-Match": '"supplier-2"'},
+    )
+    assert second.status_code == 200, second.text
+    revised = client.get(f"/api/models/{model_id}").json()
+    assert revised["supplier_model_id"] == model_id
+    assert revised["provider_model_name"] == "base-text-v2"
+    assert revised["model_revision_id"] != models.json()[0]["model_revision_id"]

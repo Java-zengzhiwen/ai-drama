@@ -3,6 +3,7 @@ import pytest
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_web.store import ProductStore
 from ai_drama_web.suppliers.model_catalog import ModelCatalogError, ModelCatalogService
+from ai_drama_web.suppliers.models import ModelNameConflict
 from ai_drama_web.suppliers.models import RevisionConflict
 
 
@@ -163,7 +164,7 @@ def test_base_and_referenced_models_cannot_be_physically_deleted(tmp_path):
         idempotency_key="bound",
     )
     store.conn.execute(
-        "INSERT INTO project_model_bindings VALUES (?, ?, '', '', 1, ?, ?)",
+        "INSERT INTO project_model_bindings VALUES (?, ?, NULL, NULL, 1, ?, ?)",
         (store.create_project(name="Bound").project_id, overlay.supplier_model_id, "now", "now"),
     )
     store.conn.commit()
@@ -237,3 +238,30 @@ def test_model_and_idempotency_record_commit_atomically(tmp_path):
         )
     assert store.list_supplier_models(supplier.supplier_id) == []
     assert store.get_supplier(supplier.supplier_id).model_catalog_revision == 0
+
+
+def test_store_transaction_rejects_active_duplicate_without_service_precheck(tmp_path):
+    _, store, catalog = _catalog(tmp_path)
+    supplier = store.list_suppliers()[0]
+    catalog.create_overlay(
+        supplier.supplier_id,
+        provider_model_name="race-name",
+        display_name="First",
+        capability="text",
+        definition={},
+        expected_catalog_revision=0,
+        idempotency_key="race-first",
+    )
+    with pytest.raises(ModelNameConflict):
+        store.create_supplier_model_idempotent(
+            supplier.supplier_id,
+            supplier_model_id="33333333333333333333333333333333",
+            source="overlay",
+            provider_model_name="race-name",
+            display_name="Second",
+            capability="text",
+            definition={},
+            expected_catalog_revision=1,
+            idempotency_key="race-second",
+            request_hash="race-second-hash",
+        )

@@ -5,6 +5,7 @@ import json
 from ai_drama_runtime.store import now_iso
 
 from .models import ExecutionSnapshotRecord
+from .worker import HELPER_API_VERSION, WORKER_PROTOCOL_VERSION, current_worker_runtime_version
 
 
 class SupplierRuntimeUnavailable(RuntimeError):
@@ -95,7 +96,7 @@ class SnapshotBuilder:
             compiler_version=version.compiler_version,
             compiler_options_hash=version.compiler_options_hash,
             helper_api_version=version.helper_api_version,
-            rate_limit_bucket_key=supplier.supplier_id,
+            rate_limit_bucket_key=version.rate_limit_bucket_key or supplier.supplier_id,
             supplier_model_id=resolution.model.supplier_model_id,
             model_revision_id=resolution.revision.model_revision_id,
             provider_model_name=resolution.revision.provider_model_name,
@@ -145,6 +146,7 @@ def snapshot_hash(snapshot):
 
 
 def persist_snapshot(store, snapshot):
+    _validate_snapshot(store, snapshot)
     raw = canonical_snapshot_json(snapshot)
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()
     object_id = store.runtime.write_text_object(raw)
@@ -185,15 +187,85 @@ def load_snapshot(store, digest):
             raise ValueError("snapshot hash mismatch")
         payload = json.loads(raw)
         snapshot = ExecutionSnapshot(**payload)
-        version = store.get_supplier_version(snapshot.supplier_version_id)
-        revision = store.get_supplier_model_revision(snapshot.model_revision_id)
-        config = store.get_config_revision(snapshot.config_revision_id)
-        if version is None or revision is None or config is None:
-            raise ValueError("snapshot reference missing")
-        store.runtime.read_text(snapshot.compiled_artifact_object_id)
-        store.runtime.read_text(revision.definition_object_id)
-        if config.config_object_id:
-            store.runtime.read_text(config.config_object_id)
+        if (
+            row["supplier_id"] != snapshot.supplier_id
+            or row["supplier_model_id"] != snapshot.supplier_model_id
+            or row["model_revision_id"] != snapshot.model_revision_id
+        ):
+            raise ValueError("snapshot index mismatch")
+        _validate_snapshot(store, snapshot)
         return snapshot
     except Exception as exc:
         raise SupplierRuntimeUnavailable("SUPPLIER_RUNTIME_UNAVAILABLE") from exc
+
+
+def _validate_snapshot(store, snapshot):
+    try:
+        supplier = store.get_supplier(snapshot.supplier_id)
+        version = store.get_supplier_version(snapshot.supplier_version_id)
+        model = store.get_supplier_model(snapshot.supplier_model_id)
+        revision = store.get_supplier_model_revision(snapshot.model_revision_id)
+        config = store.get_config_revision(snapshot.config_revision_id)
+        if supplier is None or version is None or model is None or revision is None or config is None:
+            raise ValueError("snapshot reference missing")
+        if version.supplier_id != supplier.supplier_id or model.supplier_id != supplier.supplier_id:
+            raise ValueError("snapshot supplier mismatch")
+        if revision.supplier_model_id != model.supplier_model_id:
+            raise ValueError("snapshot model mismatch")
+        expected = {
+            "supplier_source_hash": version.source_hash,
+            "manifest_hash": version.manifest_hash,
+            "compiled_artifact_object_id": version.compiled_artifact_object_id,
+            "compiled_artifact_hash": version.compiled_artifact_hash,
+            "adapter_contract_version": version.adapter_contract_version,
+            "worker_protocol_version": version.worker_protocol_version,
+            "worker_runtime_version": version.worker_runtime_version,
+            "compiler_name": version.compiler_name,
+            "compiler_version": version.compiler_version,
+            "compiler_options_hash": version.compiler_options_hash,
+            "helper_api_version": version.helper_api_version,
+            "rate_limit_bucket_key": version.rate_limit_bucket_key or supplier.supplier_id,
+            "provider_model_name": revision.provider_model_name,
+            "capability": revision.capability,
+            "config_hash": config.config_hash,
+        }
+        if any(getattr(snapshot, field) != value for field, value in expected.items()):
+            raise ValueError("snapshot fingerprint mismatch")
+        if config.supplier_id != supplier.supplier_id:
+            raise ValueError("snapshot config mismatch")
+        _verify_object(store, version.source_object_id, version.source_hash)
+        _verify_object(
+            store, version.compiled_artifact_object_id, version.compiled_artifact_hash
+        )
+        if version.manifest_object_id:
+            _verify_object(store, version.manifest_object_id, version.manifest_hash)
+        _verify_object(store, revision.definition_object_id, revision.definition_hash)
+        if config.config_object_id:
+            _verify_object(store, config.config_object_id, config.config_hash)
+        if snapshot.worker_protocol_version != WORKER_PROTOCOL_VERSION:
+            raise ValueError("worker protocol unavailable")
+        if snapshot.helper_api_version != HELPER_API_VERSION:
+            raise ValueError("helper API unavailable")
+        if snapshot.worker_runtime_version != current_worker_runtime_version():
+            raise ValueError("worker runtime unavailable")
+        if snapshot.resolved_credential_version_id:
+            credential = store.get_credential_version(snapshot.resolved_credential_version_id)
+            if (
+                credential is None
+                or credential.supplier_id != supplier.supplier_id
+                or credential.state != "ready"
+            ):
+                raise ValueError("credential unavailable")
+        elif snapshot.credential_resolution_mode == "historical":
+            raise ValueError("historical credential missing")
+    except SupplierRuntimeUnavailable:
+        raise
+    except Exception as exc:
+        raise SupplierRuntimeUnavailable("SUPPLIER_RUNTIME_UNAVAILABLE") from exc
+
+
+def _verify_object(store, object_id, expected_hash):
+    raw = store.runtime.read_text(object_id)
+    actual = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    if expected_hash and actual != expected_hash:
+        raise ValueError("immutable object hash mismatch")
