@@ -616,15 +616,19 @@ class ProductStore:
         ).fetchone()
         if row is None:
             raise NotFound("built-in supplier version not found")
-        self.conn.execute(
+        cursor = self.conn.execute(
             """
             UPDATE suppliers
-            SET current_supplier_version_id = ?, revision = ?, updated_at = ?
-            WHERE supplier_id = ?
+            SET current_supplier_version_id = ?, revision = revision + 1, updated_at = ?
+            WHERE supplier_id = ? AND revision = ?
             """,
-            (row["supplier_version_id"], expected_revision + 1, now_iso(), supplier_id),
+            (row["supplier_version_id"], now_iso(), supplier_id, expected_revision),
         )
         self.conn.commit()
+        if cursor.rowcount == 0:
+            if self.get_supplier(supplier_id) is None:
+                raise NotFound("supplier not found: %s" % supplier_id)
+            raise RevisionConflict("supplier revision conflict")
         return self.get_supplier(supplier_id)
 
     def get_supplier_creation_request(self, idempotency_key):

@@ -178,3 +178,25 @@ def test_supplier_update_uses_atomic_compare_and_swap(tmp_path):
             display_name="Stale",
             expected_revision=1,
         )
+
+
+def test_builtin_restore_uses_atomic_compare_and_swap(tmp_path):
+    _, store = _store(tmp_path)
+    supplier = store.list_suppliers()[0]
+    statements = []
+    store.conn.set_trace_callback(statements.append)
+
+    restored = store.restore_builtin_supplier_version(
+        supplier.supplier_id,
+        expected_revision=1,
+    )
+
+    restore_updates = [
+        statement
+        for statement in statements
+        if statement.lstrip().upper().startswith("UPDATE SUPPLIERS")
+        and "current_supplier_version_id" in statement
+    ]
+    assert restored.revision == 2
+    assert len(restore_updates) == 1
+    assert "AND revision = 1" in restore_updates[0]
