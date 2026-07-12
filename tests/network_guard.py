@@ -34,6 +34,20 @@ def guarded_sendto(original, sock, data, *args):
     return original(sock, data, *args)
 
 
+def guarded_sendmsg(original, sock, buffers, *args):
+    address = args[-1] if args and isinstance(args[-1], tuple) else None
+    if address is None:
+        raise RuntimeError("UNEXPECTED_REAL_NETWORK: connected-datagram")
+    deny_unless_loopback(address[0])
+    return original(sock, buffers, *args)
+
+
 def guarded_resolve(original, host, *args, **kwargs):
     deny_unless_loopback(host)
     return original(host, *args, **kwargs)
+
+
+def guarded_reverse_resolve(original, address, *args, **kwargs):
+    host = address[0] if isinstance(address, tuple) else address
+    deny_unless_loopback(host)
+    return original(address, *args, **kwargs)

@@ -1,6 +1,13 @@
 import pytest
 
-from tests.network_guard import guarded_connect, guarded_connect_ex, guarded_resolve, guarded_sendto
+from tests.network_guard import (
+    guarded_connect,
+    guarded_connect_ex,
+    guarded_resolve,
+    guarded_reverse_resolve,
+    guarded_sendmsg,
+    guarded_sendto,
+)
 
 
 def test_default_network_guard_allows_loopback_and_denies_external_hosts():
@@ -24,7 +31,10 @@ def test_default_network_guard_allows_loopback_and_denies_external_hosts():
     [
         (guarded_connect_ex, (object(), ("example.com", 443))),
         (guarded_sendto, (object(), b"payload", ("8.8.8.8", 53))),
+        (guarded_sendmsg, (object(), [b"payload"], [], 0, ("8.8.8.8", 53))),
         (guarded_resolve, ("example.com",)),
+        (guarded_reverse_resolve, ("8.8.8.8",)),
+        (guarded_reverse_resolve, (("8.8.8.8", 53),)),
     ],
 )
 def test_default_network_guard_denies_other_network_entry_points(guard, args):
