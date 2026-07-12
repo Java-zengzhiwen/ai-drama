@@ -12,6 +12,7 @@
 
 - Backend capabilities are fixed by M6A-C; M6D adds no schema or provider capability.
 - No marketplace, duplication, multi-account, remote management, or real model-test button.
+- Default tests and browser flows deny real network; no real Provider request is authorized.
 - All management errors render `LOCAL_MANAGEMENT_ONLY`; secrets are write-only and masked.
 
 ---
