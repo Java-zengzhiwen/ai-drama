@@ -6,26 +6,79 @@ This repository is governed by milestone-specific agent rules. Agents must follo
 ## Current Active Milestone
 
 ```text
-Milestone 5 — Real Provider Readiness and Agnes Smoke Test
+Milestone 6 — Supplier And Project Model Configuration
 ```
 
-M5 does **not** mean full production launch.
+M6 implements the approved Toonflow-style `Supplier -> Models` design through five separately reviewed stages: M6A Supplier Core, M6B Model Catalog And Binding, M6C Adapter Cutover, M6D Management UI, and M6E Migration And Acceptance.
 
-M5 means:
+The authoritative M6 design is:
 
 ```text
-One explicitly authorized real Agnes smoke test can be run safely, inspected, persisted, reported, and reviewed.
+docs/superpowers/specs/2026-07-12-provider-model-management-design.md
 ```
 
-Until the user explicitly authorizes a real provider request, M5 work is limited to planning, readiness checks, dry-run verification, safety review, and documentation.
-
-The current real provider authorization token is:
+The authoritative M6 governance contract is:
 
 ```text
-AUTHORIZE_REAL_AGNES_VIDEO_SMOKE_TEST
+docs/superpowers/specs/2026-07-12-m6-governance-contract.md
 ```
 
-No real Agnes request may be made without this exact user-provided token.
+M6 planning is docs-only. Implementation begins only after the governance contract and the relevant M6A-M6E plan are reviewed and explicitly authorized.
+
+No M6 implementation or verification may send a real provider request. Real-provider tests require a later provider-and-capability-specific authorization defined by an approved execution contract; the historical M5 Agnes token does not authorize M6 work.
+
+### M6 Stage Order
+
+```text
+M6A Supplier Core
+-> M6B Model Catalog And Binding
+-> M6C Adapter Cutover
+-> M6D Management UI
+-> M6E Migration And Acceptance
+```
+
+Stages may be planned together but are implemented and reviewed separately. A later stage may not begin until the preceding stage is merged or an approved execution contract explicitly allows an isolated dependency branch.
+
+### M6 Planning And Execution Rules
+
+- Planning may modify only `AGENTS.md`, M6 specs, and M6 plans.
+- Implementation uses TDD and one focused commit per independently reviewable task.
+- Only the main agent writes. Subagents are read-only unless an approved stage contract explicitly says otherwise.
+- Default Python, Node, browser, worker, verifier, and migration tests must deny unexpected real network access.
+- Supplier management APIs remain loopback-only at the application layer.
+- Secrets, signed URLs, provider responses containing secrets, databases, `runtime-data`, and private generation results must never enter Git.
+- Existing M1-M5 behavior remains the regression baseline.
+- Every stage must preserve its documented rollback point.
+
+### M6 Branch Roles
+
+```text
+docs/provider-model-management-design
+-> approved design, M6 governance, and M6A-M6E plans only
+
+feat/m6a-supplier-core
+feat/m6b-model-catalog-binding
+feat/m6c-adapter-cutover
+feat/m6d-management-ui
+feat/m6e-migration-acceptance
+-> one implementation stage per branch
+
+main
+-> protected integration branch
+```
+
+### M6 Completion Tokens
+
+```text
+M6_GOVERNANCE_AND_PLANS_READY_FOR_REVIEW
+M6_GOVERNANCE_AND_PLANS_BLOCKED
+M6A_READY_FOR_REVIEW
+M6B_READY_FOR_REVIEW
+M6C_READY_FOR_REVIEW
+M6D_READY_FOR_REVIEW
+M6E_READY_FOR_REVIEW
+M6_COMPLETE
+```
 
 ---
 
@@ -40,7 +93,7 @@ Milestone 3 — Agnes Video Generation, Persistent Jobs, Results, and Rerun
 Milestone 4 — Mock-provider chapter rehearsal, reporting, runbook, and read-only UI visibility
 ```
 
-M3 and M4 are no longer active milestones. Their implementation, tests, verifiers, and documented safety rules remain binding baseline.
+M3, M4, and M5 are no longer active milestones. Their implementation, tests, verifiers, real-provider evidence, and documented safety rules remain binding baseline.
 
 Do not regress:
 
@@ -51,7 +104,12 @@ Do not regress:
 * M4 JSON/Markdown report;
 * M4 rehearsal runbook;
 * M4 UI visibility plan;
-* M4 Phase 1 read-only rehearsal visibility panel.
+* M4 Phase 1 read-only rehearsal visibility panel;
+* M5 real Agnes provider integration, public asset delivery, long-running gateway, and reboot recovery.
+
+## Historical M5 Governance
+
+The remaining M5 sections below are retained as historical safety baseline for the completed real-provider integration. They do not override the active M6 scope, stage order, branch roles, completion tokens, or default real-network denial defined above and in the M6 governance contract.
 
 ---
 
