@@ -15,4 +15,4 @@ class CompiledSupplierArtifact:
     compiler_options_hash: str
     adapter_contract_version: str
     helper_api_version: str
-
+    worker_runtime_version: str

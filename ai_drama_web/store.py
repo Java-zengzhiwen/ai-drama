@@ -1,5 +1,6 @@
 import json
 import uuid
+import hashlib
 
 from ai_drama_runtime.services import NotFound
 from ai_drama_runtime.store import RuntimeStore, now_iso
@@ -37,6 +38,7 @@ GENERATION_JOB_TRANSITIONS = {
 }
 
 M6A_SUPPLIER_MIGRATION_ID = "m6a_supplier_core_v1"
+M6A_SUPPLIER_FINGERPRINT_MIGRATION_ID = "m6a_supplier_runtime_fingerprint_v2"
 BUILTIN_SUPPLIERS = (
     ("agnes", "Agnes"),
     ("anthropic", "Anthropic"),
@@ -224,6 +226,13 @@ class ProductStore:
               compiled_artifact_object_id TEXT NOT NULL,
               compiled_artifact_hash TEXT NOT NULL,
               manifest_hash TEXT NOT NULL,
+              adapter_contract_version TEXT NOT NULL DEFAULT '',
+              worker_protocol_version TEXT NOT NULL DEFAULT '',
+              worker_runtime_version TEXT NOT NULL DEFAULT '',
+              compiler_name TEXT NOT NULL DEFAULT '',
+              compiler_version TEXT NOT NULL DEFAULT '',
+              compiler_options_hash TEXT NOT NULL DEFAULT '',
+              helper_api_version TEXT NOT NULL DEFAULT '',
               built_in INTEGER NOT NULL DEFAULT 0 CHECK (built_in IN (0,1)),
               created_at TEXT NOT NULL,
               UNIQUE(supplier_id, revision)
@@ -272,6 +281,13 @@ class ProductStore:
         self._ensure_column("asset_bindings", "project_id", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("asset_bindings", "chapter_id", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("generation_results", "source_url_state", "TEXT NOT NULL DEFAULT 'source_url_active'")
+        self._ensure_column("supplier_versions", "adapter_contract_version", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("supplier_versions", "worker_protocol_version", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("supplier_versions", "worker_runtime_version", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("supplier_versions", "compiler_name", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("supplier_versions", "compiler_version", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("supplier_versions", "compiler_options_hash", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("supplier_versions", "helper_api_version", "TEXT NOT NULL DEFAULT ''")
         self._backfill_asset_binding_scope()
         self._normalize_current_asset_bindings()
         self.conn.execute("DROP INDEX IF EXISTS asset_bindings_current_role_idx")
@@ -283,6 +299,7 @@ class ProductStore:
             """
         )
         self._apply_supplier_core_migration()
+        self._apply_supplier_runtime_fingerprint_migration()
         self.conn.commit()
 
     def _apply_supplier_core_migration(self):
@@ -319,6 +336,80 @@ class ProductStore:
         self.conn.execute(
             "INSERT INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)",
             (M6A_SUPPLIER_MIGRATION_ID, created_at),
+        )
+
+    def _apply_supplier_runtime_fingerprint_migration(self):
+        if self.conn.execute(
+            "SELECT 1 FROM schema_migrations WHERE migration_id = ?",
+            (M6A_SUPPLIER_FINGERPRINT_MIGRATION_ID,),
+        ).fetchone():
+            return
+        created_at = now_iso()
+        for slug, _display_name in BUILTIN_SUPPLIERS:
+            supplier = self.conn.execute(
+                "SELECT * FROM suppliers WHERE slug = ?", (slug,)
+            ).fetchone()
+            if supplier is None:
+                continue
+            version = self.conn.execute(
+                "SELECT supplier_version_id FROM supplier_versions WHERE supplier_id = ? AND built_in = 1",
+                (supplier["supplier_id"],),
+            ).fetchone()
+            if version is None:
+                vendor = {
+                    "id": slug,
+                    "version": "m6a-template-1",
+                    "name": supplier["display_name"],
+                    "author": "AI Drama",
+                    "adapterContractVersion": "ai-drama-supplier-v1",
+                    "helperApiVersion": "ai-drama-helper-v1",
+                    "rateLimitBucketKey": slug,
+                    "inputs": [],
+                    "inputValues": {},
+                    "models": [],
+                }
+                manifest = json.dumps(
+                    vendor, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                )
+                source = "export const vendor = %s;\n" % manifest
+                compiled = "module.exports.vendor = %s;\n" % manifest
+                source_object_id = self.runtime.write_text_object(source)
+                compiled_object_id = self.runtime.write_text_object(compiled)
+                supplier_version_id = uuid.uuid5(
+                    uuid.NAMESPACE_URL, "ai-drama:supplier:%s:version:1" % slug
+                ).hex
+                self.conn.execute(
+                    """
+                    INSERT INTO supplier_versions
+                    (supplier_version_id, supplier_id, revision, source_object_id,
+                     source_hash, compiled_artifact_object_id, compiled_artifact_hash,
+                     manifest_hash, adapter_contract_version, worker_protocol_version,
+                     worker_runtime_version, compiler_name, compiler_version,
+                     compiler_options_hash, helper_api_version, built_in, created_at)
+                    VALUES (?, ?, 1, ?, ?, ?, ?, ?, 'ai-drama-supplier-v1', '1',
+                            'unavailable-m6a-template', 'builtin-template', '1', ?,
+                            'ai-drama-helper-v1', 1, ?)
+                    """,
+                    (
+                        supplier_version_id,
+                        supplier["supplier_id"],
+                        source_object_id,
+                        _sha256(source),
+                        compiled_object_id,
+                        _sha256(compiled),
+                        _sha256(manifest),
+                        _sha256("{}"),
+                        created_at,
+                    ),
+                )
+                version = {"supplier_version_id": supplier_version_id}
+            self.conn.execute(
+                "UPDATE suppliers SET current_supplier_version_id = ? WHERE supplier_id = ?",
+                (version["supplier_version_id"], supplier["supplier_id"]),
+            )
+        self.conn.execute(
+            "INSERT INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)",
+            (M6A_SUPPLIER_FINGERPRINT_MIGRATION_ID, created_at),
         )
 
     def create_supplier(self, *, slug, display_name):
@@ -368,6 +459,13 @@ class ProductStore:
         compiled_artifact_object_id,
         compiled_artifact_hash,
         manifest_hash,
+        adapter_contract_version="ai-drama-supplier-v1",
+        worker_protocol_version="1",
+        worker_runtime_version="unavailable",
+        compiler_name="unknown",
+        compiler_version="unknown",
+        compiler_options_hash="",
+        helper_api_version="ai-drama-helper-v1",
         expected_revision,
         built_in=False,
     ):
@@ -385,8 +483,10 @@ class ProductStore:
                 INSERT INTO supplier_versions
                 (supplier_version_id, supplier_id, revision, source_object_id,
                  source_hash, compiled_artifact_object_id, compiled_artifact_hash,
-                 manifest_hash, built_in, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 manifest_hash, adapter_contract_version, worker_protocol_version,
+                 worker_runtime_version, compiler_name, compiler_version,
+                 compiler_options_hash, helper_api_version, built_in, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     supplier_version_id,
@@ -397,6 +497,13 @@ class ProductStore:
                     compiled_artifact_object_id,
                     compiled_artifact_hash,
                     manifest_hash,
+                    adapter_contract_version,
+                    worker_protocol_version,
+                    worker_runtime_version,
+                    compiler_name,
+                    compiler_version,
+                    compiler_options_hash,
+                    helper_api_version,
                     int(built_in),
                     created_at,
                 ),
@@ -466,28 +573,29 @@ class ProductStore:
     def update_supplier(
         self, supplier_id, *, display_name=None, enabled=None, expected_revision
     ):
-        supplier = self.get_supplier(supplier_id)
-        if supplier is None:
-            raise NotFound("supplier not found: %s" % supplier_id)
-        if supplier.revision != expected_revision:
-            raise RevisionConflict("supplier revision conflict")
-        next_revision = expected_revision + 1
         updated_at = now_iso()
-        self.conn.execute(
+        cursor = self.conn.execute(
             """
             UPDATE suppliers
-            SET display_name = ?, enabled = ?, revision = ?, updated_at = ?
-            WHERE supplier_id = ?
+            SET display_name = COALESCE(?, display_name),
+                enabled = COALESCE(?, enabled),
+                revision = revision + 1,
+                updated_at = ?
+            WHERE supplier_id = ? AND revision = ?
             """,
             (
-                supplier.display_name if display_name is None else display_name,
-                supplier.enabled if enabled is None else int(enabled),
-                next_revision,
+                display_name,
+                None if enabled is None else int(enabled),
                 updated_at,
                 supplier_id,
+                expected_revision,
             ),
         )
         self.conn.commit()
+        if cursor.rowcount == 0:
+            if self.get_supplier(supplier_id) is None:
+                raise NotFound("supplier not found: %s" % supplier_id)
+            raise RevisionConflict("supplier revision conflict")
         return self.get_supplier(supplier_id)
 
     def restore_builtin_supplier_version(self, supplier_id, *, expected_revision):
@@ -535,6 +643,57 @@ class ProductStore:
             (idempotency_key, request_hash, supplier_id, now_iso()),
         )
         self.conn.commit()
+
+    def create_supplier_idempotent(
+        self, *, slug, display_name, idempotency_key, request_hash
+    ):
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            replay = self.get_supplier_creation_request(idempotency_key)
+            if replay:
+                if replay["request_hash"] != request_hash:
+                    raise RevisionConflict("supplier creation idempotency conflict")
+                self.conn.commit()
+                return self.get_supplier(replay["supplier_id"]), False
+            if self.conn.execute(
+                "SELECT 1 FROM suppliers WHERE slug = ?", (slug,)
+            ).fetchone():
+                raise ValueError("supplier slug already exists: %s" % slug)
+            supplier_id = uuid.uuid4().hex
+            config_revision_id = uuid.uuid4().hex
+            created_at = now_iso()
+            self.conn.execute(
+                """
+                INSERT INTO suppliers
+                (supplier_id, slug, display_name, source, enabled,
+                 current_config_revision_id, revision, config_revision,
+                 credential_revision, created_at, updated_at)
+                VALUES (?, ?, ?, 'custom', 1, ?, 1, 1, 0, ?, ?)
+                """,
+                (supplier_id, slug, display_name, config_revision_id, created_at, created_at),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO supplier_config_revisions
+                (config_revision_id, supplier_id, revision, config_object_id,
+                 config_hash, created_at)
+                VALUES (?, ?, 1, '', '', ?)
+                """,
+                (config_revision_id, supplier_id, created_at),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO supplier_creation_requests
+                (idempotency_key, request_hash, supplier_id, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (idempotency_key, request_hash, supplier_id, created_at),
+            )
+            self.conn.commit()
+            return self.get_supplier(supplier_id), True
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def _ensure_column(self, table_name, column_name, definition):
         rows = self.conn.execute("PRAGMA table_info(%s)" % table_name).fetchall()
@@ -1384,3 +1543,7 @@ class ProductStore:
 
 def _normalized_json(payload):
     return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _sha256(value):
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()

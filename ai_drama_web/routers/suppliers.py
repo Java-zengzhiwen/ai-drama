@@ -35,18 +35,18 @@ async def create_supplier(
         raise HTTPException(428, detail={"error_code": "PRECONDITION_REQUIRED"})
     body_hash = _hash(payload.model_dump())
     store = request.app.state.product_store
-    replay = store.get_supplier_creation_request(idempotency_key)
-    if replay:
-        if replay["request_hash"] != body_hash:
-            raise HTTPException(409, detail={"error_code": "IDEMPOTENCY_CONFLICT"})
-        response.status_code = 200
-        return _supplier_read(request, store.get_supplier(replay["supplier_id"]))
     try:
-        supplier = store.create_supplier(slug=payload.slug, display_name=payload.display_name)
+        supplier, created = store.create_supplier_idempotent(
+            slug=payload.slug,
+            display_name=payload.display_name,
+            idempotency_key=idempotency_key,
+            request_hash=body_hash,
+        )
+    except RevisionConflict as exc:
+        raise HTTPException(409, detail={"error_code": "IDEMPOTENCY_CONFLICT"}) from exc
     except ValueError as exc:
         raise HTTPException(409, detail={"error_code": "SUPPLIER_SLUG_CONFLICT"}) from exc
-    store.record_supplier_creation_request(idempotency_key, body_hash, supplier.supplier_id)
-    response.status_code = 201
+    response.status_code = 201 if created else 200
     return _supplier_read(request, supplier)
 
 
@@ -111,6 +111,13 @@ async def put_supplier_code(
             compiled_artifact_object_id=artifact.compiled_artifact_object_id,
             compiled_artifact_hash=artifact.compiled_artifact_hash,
             manifest_hash=artifact.manifest_hash,
+            adapter_contract_version=artifact.adapter_contract_version,
+            worker_protocol_version="1",
+            worker_runtime_version=artifact.worker_runtime_version,
+            compiler_name=artifact.compiler_name,
+            compiler_version=artifact.compiler_version,
+            compiler_options_hash=artifact.compiler_options_hash,
+            helper_api_version=artifact.helper_api_version,
             expected_revision=revision,
         )
     except SupplierCompileError as exc:
@@ -213,7 +220,10 @@ async def delete_supplier_secret(
         )
     except RevisionConflict as exc:
         raise HTTPException(409, detail={"error_code": "REVISION_CONFLICT"}) from exc
-    response.headers["ETag"] = _etag("credential", revision + 1)
+    current_revision = request.app.state.product_store.get_supplier(
+        supplier_id
+    ).credential_revision
+    response.headers["ETag"] = _etag("credential", current_revision)
     return {"configured": False, "masked_suffix": ""}
 
 

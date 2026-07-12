@@ -117,6 +117,14 @@ def test_supplier_config_secret_and_code_mutations_require_matching_etags(tmp_pa
         )
         assert deleted.status_code == 200
         assert deleted.json() == {"configured": False, "masked_suffix": ""}
+        assert deleted.headers["etag"] == '"credential-2"'
+
+        absent = client.delete(
+            f"/api/suppliers/{supplier_id}/secret",
+            headers={"If-Match": '"credential-2"'},
+        )
+        assert absent.status_code == 200
+        assert absent.headers["etag"] == '"credential-2"'
 
 
 def test_code_validation_is_local_and_returns_safe_diagnostic(tmp_path):
@@ -143,15 +151,8 @@ def test_restore_builtin_switches_pointer_without_deleting_history(tmp_path):
             lambda: client.app.state.product_store.list_suppliers()[0]
         )
         built_in = client.portal.call(
-            lambda: client.app.state.product_store.replace_supplier_version(
-                supplier.supplier_id,
-                source_object_id="built-in-source",
-                source_hash="built-in-hash",
-                compiled_artifact_object_id="built-in-compiled",
-                compiled_artifact_hash="built-in-compiled-hash",
-                manifest_hash="built-in-manifest-hash",
-                expected_revision=1,
-                built_in=True,
+            lambda: client.app.state.product_store.get_supplier_version(
+                supplier.current_supplier_version_id
             )
         )
         overlay = client.portal.call(
@@ -162,17 +163,17 @@ def test_restore_builtin_switches_pointer_without_deleting_history(tmp_path):
                 compiled_artifact_object_id="overlay-compiled",
                 compiled_artifact_hash="overlay-compiled-hash",
                 manifest_hash="overlay-manifest-hash",
-                expected_revision=2,
+                expected_revision=1,
             )
         )
 
         response = client.post(
             f"/api/suppliers/{supplier.supplier_id}/restore-built-in",
-            headers={"If-Match": '"supplier-3"'},
+            headers={"If-Match": '"supplier-2"'},
         )
 
         assert response.status_code == 200, response.text
-        assert response.headers["etag"] == '"supplier-4"'
+        assert response.headers["etag"] == '"supplier-3"'
         assert response.json()["current_supplier_version_id"] == built_in.supplier_version_id
         assert client.portal.call(
             lambda: client.app.state.product_store.get_supplier_version(

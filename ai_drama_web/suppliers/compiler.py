@@ -79,6 +79,7 @@ def compile_supplier(source, *, runtime_store, worker_root=None):
         compiler_options_hash=_sha256(options_json),
         adapter_contract_version=vendor["adapterContractVersion"],
         helper_api_version=vendor["helperApiVersion"],
+        worker_runtime_version=payload["workerRuntimeVersion"],
     )
 
 
@@ -114,4 +115,3 @@ def _canonical_json(value):
 
 def _sha256(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
-

@@ -18,6 +18,7 @@ class SupplierInvocationResult:
     value: object
     worker_protocol_version: str
     helper_api_version: str
+    worker_runtime_version: str
 
 
 class SupplierWorkerError(RuntimeError):
@@ -39,6 +40,7 @@ class SupplierWorker:
             {
                 "workerProtocolVersion": "1",
                 "helperApiVersion": artifact.helper_api_version,
+                "workerRuntimeVersion": artifact.worker_runtime_version,
                 "compiledCode": artifact.compiled_code,
                 "operation": operation,
                 "payload": payload,
@@ -88,9 +90,17 @@ class SupplierWorker:
                 error.get("code", "SUPPLIER_EXECUTION_FAILED"),
                 str(error.get("message", "supplier operation failed"))[:299],
             )
+        if (
+            response.get("workerProtocolVersion") != "1"
+            or response.get("helperApiVersion") != artifact.helper_api_version
+            or response.get("workerRuntimeVersion") != artifact.worker_runtime_version
+        ):
+            raise SupplierWorkerError(
+                "SUPPLIER_RUNTIME_UNAVAILABLE", "supplier runtime fingerprint is unavailable"
+            )
         return SupplierInvocationResult(
             value=response.get("value"),
             worker_protocol_version=response["workerProtocolVersion"],
             helper_api_version=response["helperApiVersion"],
+            worker_runtime_version=response["workerRuntimeVersion"],
         )
-

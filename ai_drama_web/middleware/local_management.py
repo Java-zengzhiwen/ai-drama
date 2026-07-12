@@ -55,4 +55,3 @@ def _networks(value):
 
 def _in_networks(address, networks):
     return any(address.version == network.version and address in network for network in networks)
-

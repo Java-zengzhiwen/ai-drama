@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 import hashlib
 import os
+import stat
 import time
 import uuid
 
@@ -209,10 +210,10 @@ class SupplierCredentialStore:
             )
             raise RuntimeError(code)
         path = Path(record.secret_path)
-        data = path.read_bytes()
-        if hashlib.sha256(data).hexdigest() != record.content_hash:
+        if not self._valid_file(path, record.content_hash):
             self._mark_corrupt(credential_version_id)
             raise RuntimeError("CREDENTIAL_STORAGE_CORRUPT")
+        data = path.read_bytes()
         return data.decode("utf-8")
 
     def recover(self, *, orphan_grace_seconds=300):
@@ -226,6 +227,7 @@ class SupplierCredentialStore:
             if row["operation"] == "delete":
                 Path(row["final_path"]).unlink(missing_ok=True)
                 Path(row["temp_path"]).unlink(missing_ok=True) if row["temp_path"] else None
+                _fsync_directory(self.secrets_root)
                 with self.conn:
                     self.conn.execute(
                         "DELETE FROM credential_versions WHERE credential_version_id = ?",
@@ -309,6 +311,8 @@ class SupplierCredentialStore:
     @staticmethod
     def _valid_file(path, expected_hash):
         if not path.is_file():
+            return False
+        if stat.S_IMODE(path.stat().st_mode) != 0o600:
             return False
         return hashlib.sha256(path.read_bytes()).hexdigest() == expected_hash
 

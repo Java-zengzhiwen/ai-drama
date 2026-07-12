@@ -85,6 +85,29 @@ def test_recovery_marks_missing_pending_file_corrupt_and_fails_closed(tmp_path):
         credentials.read(record.credential_version_id)
 
 
+def test_read_and_recovery_reject_world_readable_credential_file(tmp_path):
+    _, product, supplier, credentials = _stores(tmp_path)
+    ready = credentials.replace(supplier.supplier_id, "credential-value", expected_revision=0)
+    os.chmod(ready.secret_path, 0o644)
+
+    with pytest.raises(RuntimeError, match="CREDENTIAL_STORAGE_CORRUPT"):
+        credentials.read(ready.credential_version_id)
+    assert credentials.get(ready.credential_version_id).state == "credential_storage_corrupt"
+
+    _, product2, supplier2, pending = _stores(tmp_path / "pending", "pending_committed")
+    with pytest.raises(SimulatedCrash):
+        pending.replace(supplier2.supplier_id, "credential-value", expected_revision=0)
+    pending_record = pending.get(
+        product2.get_supplier(supplier2.supplier_id).current_credential_version_id
+    )
+    os.chmod(pending.temp_path(pending_record.credential_version_id), 0o644)
+
+    report = SupplierCredentialStore(product2, tmp_path / "pending" / "runtime-data").recover()
+
+    assert report.corrupt == 1
+    assert pending.get(pending_record.credential_version_id).state == "credential_storage_corrupt"
+
+
 def test_delete_is_recovered_idempotently(tmp_path):
     _, product, supplier, credentials = _stores(tmp_path)
     created = credentials.replace(supplier.supplier_id, "credential-value", expected_revision=0)

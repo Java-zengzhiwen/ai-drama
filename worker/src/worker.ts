@@ -43,6 +43,19 @@ if (request.workerProtocolVersion !== "1") {
   });
   process.exit(0);
 }
+if (
+  request.helperApiVersion !== "ai-drama-helper-v1"
+  || request.workerRuntimeVersion !== process.version
+) {
+  respond({
+    ok: false,
+    error: {
+      code: "SUPPLIER_RUNTIME_UNAVAILABLE",
+      message: "supplier runtime fingerprint is unavailable",
+    },
+  });
+  process.exit(0);
+}
 
 const networkError = request.mode === "validation"
   ? "NETWORK_DISABLED_DURING_VALIDATION"
@@ -88,6 +101,7 @@ try {
     ok: true,
     workerProtocolVersion: "1",
     helperApiVersion: request.helperApiVersion,
+    workerRuntimeVersion: process.version,
     value,
   });
 } catch (error) {

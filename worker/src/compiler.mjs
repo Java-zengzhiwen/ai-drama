@@ -86,6 +86,7 @@ if (!validateVendor(vendor)) fail("INVALID_VENDOR_MANIFEST", "vendor manifest is
 process.stdout.write(JSON.stringify({
   ok: true,
   compilerVersion: esbuild.version,
+  workerRuntimeVersion: process.version,
   compiledCode,
   vendor,
 }));

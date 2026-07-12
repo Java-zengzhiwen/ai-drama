@@ -8,4 +8,3 @@ export type SupplierOperation =
   | "videoSubmit"
   | "videoPoll"
   | "videoFetch";
-

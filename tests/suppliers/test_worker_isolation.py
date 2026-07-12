@@ -154,3 +154,19 @@ def test_worker_child_environment_is_allowlisted(tmp_path, monkeypatch):
 
     assert result.value == "undefined"
     assert "must-not-cross-boundary" not in repr(result)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("helper_api_version", "ai-drama-helper-v999"),
+        ("worker_runtime_version", "v0.0.0-unavailable"),
+    ],
+)
+def test_worker_fails_closed_for_incompatible_runtime_fingerprint(tmp_path, field, value):
+    artifact = replace(_artifact(tmp_path), **{field: value})
+
+    with pytest.raises(SupplierWorkerError) as exc_info:
+        SupplierWorker().invoke(artifact, "textRequest", {})
+
+    assert exc_info.value.code == "SUPPLIER_RUNTIME_UNAVAILABLE"

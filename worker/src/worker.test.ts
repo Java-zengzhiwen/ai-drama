@@ -9,6 +9,7 @@ function invoke(compiledCode, mode = "execution") {
     input: JSON.stringify({
       workerProtocolVersion: "1",
       helperApiVersion: "ai-drama-helper-v1",
+      workerRuntimeVersion: process.version,
       compiledCode,
       operation: "textRequest",
       payload: {},

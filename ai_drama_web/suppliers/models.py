@@ -32,6 +32,13 @@ class SupplierVersionRecord:
     compiled_artifact_object_id: str
     compiled_artifact_hash: str
     manifest_hash: str
+    adapter_contract_version: str
+    worker_protocol_version: str
+    worker_runtime_version: str
+    compiler_name: str
+    compiler_version: str
+    compiler_options_hash: str
+    helper_api_version: str
     built_in: int
     created_at: str
 
@@ -70,4 +77,3 @@ class CredentialJournalRecord:
     content_hash: str
     created_at: str
     updated_at: str
-
