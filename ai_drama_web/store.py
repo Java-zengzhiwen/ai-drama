@@ -22,6 +22,8 @@ from .suppliers.models import (
     ConfigRevisionRecord,
     RevisionConflict,
     SupplierRecord,
+    SupplierModelRecord,
+    SupplierModelRevisionRecord,
     SupplierVersionRecord,
 )
 
@@ -39,6 +41,7 @@ GENERATION_JOB_TRANSITIONS = {
 
 M6A_SUPPLIER_MIGRATION_ID = "m6a_supplier_core_v1"
 M6A_SUPPLIER_FINGERPRINT_MIGRATION_ID = "m6a_supplier_runtime_fingerprint_v2"
+M6B_MODEL_CATALOG_MIGRATION_ID = "m6b_model_catalog_binding_v1"
 BUILTIN_SUPPLIERS = (
     ("agnes", "Agnes"),
     ("anthropic", "Anthropic"),
@@ -275,6 +278,70 @@ class ProductStore:
               supplier_id TEXT NOT NULL REFERENCES suppliers(supplier_id) ON DELETE RESTRICT,
               created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS supplier_models (
+              supplier_model_id TEXT PRIMARY KEY,
+              supplier_id TEXT NOT NULL REFERENCES suppliers(supplier_id) ON DELETE RESTRICT,
+              current_model_revision_id TEXT NOT NULL DEFAULT '',
+              source TEXT NOT NULL CHECK (source IN ('built_in','overlay')),
+              enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+              revision INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS supplier_models_supplier_idx
+              ON supplier_models(supplier_id, enabled, supplier_model_id);
+            CREATE TABLE IF NOT EXISTS supplier_model_revisions (
+              model_revision_id TEXT PRIMARY KEY,
+              supplier_model_id TEXT NOT NULL REFERENCES supplier_models(supplier_model_id) ON DELETE RESTRICT,
+              revision INTEGER NOT NULL,
+              provider_model_name TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              capability TEXT NOT NULL CHECK (capability IN ('text','image','video')),
+              definition_object_id TEXT NOT NULL,
+              definition_hash TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              UNIQUE(supplier_model_id, revision)
+            );
+            CREATE TABLE IF NOT EXISTS project_model_bindings (
+              project_id TEXT PRIMARY KEY REFERENCES projects(project_id) ON DELETE RESTRICT,
+              default_text_model_id TEXT NOT NULL DEFAULT '',
+              default_image_model_id TEXT NOT NULL DEFAULT '',
+              default_video_model_id TEXT NOT NULL DEFAULT '',
+              binding_set_revision INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS project_model_operation_overrides (
+              project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
+              operation_key TEXT NOT NULL,
+              supplier_model_id TEXT NOT NULL REFERENCES supplier_models(supplier_model_id) ON DELETE RESTRICT,
+              PRIMARY KEY(project_id, operation_key)
+            );
+            CREATE TABLE IF NOT EXISTS execution_snapshots (
+              snapshot_hash TEXT PRIMARY KEY,
+              snapshot_object_id TEXT NOT NULL UNIQUE,
+              supplier_id TEXT NOT NULL REFERENCES suppliers(supplier_id) ON DELETE RESTRICT,
+              supplier_model_id TEXT NOT NULL REFERENCES supplier_models(supplier_model_id) ON DELETE RESTRICT,
+              model_revision_id TEXT NOT NULL REFERENCES supplier_model_revisions(model_revision_id) ON DELETE RESTRICT,
+              created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS model_creation_requests (
+              supplier_id TEXT NOT NULL REFERENCES suppliers(supplier_id) ON DELETE RESTRICT,
+              idempotency_key TEXT NOT NULL,
+              request_hash TEXT NOT NULL,
+              supplier_model_id TEXT NOT NULL REFERENCES supplier_models(supplier_model_id) ON DELETE RESTRICT,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY(supplier_id, idempotency_key)
+            );
+            CREATE TABLE IF NOT EXISTS supplier_idempotency_records (
+              supplier_id TEXT NOT NULL REFERENCES suppliers(supplier_id) ON DELETE RESTRICT,
+              capability TEXT NOT NULL CHECK (capability IN ('text','image','video')),
+              idempotency_key TEXT NOT NULL,
+              request_hash TEXT NOT NULL,
+              existing_id TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY(supplier_id, capability, idempotency_key)
+            );
             """
         )
         self._ensure_column("asset_bindings", "is_current", "INTEGER NOT NULL DEFAULT 0")
@@ -288,6 +355,7 @@ class ProductStore:
         self._ensure_column("supplier_versions", "compiler_version", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("supplier_versions", "compiler_options_hash", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("supplier_versions", "helper_api_version", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("suppliers", "model_catalog_revision", "INTEGER NOT NULL DEFAULT 0")
         self._backfill_asset_binding_scope()
         self._normalize_current_asset_bindings()
         self.conn.execute("DROP INDEX IF EXISTS asset_bindings_current_role_idx")
@@ -300,7 +368,19 @@ class ProductStore:
         )
         self._apply_supplier_core_migration()
         self._apply_supplier_runtime_fingerprint_migration()
+        self._apply_model_catalog_binding_migration()
         self.conn.commit()
+
+    def _apply_model_catalog_binding_migration(self):
+        if self.conn.execute(
+            "SELECT 1 FROM schema_migrations WHERE migration_id = ?",
+            (M6B_MODEL_CATALOG_MIGRATION_ID,),
+        ).fetchone():
+            return
+        self.conn.execute(
+            "INSERT INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)",
+            (M6B_MODEL_CATALOG_MIGRATION_ID, now_iso()),
+        )
 
     def _apply_supplier_core_migration(self):
         if self.conn.execute(
@@ -439,6 +519,89 @@ class ProductStore:
                 (config_revision_id, supplier_id, created_at),
             )
         return self.get_supplier(supplier_id)
+
+    def create_supplier_model(
+        self,
+        supplier_id,
+        *,
+        supplier_model_id,
+        source,
+        provider_model_name,
+        display_name,
+        capability,
+        definition,
+        expected_catalog_revision,
+    ):
+        normalized = json.dumps(
+            definition, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        )
+        definition_object_id = self.runtime.write_text_object(normalized)
+        definition_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        model_revision_id = uuid.uuid4().hex
+        created_at = now_iso()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            supplier = self.get_supplier(supplier_id)
+            if supplier is None:
+                raise NotFound("supplier not found: %s" % supplier_id)
+            if supplier.model_catalog_revision != expected_catalog_revision:
+                raise RevisionConflict("model catalog revision conflict")
+            self.conn.execute(
+                """
+                INSERT INTO supplier_models
+                (supplier_model_id, supplier_id, current_model_revision_id, source,
+                 enabled, revision, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 1, 1, ?, ?)
+                """,
+                (supplier_model_id, supplier_id, model_revision_id, source, created_at, created_at),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO supplier_model_revisions
+                (model_revision_id, supplier_model_id, revision, provider_model_name,
+                 display_name, capability, definition_object_id, definition_hash, created_at)
+                VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    model_revision_id,
+                    supplier_model_id,
+                    provider_model_name,
+                    display_name,
+                    capability,
+                    definition_object_id,
+                    definition_hash,
+                    created_at,
+                ),
+            )
+            cursor = self.conn.execute(
+                """
+                UPDATE suppliers
+                SET model_catalog_revision = model_catalog_revision + 1, updated_at = ?
+                WHERE supplier_id = ? AND model_catalog_revision = ?
+                """,
+                (created_at, supplier_id, expected_catalog_revision),
+            )
+            if cursor.rowcount != 1:
+                raise RevisionConflict("model catalog revision conflict")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return self.get_supplier_model(supplier_model_id)
+
+    def get_supplier_model(self, supplier_model_id):
+        row = self.conn.execute(
+            "SELECT * FROM supplier_models WHERE supplier_model_id = ?",
+            (supplier_model_id,),
+        ).fetchone()
+        return None if row is None else SupplierModelRecord(**dict(row))
+
+    def get_supplier_model_revision(self, model_revision_id):
+        row = self.conn.execute(
+            "SELECT * FROM supplier_model_revisions WHERE model_revision_id = ?",
+            (model_revision_id,),
+        ).fetchone()
+        return None if row is None else SupplierModelRevisionRecord(**dict(row))
 
     def get_supplier(self, supplier_id):
         row = self.conn.execute(

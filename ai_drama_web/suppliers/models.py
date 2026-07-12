@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import uuid
 
 
 class RevisionConflict(ValueError):
@@ -18,6 +19,7 @@ class SupplierRecord:
     revision: int
     config_revision: int
     credential_revision: int
+    model_catalog_revision: int
     created_at: str
     updated_at: str
 
@@ -77,3 +79,56 @@ class CredentialJournalRecord:
     content_hash: str
     created_at: str
     updated_at: str
+
+
+@dataclass(frozen=True)
+class SupplierModelRecord:
+    supplier_model_id: str
+    supplier_id: str
+    current_model_revision_id: str
+    source: str
+    enabled: int
+    revision: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class SupplierModelRevisionRecord:
+    model_revision_id: str
+    supplier_model_id: str
+    revision: int
+    provider_model_name: str
+    display_name: str
+    capability: str
+    definition_object_id: str
+    definition_hash: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class ProjectModelBindingRecord:
+    project_id: str
+    default_text_model_id: str
+    default_image_model_id: str
+    default_video_model_id: str
+    binding_set_revision: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class ExecutionSnapshotRecord:
+    snapshot_hash: str
+    snapshot_object_id: str
+    supplier_id: str
+    supplier_model_id: str
+    model_revision_id: str
+    created_at: str
+
+
+def stable_builtin_model_id(supplier_id: str, declaration_key: str) -> str:
+    return uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        "ai-drama:supplier-model:%s:%s" % (supplier_id, declaration_key),
+    ).hex
