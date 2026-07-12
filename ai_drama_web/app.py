@@ -4,7 +4,9 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from ai_drama_runtime.store import RuntimeStore
 
@@ -30,9 +32,13 @@ DEFAULT_MAX_ASSET_UPLOAD_BYTES = 10 * 1024 * 1024
 
 
 def create_app(
-    *, data_root: Path | None = None, skills_root: str | Path | None = None
+    *,
+    data_root: Path | None = None,
+    skills_root: str | Path | None = None,
+    web_dist_root: str | Path | None = None,
 ) -> FastAPI:
     repo_root = Path(__file__).resolve().parents[1]
+    dist_root = Path(web_dist_root) if web_dist_root is not None else repo_root / "web" / "dist"
     settings = Settings()
     if data_root is not None:
         settings.data_root = Path(data_root)
@@ -112,7 +118,28 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    _mount_spa(app, dist_root)
+
     return app
+
+
+def _mount_spa(app: FastAPI, dist_root: Path) -> None:
+    index_html = dist_root / "index.html"
+    assets_dir = dist_root / "assets"
+
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="web-assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_fallback(full_path: str):
+        if full_path.startswith(("api/", "public/")):
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        if not index_html.exists():
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "web build missing; run npm --prefix web run build"},
+            )
+        return FileResponse(index_html, media_type="text/html")
 
 
 def _max_asset_upload_bytes_from_env() -> int:
