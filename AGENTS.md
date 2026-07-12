@@ -686,6 +686,67 @@ Before any real smoke-test implementation or execution, rerun the full verificat
 
 ---
 
+## ChatGPT Review Handoff Policy
+
+Whenever a design, implementation plan, report, specification, or code change needs to be handed to ChatGPT for review, Codex must follow this policy unless the artifact contains sensitive information:
+
+1. Save the file inside the current Git repository, not only under `/tmp` or an external worktree path.
+2. When the artifact is complete, automatically run `git add`, commit it, and push the current working branch to `origin`.
+3. Do not wait for the user to request a push again.
+4. The final response must include:
+   - repository;
+   - branch;
+   - commit SHA;
+   - repository-relative file path;
+   - PR URL or branch compare URL.
+5. If the branch does not yet exist on the remote, automatically run:
+
+   ```bash
+   git push -u origin <current-branch>
+   ```
+
+6. If `gh` is authenticated, automatically create or update the PR. If `gh` is not authenticated, provide a compare URL instead.
+7. Never commit API keys, bearer credentials, tokens, signed URLs, passwords, `runtime-data`, databases, or private generation results.
+8. If the file contains sensitive information, generate a redacted review copy, commit and push only that copy, and explicitly state that the original file was not uploaded.
+9. After ChatGPT review, continue updating, committing, and pushing on the same branch. Do not create an unnecessary new branch.
+10. Pause only when push permission, login, 2FA, or a sensitive-information decision requires user intervention. Use exactly:
+
+    ```text
+    USER_ACTION_REQUIRED
+    ACTION=<the one required action>
+    REASON=<one-sentence reason>
+    RESUME_WITH=<short phrase to reply after completion>
+    ```
+
+For qualifying ChatGPT review handoffs, this section is standing publication authorization and satisfies the general requirement below that a user explicitly authorize a push.
+
+### Required Review Handoff Format
+
+Use this machine-readable handoff block:
+
+```text
+REVIEW_HANDOFF_READY
+REPOSITORY=Java-zengzhiwen/ai-drama
+BRANCH=<current-branch>
+COMMIT=<commit-sha>
+FILE=<repository-relative-file-path>
+PR_URL=<url-or-NONE>
+```
+
+### Temporary And External Reports
+
+When a review artifact initially exists only under `/tmp` or outside the repository, create a redacted archival review copy under an appropriate repository path such as:
+
+```text
+docs/reports/
+docs/reviews/
+artifacts/reports/
+```
+
+Commit and push the archival copy using the same handoff policy. Do not upload the sensitive original.
+
+---
+
 ## Commit and Push Rules
 
 * Keep one focused commit per task.
