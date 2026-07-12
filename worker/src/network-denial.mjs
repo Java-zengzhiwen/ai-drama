@@ -21,27 +21,23 @@ net.Socket.prototype.connect = function guardedConnect(...args) {
   return originalConnect.apply(this, args);
 };
 
-for (const name of ["lookup", "resolve", "resolve4", "resolve6"]) {
-  const original = dns[name];
-  dns[name] = function guardedDns(host, ...args) {
-    assertLoopback(host);
-    return original.call(this, host, ...args);
-  };
-}
-
-for (const name of ["lookup", "resolve", "resolve4", "resolve6"]) {
-  const original = dns.promises[name];
-  dns.promises[name] = function guardedDnsPromise(host, ...args) {
-    assertLoopback(host);
-    return original.call(this, host, ...args);
-  };
-}
-
 const resolverMethods = [
   "resolve", "resolve4", "resolve6", "resolveAny", "resolveCaa", "resolveCname",
   "resolveMx", "resolveNaptr", "resolveNs", "resolvePtr", "resolveSoa", "resolveSrv",
   "resolveTxt", "reverse",
 ];
+const dnsMethods = ["lookup", "lookupService", ...resolverMethods];
+for (const api of [dns, dns.promises]) {
+  for (const name of dnsMethods) {
+    const original = api[name];
+    if (!original) continue;
+    api[name] = function guardedDns(host, ...args) {
+      assertLoopback(host);
+      return original.call(this, host, ...args);
+    };
+  }
+}
+
 for (const Resolver of [dns.Resolver, dns.promises.Resolver]) {
   for (const name of resolverMethods) {
     const original = Resolver.prototype[name];

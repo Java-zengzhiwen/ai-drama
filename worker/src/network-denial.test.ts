@@ -8,6 +8,9 @@ import test from "node:test";
 test("default test guard denies external DNS, TCP, and UDP", () => {
   assert.throws(() => dns.lookup("example.com", () => {}), /UNEXPECTED_REAL_NETWORK/);
   assert.throws(() => dns.promises.lookup("example.com"), /UNEXPECTED_REAL_NETWORK/);
+  assert.throws(() => dns.reverse("8.8.8.8", () => {}), /UNEXPECTED_REAL_NETWORK/);
+  assert.throws(() => dns.resolveMx("example.com", () => {}), /UNEXPECTED_REAL_NETWORK/);
+  assert.throws(() => dns.promises.reverse("8.8.8.8"), /UNEXPECTED_REAL_NETWORK/);
   assert.throws(() => new dns.Resolver().resolve4("example.com", () => {}), /UNEXPECTED_REAL_NETWORK/);
   assert.throws(() => new dns.promises.Resolver().resolve4("example.com"), /UNEXPECTED_REAL_NETWORK/);
   assert.throws(() => new net.Socket().connect({ host: "example.com", port: 443 }), /UNEXPECTED_REAL_NETWORK/);
