@@ -21,11 +21,15 @@ class GenerationExecutionService:
         backend: GenerationBackend,
         *,
         asset_delivery: AssetDeliveryService | None = None,
+        supplier_gateway=None,
+        supplier_execution_enabled: bool = False,
     ) -> None:
         self.product_store = product_store
         self.runtime_store = runtime_store
         self.backend = backend
         self.asset_delivery = asset_delivery
+        self.supplier_gateway = supplier_gateway
+        self.supplier_execution_enabled = supplier_execution_enabled
 
     def submit_queued_job(self, job_id: str):
         job = self.product_store.get_generation_job(job_id)
@@ -33,20 +37,36 @@ class GenerationExecutionService:
             raise ValueError("generation job not found")
         if job.internal_status != "queued":
             raise ValueError("only queued jobs can be submitted")
+        attempt = self.product_store.get_submission_attempt(job_id)
+        if attempt is not None and attempt["state"] in {"submitted", "committed", "unknown"}:
+            if attempt["provider_job_id"] and not job.provider_job_id:
+                return self.product_store.attach_generation_provider_job(
+                    job_id, provider_job_id=attempt["provider_job_id"], response_object_id=attempt["evidence_object_id"]
+                )
+            return job
+        self.product_store.prepare_submission_attempt(job_id, attempt_number=job.attempt_number)
         submitting = self.product_store.transition_generation_job(job.job_id, "submitting")
         request = json.loads(self.runtime_store.read_text(submitting.request_object_id))
         try:
-            provider_job = self.backend.create_video_job(
+            if self.supplier_execution_enabled and submitting.snapshot_hash:
+                response = self.supplier_gateway.invoke(submitting.snapshot_hash, "videoSubmit", request)
+                from ai_drama_web.providers.models import ProviderJob
+                video_id = response.get("video_id") or response.get("videoId")
+                if not video_id:
+                    raise ProviderError("PROVIDER_VIDEO_ID_MISSING", "video provider failed", provider="supplier", raw=response)
+                provider_job = ProviderJob(str(video_id), "submitted", response)
+            else:
+                provider_job = self.backend.create_video_job(
                 VideoGenerationRequest(
                     prompt=request["prompt"],
                     negative_prompt=request.get("negative_prompt", ""),
                     duration_seconds=request["duration_seconds"],
                     input_images=self._materialize_asset_urls(request),
                     parameters=dict(request.get("parameters") or {}),
-                )
-            )
+                ))
         except ProviderError as exc:
             response_object_id = self._provider_error_object_id(exc)
+            self.product_store.record_submission_attempt(job_id, state="unknown", evidence_object_id=response_object_id)
             return self.product_store.transition_generation_job(
                 submitting.job_id,
                 "failed",
@@ -62,6 +82,7 @@ class GenerationExecutionService:
                 error_message="video input asset is not provider reachable",
             )
         except Exception:
+            self.product_store.record_submission_attempt(job_id, state="unknown")
             return self.product_store.transition_generation_job(
                 submitting.job_id,
                 "failed",
@@ -76,6 +97,9 @@ class GenerationExecutionService:
                 separators=(",", ":"),
                 allow_nan=False,
             )
+        )
+        self.product_store.record_submission_attempt(
+            job_id, state="submitted", provider_job_id=provider_job.provider_job_id, evidence_object_id=response_object_id
         )
         return self.product_store.attach_generation_provider_job(
             submitting.job_id,
@@ -94,7 +118,11 @@ class GenerationExecutionService:
         if job.internal_status not in {"submitted", "polling"}:
             raise ValueError("generation job is not refreshable")
         try:
-            if job.job_type == "video":
+            if self.supplier_execution_enabled and job.snapshot_hash:
+                response = self.supplier_gateway.invoke(job.snapshot_hash, "videoPoll", {"video_id": job.provider_job_id})
+                from ai_drama_web.providers.models import ProviderJob
+                provider_job = ProviderJob(job.provider_job_id, response.get("status", "failed"), response)
+            elif job.job_type == "video":
                 provider_job = self.backend.get_video_job_status(job.provider_job_id)
             else:
                 provider_job = self.backend.get_job_status(job.provider_job_id)
@@ -118,7 +146,14 @@ class GenerationExecutionService:
                     error_code="unknown_provider_error",
                     error_message="video provider failed",
                 )
-            if job.job_type == "video":
+            if self.supplier_execution_enabled and job.snapshot_hash:
+                fetched = self.supplier_gateway.invoke(job.snapshot_hash, "videoFetch", {"video_id": job.provider_job_id})
+                from ai_drama_web.providers.models import ProviderResult
+                content = fetched.get("content") or fetched.get("bytes")
+                if isinstance(content, str):
+                    content = content.encode("utf-8")
+                result = ProviderResult(job.provider_job_id, fetched.get("media_type", "video/mp4"), fetched.get("url"), content, fetched)
+            elif job.job_type == "video":
                 result = self.backend.fetch_video_result(job.provider_job_id)
             else:
                 result = self.backend.fetch_result(job.provider_job_id)

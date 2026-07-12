@@ -28,6 +28,7 @@ from .secrets import LocalSecretStore
 from .services.asset_delivery import AssetDeliveryService
 from .services.generation_execution import GenerationExecutionService
 from .services.generation_poller import GenerationPoller
+from .suppliers.execution import SnapshotExecutionGateway
 from .store import ProductStore
 from .suppliers.credentials import SupplierCredentialStore
 
@@ -81,6 +82,10 @@ def create_app(
                     runtime_store,
                     app.state.generation_backend,
                     asset_delivery=asset_delivery,
+                    supplier_gateway=SnapshotExecutionGateway(
+                        product_store, app.state.supplier_credential_store
+                    ),
+                    supplier_execution_enabled=settings.m6_supplier_execution_enabled,
                 ),
             )
             await app.state.generation_poller.start()

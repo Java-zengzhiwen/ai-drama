@@ -47,6 +47,7 @@ GENERATION_JOB_TRANSITIONS = {
 M6A_SUPPLIER_MIGRATION_ID = "m6a_supplier_core_v1"
 M6A_SUPPLIER_FINGERPRINT_MIGRATION_ID = "m6a_supplier_runtime_fingerprint_v2"
 M6B_MODEL_CATALOG_MIGRATION_ID = "m6b_model_catalog_binding_v1"
+M6C_ADAPTER_CUTOVER_MIGRATION_ID = "m6c_adapter_cutover_v1"
 BUILTIN_SUPPLIERS = (
     ("agnes", "Agnes"),
     ("anthropic", "Anthropic"),
@@ -205,6 +206,16 @@ class ProductStore:
               new_job_id TEXT NOT NULL REFERENCES generation_jobs(job_id) ON DELETE RESTRICT,
               overrides_object_id TEXT NOT NULL,
               created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS generation_submission_attempts (
+              attempt_id TEXT PRIMARY KEY,
+              job_id TEXT NOT NULL UNIQUE REFERENCES generation_jobs(job_id) ON DELETE RESTRICT,
+              attempt_number INTEGER NOT NULL,
+              state TEXT NOT NULL CHECK (state IN ('prepared','submitted','committed','unknown')),
+              provider_job_id TEXT NOT NULL DEFAULT '',
+              evidence_object_id TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS schema_migrations (
               migration_id TEXT PRIMARY KEY,
@@ -378,7 +389,20 @@ class ProductStore:
         self._apply_supplier_core_migration()
         self._apply_supplier_runtime_fingerprint_migration()
         self._apply_model_catalog_binding_migration()
+        self._apply_m6c_adapter_cutover_migration()
         self.conn.commit()
+
+    def _apply_m6c_adapter_cutover_migration(self):
+        if self.conn.execute("SELECT 1 FROM schema_migrations WHERE migration_id = ?", (M6C_ADAPTER_CUTOVER_MIGRATION_ID,)).fetchone():
+            return
+        self._ensure_column("generation_jobs", "snapshot_hash", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("generation_jobs", "snapshot_object_id", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("generation_jobs", "source_job_id", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("generation_jobs", "rerun_resolution_mode", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("rerun_records", "resolution_mode", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("rerun_records", "source_snapshot_hash", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("rerun_records", "new_snapshot_hash", "TEXT NOT NULL DEFAULT ''")
+        self.conn.execute("INSERT INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)", (M6C_ADAPTER_CUTOVER_MIGRATION_ID, now_iso()))
 
     def _apply_model_catalog_binding_migration(self):
         if self.conn.execute(
@@ -2137,6 +2161,44 @@ class ProductStore:
         self.conn.commit()
         return self.get_generation_job(job_id)
 
+    def attach_generation_snapshot(self, job_id, *, snapshot_hash, snapshot_object_id):
+        self.conn.execute(
+            "UPDATE generation_jobs SET snapshot_hash = ?, snapshot_object_id = ?, updated_at = ? WHERE job_id = ?",
+            (snapshot_hash, snapshot_object_id, now_iso(), job_id),
+        )
+        self.conn.commit()
+        return self.get_generation_job(job_id)
+
+    def prepare_submission_attempt(self, job_id, *, attempt_number):
+        existing = self.conn.execute(
+            "SELECT * FROM generation_submission_attempts WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        if existing is not None:
+            return dict(existing)
+        attempt_id = uuid.uuid4().hex
+        now = now_iso()
+        self.conn.execute(
+            "INSERT INTO generation_submission_attempts (attempt_id, job_id, attempt_number, state, created_at, updated_at) VALUES (?, ?, ?, 'prepared', ?, ?)",
+            (attempt_id, job_id, attempt_number, now, now),
+        )
+        self.conn.commit()
+        return dict(self.conn.execute("SELECT * FROM generation_submission_attempts WHERE attempt_id = ?", (attempt_id,)).fetchone())
+
+    def record_submission_attempt(self, job_id, *, state, provider_job_id="", evidence_object_id=""):
+        if state not in {"submitted", "committed", "unknown"}:
+            raise ValueError("invalid submission attempt state")
+        self.conn.execute(
+            "UPDATE generation_submission_attempts SET state = ?, provider_job_id = ?, evidence_object_id = ?, updated_at = ? WHERE job_id = ?",
+            (state, provider_job_id, evidence_object_id, now_iso(), job_id),
+        )
+        self.conn.commit()
+        row = self.conn.execute("SELECT * FROM generation_submission_attempts WHERE job_id = ?", (job_id,)).fetchone()
+        return None if row is None else dict(row)
+
+    def get_submission_attempt(self, job_id):
+        row = self.conn.execute("SELECT * FROM generation_submission_attempts WHERE job_id = ?", (job_id,)).fetchone()
+        return None if row is None else dict(row)
+
     def next_generation_attempt_number(self, *, chapter_id, shot_id, provider, job_type):
         row = self.conn.execute(
             """
@@ -2306,16 +2368,19 @@ class ProductStore:
         ).fetchone()
         return None if row is None else ResultReviewRecord(**dict(row))
 
-    def create_rerun_record(self, *, source_job_id, new_job_id, overrides_object_id):
+    def create_rerun_record(self, *, source_job_id, new_job_id, overrides_object_id,
+                            resolution_mode="", source_snapshot_hash="", new_snapshot_hash=""):
         created_at = now_iso()
         rerun_id = uuid.uuid4().hex
         self.conn.execute(
             """
             INSERT INTO rerun_records
-            (rerun_id, source_job_id, new_job_id, overrides_object_id, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            (rerun_id, source_job_id, new_job_id, overrides_object_id, created_at,
+             resolution_mode, source_snapshot_hash, new_snapshot_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (rerun_id, source_job_id, new_job_id, overrides_object_id, created_at),
+            (rerun_id, source_job_id, new_job_id, overrides_object_id, created_at,
+             resolution_mode, source_snapshot_hash, new_snapshot_hash),
         )
         self.conn.commit()
         return self.get_rerun_record(rerun_id)

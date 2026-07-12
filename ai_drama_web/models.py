@@ -102,6 +102,10 @@ class GenerationJobRecord:
     completed_at: str
     created_at: str
     updated_at: str
+    snapshot_hash: str = ""
+    snapshot_object_id: str = ""
+    source_job_id: str = ""
+    rerun_resolution_mode: str = ""
 
 
 @dataclass(frozen=True)
@@ -143,3 +147,6 @@ class RerunRecord:
     new_job_id: str
     overrides_object_id: str
     created_at: str
+    resolution_mode: str = ""
+    source_snapshot_hash: str = ""
+    new_snapshot_hash: str = ""

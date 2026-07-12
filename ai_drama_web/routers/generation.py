@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -29,6 +30,7 @@ from ai_drama_web.services.generation_jobs import (
     GenerationJobBlocked,
     GenerationJobService,
 )
+from ai_drama_web.suppliers.snapshots import load_snapshot, persist_snapshot
 from ai_drama_web.store import ProductStore
 
 router = APIRouter(prefix="/api")
@@ -245,6 +247,12 @@ async def rerun_generation_job(
     if source is None:
         raise HTTPException(status_code=404, detail="generation job not found")
     overrides = _rerun_overrides(payload)
+    inherited_snapshot = None
+    if source.snapshot_hash:
+        inherited_snapshot = load_snapshot(product_store, source.snapshot_hash)
+        supplier = product_store.get_supplier(inherited_snapshot.supplier_id)
+        if supplier is None or not supplier.current_credential_version_id:
+            return _error(409, "CREDENTIAL_MISSING", "current supplier credential is missing")
     try:
         new_job = service.queue_video_job(
             prompt_revision_id=source.prompt_revision_id,
@@ -273,7 +281,31 @@ async def rerun_generation_job(
                 allow_nan=False,
             )
         ),
+        resolution_mode="inherit_source_snapshot" if inherited_snapshot else "legacy",
+        source_snapshot_hash=source.snapshot_hash,
+        new_snapshot_hash=(
+            persist_snapshot(
+                product_store,
+                replace(
+                    inherited_snapshot,
+                    credential_resolution_mode="current",
+                    resolved_credential_version_id=supplier.current_credential_version_id,
+                    source_snapshot_hash=source.snapshot_hash,
+                    source_supplier_version_id=inherited_snapshot.supplier_version_id,
+                    source_config_revision_id=inherited_snapshot.config_revision_id,
+                    source_model_revision_id=inherited_snapshot.model_revision_id,
+                ),
+            ).snapshot_hash
+            if inherited_snapshot else ""
+        ),
     )
+    if rerun.new_snapshot_hash:
+        snapshot_record = product_store.conn.execute(
+            "SELECT snapshot_object_id FROM execution_snapshots WHERE snapshot_hash = ?", (rerun.new_snapshot_hash,)
+        ).fetchone()
+        new_job = product_store.attach_generation_snapshot(
+            new_job.job_id, snapshot_hash=rerun.new_snapshot_hash, snapshot_object_id=snapshot_record["snapshot_object_id"]
+        )
     return {
         "rerun_id": rerun.rerun_id,
         "source_job_id": rerun.source_job_id,
