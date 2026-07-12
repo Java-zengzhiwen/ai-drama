@@ -589,6 +589,94 @@ class ProductStore:
             raise
         return self.get_supplier_model(supplier_model_id)
 
+    def create_supplier_model_idempotent(
+        self,
+        supplier_id,
+        *,
+        supplier_model_id,
+        source,
+        provider_model_name,
+        display_name,
+        capability,
+        definition,
+        expected_catalog_revision,
+        idempotency_key,
+        request_hash,
+    ):
+        normalized = json.dumps(
+            definition, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        )
+        definition_object_id = self.runtime.write_text_object(normalized)
+        definition_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        model_revision_id = uuid.uuid4().hex
+        created_at = now_iso()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            replay = self.conn.execute(
+                "SELECT * FROM model_creation_requests WHERE supplier_id = ? AND idempotency_key = ?",
+                (supplier_id, idempotency_key),
+            ).fetchone()
+            if replay:
+                if replay["request_hash"] != request_hash:
+                    raise RevisionConflict("model creation idempotency conflict")
+                self.conn.commit()
+                return self.get_supplier_model(replay["supplier_model_id"]), False
+            supplier = self.get_supplier(supplier_id)
+            if supplier is None:
+                raise NotFound("supplier not found: %s" % supplier_id)
+            if supplier.model_catalog_revision != expected_catalog_revision:
+                raise RevisionConflict("model catalog revision conflict")
+            self.conn.execute(
+                """
+                INSERT INTO supplier_models
+                (supplier_model_id, supplier_id, current_model_revision_id, source,
+                 enabled, revision, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 1, 1, ?, ?)
+                """,
+                (supplier_model_id, supplier_id, model_revision_id, source, created_at, created_at),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO supplier_model_revisions
+                (model_revision_id, supplier_model_id, revision, provider_model_name,
+                 display_name, capability, definition_object_id, definition_hash, created_at)
+                VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    model_revision_id,
+                    supplier_model_id,
+                    provider_model_name,
+                    display_name,
+                    capability,
+                    definition_object_id,
+                    definition_hash,
+                    created_at,
+                ),
+            )
+            cursor = self.conn.execute(
+                """
+                UPDATE suppliers
+                SET model_catalog_revision = model_catalog_revision + 1, updated_at = ?
+                WHERE supplier_id = ? AND model_catalog_revision = ?
+                """,
+                (created_at, supplier_id, expected_catalog_revision),
+            )
+            if cursor.rowcount != 1:
+                raise RevisionConflict("model catalog revision conflict")
+            self.conn.execute(
+                """
+                INSERT INTO model_creation_requests
+                (supplier_id, idempotency_key, request_hash, supplier_model_id, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (supplier_id, idempotency_key, request_hash, supplier_model_id, created_at),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return self.get_supplier_model(supplier_model_id), True
+
     def get_supplier_model(self, supplier_model_id):
         row = self.conn.execute(
             "SELECT * FROM supplier_models WHERE supplier_model_id = ?",
@@ -602,6 +690,187 @@ class ProductStore:
             (model_revision_id,),
         ).fetchone()
         return None if row is None else SupplierModelRevisionRecord(**dict(row))
+
+    def list_supplier_models(self, supplier_id):
+        rows = self.conn.execute(
+            "SELECT * FROM supplier_models WHERE supplier_id = ? ORDER BY created_at, supplier_model_id",
+            (supplier_id,),
+        ).fetchall()
+        return [SupplierModelRecord(**dict(row)) for row in rows]
+
+    def find_active_model_name(self, supplier_id, capability, provider_model_name, *, exclude_id=""):
+        return self.conn.execute(
+            """
+            SELECT m.supplier_model_id
+            FROM supplier_models AS m
+            JOIN supplier_model_revisions AS r
+              ON r.model_revision_id = m.current_model_revision_id
+            WHERE m.supplier_id = ? AND m.enabled = 1
+              AND r.capability = ? AND r.provider_model_name = ?
+              AND m.supplier_model_id <> ?
+            LIMIT 1
+            """,
+            (supplier_id, capability, provider_model_name, exclude_id),
+        ).fetchone()
+
+    def revise_supplier_model(
+        self,
+        supplier_model_id,
+        *,
+        provider_model_name,
+        display_name,
+        capability,
+        definition,
+        expected_catalog_revision,
+        expected_model_revision,
+    ):
+        normalized = json.dumps(
+            definition, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+        )
+        definition_object_id = self.runtime.write_text_object(normalized)
+        definition_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        model_revision_id = uuid.uuid4().hex
+        created_at = now_iso()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            model = self.get_supplier_model(supplier_model_id)
+            if model is None:
+                raise NotFound("model not found: %s" % supplier_model_id)
+            supplier = self.get_supplier(model.supplier_id)
+            if (
+                model.revision != expected_model_revision
+                or supplier.model_catalog_revision != expected_catalog_revision
+            ):
+                raise RevisionConflict("model revision conflict")
+            next_revision = model.revision + 1
+            self.conn.execute(
+                """
+                INSERT INTO supplier_model_revisions
+                (model_revision_id, supplier_model_id, revision, provider_model_name,
+                 display_name, capability, definition_object_id, definition_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    model_revision_id,
+                    supplier_model_id,
+                    next_revision,
+                    provider_model_name,
+                    display_name,
+                    capability,
+                    definition_object_id,
+                    definition_hash,
+                    created_at,
+                ),
+            )
+            model_cursor = self.conn.execute(
+                """
+                UPDATE supplier_models
+                SET current_model_revision_id = ?, revision = revision + 1, updated_at = ?
+                WHERE supplier_model_id = ? AND revision = ?
+                """,
+                (model_revision_id, created_at, supplier_model_id, expected_model_revision),
+            )
+            supplier_cursor = self.conn.execute(
+                """
+                UPDATE suppliers
+                SET model_catalog_revision = model_catalog_revision + 1, updated_at = ?
+                WHERE supplier_id = ? AND model_catalog_revision = ?
+                """,
+                (created_at, model.supplier_id, expected_catalog_revision),
+            )
+            if model_cursor.rowcount != 1 or supplier_cursor.rowcount != 1:
+                raise RevisionConflict("model revision conflict")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return self.get_supplier_model(supplier_model_id)
+
+    def set_supplier_model_enabled(
+        self, supplier_model_id, *, enabled, expected_catalog_revision, expected_model_revision
+    ):
+        model = self.get_supplier_model(supplier_model_id)
+        if model is None:
+            raise NotFound("model not found: %s" % supplier_model_id)
+        updated_at = now_iso()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            model_cursor = self.conn.execute(
+                """
+                UPDATE supplier_models
+                SET enabled = ?, revision = revision + 1, updated_at = ?
+                WHERE supplier_model_id = ? AND revision = ?
+                """,
+                (int(enabled), updated_at, supplier_model_id, expected_model_revision),
+            )
+            supplier_cursor = self.conn.execute(
+                """
+                UPDATE suppliers
+                SET model_catalog_revision = model_catalog_revision + 1, updated_at = ?
+                WHERE supplier_id = ? AND model_catalog_revision = ?
+                """,
+                (updated_at, model.supplier_id, expected_catalog_revision),
+            )
+            if model_cursor.rowcount != 1 or supplier_cursor.rowcount != 1:
+                raise RevisionConflict("model revision conflict")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return self.get_supplier_model(supplier_model_id)
+
+    def count_model_references(self, supplier_model_id):
+        row = self.conn.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM project_model_bindings
+               WHERE default_text_model_id = ? OR default_image_model_id = ? OR default_video_model_id = ?)
+              + (SELECT COUNT(*) FROM project_model_operation_overrides WHERE supplier_model_id = ?)
+              + (SELECT COUNT(*) FROM execution_snapshots WHERE supplier_model_id = ?) AS n
+            """,
+            (supplier_model_id,) * 5,
+        ).fetchone()
+        return int(row["n"])
+
+    def delete_supplier_model(
+        self, supplier_model_id, *, expected_catalog_revision, expected_model_revision
+    ):
+        model = self.get_supplier_model(supplier_model_id)
+        if model is None:
+            raise NotFound("model not found: %s" % supplier_model_id)
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            supplier = self.get_supplier(model.supplier_id)
+            if (
+                model.revision != expected_model_revision
+                or supplier.model_catalog_revision != expected_catalog_revision
+            ):
+                raise RevisionConflict("model revision conflict")
+            self.conn.execute(
+                "DELETE FROM model_creation_requests WHERE supplier_model_id = ?",
+                (supplier_model_id,),
+            )
+            self.conn.execute(
+                "DELETE FROM supplier_model_revisions WHERE supplier_model_id = ?",
+                (supplier_model_id,),
+            )
+            cursor = self.conn.execute(
+                "DELETE FROM supplier_models WHERE supplier_model_id = ? AND revision = ?",
+                (supplier_model_id, expected_model_revision),
+            )
+            supplier_cursor = self.conn.execute(
+                """
+                UPDATE suppliers SET model_catalog_revision = model_catalog_revision + 1, updated_at = ?
+                WHERE supplier_id = ? AND model_catalog_revision = ?
+                """,
+                (now_iso(), model.supplier_id, expected_catalog_revision),
+            )
+            if cursor.rowcount != 1 or supplier_cursor.rowcount != 1:
+                raise RevisionConflict("model revision conflict")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
 
     def get_supplier(self, supplier_id):
         row = self.conn.execute(
