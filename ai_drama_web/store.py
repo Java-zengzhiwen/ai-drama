@@ -24,6 +24,7 @@ from .suppliers.models import (
     SupplierRecord,
     SupplierModelRecord,
     SupplierModelRevisionRecord,
+    ProjectModelBindingRecord,
     SupplierVersionRecord,
 )
 
@@ -867,6 +868,84 @@ class ProductStore:
             )
             if cursor.rowcount != 1 or supplier_cursor.rowcount != 1:
                 raise RevisionConflict("model revision conflict")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
+    def get_project_model_binding(self, project_id):
+        row = self.conn.execute(
+            "SELECT * FROM project_model_bindings WHERE project_id = ?", (project_id,)
+        ).fetchone()
+        return None if row is None else ProjectModelBindingRecord(**dict(row))
+
+    def get_project_model_overrides(self, project_id):
+        rows = self.conn.execute(
+            """
+            SELECT operation_key, supplier_model_id
+            FROM project_model_operation_overrides
+            WHERE project_id = ? ORDER BY operation_key
+            """,
+            (project_id,),
+        ).fetchall()
+        return {row["operation_key"]: row["supplier_model_id"] for row in rows}
+
+    def replace_project_model_bindings(
+        self, project_id, *, defaults, overrides, expected_revision
+    ):
+        created_at = now_iso()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            current = self.get_project_model_binding(project_id)
+            if current is None:
+                if expected_revision != 0:
+                    raise RevisionConflict("binding set revision conflict")
+                self.conn.execute(
+                    """
+                    INSERT INTO project_model_bindings
+                    (project_id, default_text_model_id, default_image_model_id,
+                     default_video_model_id, binding_set_revision, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, 1, ?, ?)
+                    """,
+                    (
+                        project_id,
+                        defaults["text"],
+                        defaults["image"],
+                        defaults["video"],
+                        created_at,
+                        created_at,
+                    ),
+                )
+            else:
+                cursor = self.conn.execute(
+                    """
+                    UPDATE project_model_bindings
+                    SET default_text_model_id = ?, default_image_model_id = ?,
+                        default_video_model_id = ?, binding_set_revision = binding_set_revision + 1,
+                        updated_at = ?
+                    WHERE project_id = ? AND binding_set_revision = ?
+                    """,
+                    (
+                        defaults["text"],
+                        defaults["image"],
+                        defaults["video"],
+                        created_at,
+                        project_id,
+                        expected_revision,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    raise RevisionConflict("binding set revision conflict")
+            self.conn.execute(
+                "DELETE FROM project_model_operation_overrides WHERE project_id = ?", (project_id,)
+            )
+            self.conn.executemany(
+                """
+                INSERT INTO project_model_operation_overrides
+                (project_id, operation_key, supplier_model_id) VALUES (?, ?, ?)
+                """,
+                [(project_id, key, model_id) for key, model_id in sorted(overrides.items())],
+            )
             self.conn.commit()
         except Exception:
             self.conn.rollback()

@@ -1,0 +1,17 @@
+OPERATION_CAPABILITIES = {
+    "source_segmentation": "text",
+    "script_adaptation": "text",
+    "material_extraction": "text",
+    "character_bible": "text",
+    "scene_bible": "text",
+    "prop_bible": "text",
+    "storyboard_design": "text",
+    "visual_anchor_planning": "text",
+    "image_prompt_generation": "text",
+    "shot_prompt_generation": "text",
+    "character_reference_image": "image",
+    "scene_reference_image": "image",
+    "prop_reference_image": "image",
+    "storyboard_keyframe_image": "image",
+    "shot_video_generation": "video",
+}
