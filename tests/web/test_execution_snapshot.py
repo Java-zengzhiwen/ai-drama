@@ -5,6 +5,7 @@ import pytest
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_web.store import ProductStore
 from ai_drama_web.suppliers.resolution import ModelBindingService, ModelResolver
+from ai_drama_web.suppliers.model_catalog import ModelCatalogError, ModelCatalogService
 from ai_drama_web.suppliers.snapshots import (
     SnapshotBuilder,
     SupplierRuntimeUnavailable,
@@ -111,3 +112,22 @@ def test_historical_snapshot_keeps_old_model_revision_and_missing_object_fails_c
     runtime.conn.commit()
     with pytest.raises(SupplierRuntimeUnavailable, match="SUPPLIER_RUNTIME_UNAVAILABLE"):
         load_snapshot(store, record.snapshot_hash)
+
+
+def test_snapshotted_model_cannot_be_physically_deleted(tmp_path):
+    _runtime, store, resolved = _resolved(tmp_path)
+    snapshot = SnapshotBuilder(store).build(
+        resolved,
+        credential_resolution_mode="current",
+        resolved_credential_version_id="",
+        resolved_constraints={},
+        worker_limits={},
+        created_at="2026-07-13T00:00:00.000000Z",
+    )
+    persist_snapshot(store, snapshot)
+    with pytest.raises(ModelCatalogError, match="MODEL_REFERENCED"):
+        ModelCatalogService(store).delete_overlay(
+            resolved.model.supplier_model_id,
+            expected_catalog_revision=1,
+            expected_model_revision=1,
+        )
