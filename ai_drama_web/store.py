@@ -17,6 +17,12 @@ from .models import (
     ResultReviewRecord,
     ShotResultSelectionRecord,
 )
+from .suppliers.models import (
+    ConfigRevisionRecord,
+    RevisionConflict,
+    SupplierRecord,
+    SupplierVersionRecord,
+)
 
 
 GENERATION_JOB_TRANSITIONS = {
@@ -29,6 +35,15 @@ GENERATION_JOB_TRANSITIONS = {
     "failed": set(),
     "cancelled": set(),
 }
+
+M6A_SUPPLIER_MIGRATION_ID = "m6a_supplier_core_v1"
+BUILTIN_SUPPLIERS = (
+    ("agnes", "Agnes"),
+    ("anthropic", "Anthropic"),
+    ("deepseek", "DeepSeek"),
+    ("openai", "OpenAI"),
+    ("xai", "xAI Grok"),
+)
 
 
 class ProductStore:
@@ -181,6 +196,70 @@ class ProductStore:
               overrides_object_id TEXT NOT NULL,
               created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+              migration_id TEXT PRIMARY KEY,
+              applied_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS suppliers (
+              supplier_id TEXT PRIMARY KEY,
+              slug TEXT NOT NULL UNIQUE,
+              display_name TEXT NOT NULL,
+              source TEXT NOT NULL CHECK (source IN ('built_in','custom')),
+              enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+              current_supplier_version_id TEXT NOT NULL DEFAULT '',
+              current_config_revision_id TEXT NOT NULL DEFAULT '',
+              current_credential_version_id TEXT NOT NULL DEFAULT '',
+              revision INTEGER NOT NULL DEFAULT 1,
+              config_revision INTEGER NOT NULL DEFAULT 0,
+              credential_revision INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS supplier_versions (
+              supplier_version_id TEXT PRIMARY KEY,
+              supplier_id TEXT NOT NULL REFERENCES suppliers(supplier_id) ON DELETE RESTRICT,
+              revision INTEGER NOT NULL,
+              source_object_id TEXT NOT NULL,
+              source_hash TEXT NOT NULL,
+              compiled_artifact_object_id TEXT NOT NULL,
+              compiled_artifact_hash TEXT NOT NULL,
+              manifest_hash TEXT NOT NULL,
+              built_in INTEGER NOT NULL DEFAULT 0 CHECK (built_in IN (0,1)),
+              created_at TEXT NOT NULL,
+              UNIQUE(supplier_id, revision)
+            );
+            CREATE TABLE IF NOT EXISTS supplier_config_revisions (
+              config_revision_id TEXT PRIMARY KEY,
+              supplier_id TEXT NOT NULL REFERENCES suppliers(supplier_id) ON DELETE RESTRICT,
+              revision INTEGER NOT NULL,
+              config_object_id TEXT NOT NULL,
+              config_hash TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              UNIQUE(supplier_id, revision)
+            );
+            CREATE TABLE IF NOT EXISTS credential_versions (
+              credential_version_id TEXT PRIMARY KEY,
+              supplier_id TEXT NOT NULL REFERENCES suppliers(supplier_id) ON DELETE RESTRICT,
+              revision INTEGER NOT NULL,
+              state TEXT NOT NULL CHECK (state IN ('pending_finalize','ready','pending_delete','credential_storage_corrupt')),
+              secret_path TEXT NOT NULL,
+              content_hash TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              UNIQUE(supplier_id, revision)
+            );
+            CREATE TABLE IF NOT EXISTS credential_migration_journal (
+              operation_id TEXT PRIMARY KEY,
+              supplier_id TEXT NOT NULL REFERENCES suppliers(supplier_id) ON DELETE RESTRICT,
+              credential_version_id TEXT NOT NULL,
+              operation TEXT NOT NULL CHECK (operation IN ('replace','delete')),
+              state TEXT NOT NULL,
+              temp_path TEXT NOT NULL,
+              final_path TEXT NOT NULL,
+              content_hash TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
             """
         )
         self._ensure_column("asset_bindings", "is_current", "INTEGER NOT NULL DEFAULT 0")
@@ -197,7 +276,186 @@ class ProductStore:
               WHERE is_current = 1
             """
         )
+        self._apply_supplier_core_migration()
         self.conn.commit()
+
+    def _apply_supplier_core_migration(self):
+        if self.conn.execute(
+            "SELECT 1 FROM schema_migrations WHERE migration_id = ?",
+            (M6A_SUPPLIER_MIGRATION_ID,),
+        ).fetchone():
+            return
+        created_at = now_iso()
+        for slug, display_name in BUILTIN_SUPPLIERS:
+            supplier_id = uuid.uuid5(uuid.NAMESPACE_URL, "ai-drama:supplier:%s" % slug).hex
+            config_revision_id = uuid.uuid5(
+                uuid.NAMESPACE_URL, "ai-drama:supplier:%s:config:1" % slug
+            ).hex
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO suppliers
+                (supplier_id, slug, display_name, source, enabled,
+                 current_config_revision_id, revision, config_revision,
+                 credential_revision, created_at, updated_at)
+                VALUES (?, ?, ?, 'built_in', 1, ?, 1, 1, 0, ?, ?)
+                """,
+                (supplier_id, slug, display_name, config_revision_id, created_at, created_at),
+            )
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO supplier_config_revisions
+                (config_revision_id, supplier_id, revision, config_object_id,
+                 config_hash, created_at)
+                VALUES (?, ?, 1, '', '', ?)
+                """,
+                (config_revision_id, supplier_id, created_at),
+            )
+        self.conn.execute(
+            "INSERT INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)",
+            (M6A_SUPPLIER_MIGRATION_ID, created_at),
+        )
+
+    def create_supplier(self, *, slug, display_name):
+        if self.conn.execute("SELECT 1 FROM suppliers WHERE slug = ?", (slug,)).fetchone():
+            raise ValueError("supplier slug already exists: %s" % slug)
+        supplier_id = uuid.uuid4().hex
+        config_revision_id = uuid.uuid4().hex
+        created_at = now_iso()
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO suppliers
+                (supplier_id, slug, display_name, source, enabled,
+                 current_config_revision_id, revision, config_revision,
+                 credential_revision, created_at, updated_at)
+                VALUES (?, ?, ?, 'custom', 1, ?, 1, 1, 0, ?, ?)
+                """,
+                (supplier_id, slug, display_name, config_revision_id, created_at, created_at),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO supplier_config_revisions
+                (config_revision_id, supplier_id, revision, config_object_id,
+                 config_hash, created_at)
+                VALUES (?, ?, 1, '', '', ?)
+                """,
+                (config_revision_id, supplier_id, created_at),
+            )
+        return self.get_supplier(supplier_id)
+
+    def get_supplier(self, supplier_id):
+        row = self.conn.execute(
+            "SELECT * FROM suppliers WHERE supplier_id = ?", (supplier_id,)
+        ).fetchone()
+        return None if row is None else SupplierRecord(**dict(row))
+
+    def list_suppliers(self):
+        rows = self.conn.execute("SELECT * FROM suppliers ORDER BY slug").fetchall()
+        return [SupplierRecord(**dict(row)) for row in rows]
+
+    def replace_supplier_version(
+        self,
+        supplier_id,
+        *,
+        source_object_id,
+        source_hash,
+        compiled_artifact_object_id,
+        compiled_artifact_hash,
+        manifest_hash,
+        expected_revision,
+        built_in=False,
+    ):
+        supplier_version_id = uuid.uuid4().hex
+        created_at = now_iso()
+        with self.conn:
+            supplier = self.get_supplier(supplier_id)
+            if supplier is None:
+                raise NotFound("supplier not found: %s" % supplier_id)
+            if supplier.revision != expected_revision:
+                raise RevisionConflict("supplier revision conflict")
+            revision = expected_revision + 1
+            self.conn.execute(
+                """
+                INSERT INTO supplier_versions
+                (supplier_version_id, supplier_id, revision, source_object_id,
+                 source_hash, compiled_artifact_object_id, compiled_artifact_hash,
+                 manifest_hash, built_in, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    supplier_version_id,
+                    supplier_id,
+                    revision,
+                    source_object_id,
+                    source_hash,
+                    compiled_artifact_object_id,
+                    compiled_artifact_hash,
+                    manifest_hash,
+                    int(built_in),
+                    created_at,
+                ),
+            )
+            self.conn.execute(
+                """
+                UPDATE suppliers
+                SET current_supplier_version_id = ?, revision = ?, updated_at = ?
+                WHERE supplier_id = ?
+                """,
+                (supplier_version_id, revision, created_at, supplier_id),
+            )
+        return self.get_supplier_version(supplier_version_id)
+
+    def get_supplier_version(self, supplier_version_id):
+        row = self.conn.execute(
+            "SELECT * FROM supplier_versions WHERE supplier_version_id = ?",
+            (supplier_version_id,),
+        ).fetchone()
+        return None if row is None else SupplierVersionRecord(**dict(row))
+
+    def replace_supplier_config(
+        self, supplier_id, *, config_object_id, config_hash, expected_revision
+    ):
+        config_revision_id = uuid.uuid4().hex
+        created_at = now_iso()
+        with self.conn:
+            supplier = self.get_supplier(supplier_id)
+            if supplier is None:
+                raise NotFound("supplier not found: %s" % supplier_id)
+            if supplier.config_revision != expected_revision:
+                raise RevisionConflict("supplier config revision conflict")
+            revision = expected_revision + 1
+            self.conn.execute(
+                """
+                INSERT INTO supplier_config_revisions
+                (config_revision_id, supplier_id, revision, config_object_id,
+                 config_hash, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    config_revision_id,
+                    supplier_id,
+                    revision,
+                    config_object_id,
+                    config_hash,
+                    created_at,
+                ),
+            )
+            self.conn.execute(
+                """
+                UPDATE suppliers
+                SET current_config_revision_id = ?, config_revision = ?, updated_at = ?
+                WHERE supplier_id = ?
+                """,
+                (config_revision_id, revision, created_at, supplier_id),
+            )
+        return self.get_config_revision(config_revision_id)
+
+    def get_config_revision(self, config_revision_id):
+        row = self.conn.execute(
+            "SELECT * FROM supplier_config_revisions WHERE config_revision_id = ?",
+            (config_revision_id,),
+        ).fetchone()
+        return None if row is None else ConfigRevisionRecord(**dict(row))
 
     def _ensure_column(self, table_name, column_name, definition):
         rows = self.conn.execute("PRAGMA table_info(%s)" % table_name).fetchall()
