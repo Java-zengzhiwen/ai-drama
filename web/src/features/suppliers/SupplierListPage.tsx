@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Modal, Tag } from "antd";
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { createSupplier, listSuppliers, newIdempotencyKey, updateSupplier, type SupplierRead } from "./api";
 import { toManagementError } from "./managementErrors";
@@ -11,7 +11,7 @@ const CAPABILITY_LABEL: Record<string, string> = {
   video: "视频",
 };
 
-function LocalManagementError({ error }: { error: unknown }) {
+function LocalManagementError({ error, onReload }: { error: unknown; onReload?: () => void }) {
   const normalized = toManagementError(error);
   const lines = normalized.message.split("\n");
   return (
@@ -20,6 +20,9 @@ function LocalManagementError({ error }: { error: unknown }) {
       {lines.slice(1).map((line) => (
         <p key={line}>{line}</p>
       ))}
+      {normalized.code === "REVISION_CONFLICT" && onReload ? (
+        <Button size="small" onClick={onReload}>重新加载供应商</Button>
+      ) : null}
     </div>
   );
 }
@@ -72,6 +75,7 @@ export function SupplierListPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [displayName, setDisplayName] = useState("");
   const [slug, setSlug] = useState("");
+  const nameInput = useRef<import("antd").InputRef>(null);
   const suppliers = useQuery({ queryKey: ["suppliers"], queryFn: listSuppliers });
   const create = useMutation({
     mutationFn: () =>
@@ -138,7 +142,7 @@ export function SupplierListPage() {
               onToggle={() => toggle.mutate(supplier)}
             />
           ))}
-          {toggle.isError ? <LocalManagementError error={toggle.error} /> : null}
+          {toggle.isError ? <LocalManagementError error={toggle.error} onReload={() => void suppliers.refetch()} /> : null}
         </div>
       ) : null}
 
@@ -147,6 +151,9 @@ export function SupplierListPage() {
         open={dialogOpen}
         footer={null}
         onCancel={() => setDialogOpen(false)}
+        afterOpenChange={(open) => {
+          if (open) nameInput.current?.focus();
+        }}
         destroyOnHidden
       >
         <form className="management-form" onSubmit={submit}>
@@ -154,7 +161,7 @@ export function SupplierListPage() {
             <span>供应商名称</span>
             <Input
               aria-label="供应商名称"
-              autoFocus
+              ref={nameInput}
               value={displayName}
               onChange={(event) => setDisplayName(event.target.value)}
             />

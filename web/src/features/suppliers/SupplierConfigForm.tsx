@@ -25,7 +25,14 @@ function validate(values: Record<string, string>): ManagementError | null {
   for (const [key, value] of Object.entries(values)) {
     if ((key === "base_url" || key.endsWith("_endpoint")) && value) {
       try {
-        if (new URL(value).protocol !== "https:") throw new Error("not https");
+        const url = new URL(value);
+        if (url.protocol !== "https:") throw new Error("not https");
+        if (url.username || url.password) {
+          return {
+            code: "INVALID_BASE_URL",
+            message: `${key === "base_url" ? "Base URL" : key} 不能包含用户名或密码。`,
+          };
+        }
       } catch {
         return {
           code: "INVALID_BASE_URL",
@@ -68,6 +75,7 @@ export function SupplierConfigForm({
         values,
         `"config-${supplier.config_revision}"`,
       );
+      await onReload();
       setSuccess("配置已保存为新版本。");
     } catch (caught) {
       setError(toManagementError(caught));

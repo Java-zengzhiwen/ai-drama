@@ -67,6 +67,7 @@ describe("supplier management API", () => {
     );
     expect(remove).toHaveBeenCalledWith("/suppliers/supplier-1/secret", {
       headers: { "If-Match": '"credential-2"' },
+      params: undefined,
     });
     expect(post).toHaveBeenCalledWith(
       "/suppliers/supplier-1/restore-built-in",
@@ -213,5 +214,16 @@ describe("supplier management API", () => {
       message: "数据已在其他页面更新，请重新加载后再保存。",
       status: 409,
     });
+
+    for (const [code, message] of [
+      ["MODEL_CAPABILITY_MISMATCH", "所选模型能力与此步骤不匹配，请重新选择。"],
+      ["MODEL_DISABLED", "所选模型已停用，请重新选择。"],
+      ["SUPPLIER_DISABLED", "所选模型的供应商已停用，请重新选择。"],
+    ]) {
+      expect(toManagementError({
+        isAxiosError: true,
+        response: { status: 409, data: { detail: { error_code: code } } },
+      }).message).toBe(message);
+    }
   });
 });

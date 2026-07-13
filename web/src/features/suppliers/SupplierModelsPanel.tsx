@@ -178,7 +178,14 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
       <label><span>能力</span><select aria-label="能力" value={draft.capability} onChange={(event) => setDraft((current) => ({ ...current, capability: event.target.value as SupplierModelCapability }))}><option value="text">文本</option><option value="image">图片</option><option value="video">视频</option></select></label>
       <label><span>模式与约束 JSON</span><textarea aria-label="模式与约束 JSON" value={draft.definition} onChange={(event) => setDraft((current) => ({ ...current, definition: event.target.value }))} /></label>
       {mode === "edit" && editing?.binding_count ? <Checkbox checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)}>我已确认将影响 {editing.binding_count} 处项目绑定</Checkbox> : null}
-      {error ? <div className="management-error" role="alert"><strong>{error.message}</strong></div> : null}
+      {error ? (
+        <div className="management-error" role="alert">
+          <strong>{error.message}</strong>
+          {error.code === "REVISION_CONFLICT" ? (
+            <Button size="small" onClick={() => void models.refetch()}>重新加载模型</Button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="management-form-actions"><Button onClick={() => mode === "create" ? setCreateOpen(false) : setEditing(null)}>取消</Button><Button htmlType="submit" type="primary" loading={saving} disabled={!draft.displayName || !draft.providerName || (mode === "edit" && Boolean(editing?.binding_count) && !acknowledged)}>{mode === "create" ? "保存新模型" : "保存新版本"}</Button></div>
     </form>
   );

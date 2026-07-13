@@ -1,6 +1,9 @@
+import json
+
 from fastapi.testclient import TestClient
 
 from ai_drama_web.app import create_app
+from ai_drama_web.suppliers.builtin_adapters import install_builtin_adapters
 
 
 SOURCE = """
@@ -182,6 +185,60 @@ def test_supplier_management_projection_round_trips_config_without_credential(tm
         assert payload["credential"] == {"configured": True, "masked_suffix": "1234"}
         assert secret_value not in listing.text
         assert secret_value not in detail.text
+
+
+def test_supplier_management_projection_strips_url_userinfo_query_and_fragment(tmp_path):
+    sensitive_url = "https://user:password@local.example.invalid:8443/v1?token=secret#private"
+    with _client(tmp_path) as client:
+        created = client.post(
+            "/api/suppliers",
+            json={"slug": "safe-url", "display_name": "Safe URL"},
+            headers={"If-None-Match": "*", "Idempotency-Key": "create-safe-url"},
+        ).json()
+        supplier_id = created["supplier_id"]
+        saved = client.put(
+            f"/api/suppliers/{supplier_id}/config",
+            json={"values": {"base_url": sensitive_url}},
+            headers={"If-Match": '"config-1"'},
+        )
+        assert saved.status_code == 200
+        detail = client.get(f"/api/suppliers/{supplier_id}")
+
+    assert detail.json()["config_values"]["base_url"] == "https://local.example.invalid:8443/v1"
+    assert detail.json()["base_url_summary"] == "https://local.example.invalid:8443/v1"
+    assert "user" not in detail.text
+    assert "password" not in detail.text
+    assert "token" not in detail.text
+    assert "private" not in detail.text
+
+
+def test_partial_config_update_preserves_hidden_non_string_agnes_values(tmp_path):
+    with _client(tmp_path) as client:
+        client.portal.call(lambda: install_builtin_adapters(client.app.state.product_store))
+        supplier = next(item for item in client.get("/api/suppliers").json() if item["slug"] == "agnes")
+        saved = client.put(
+            f"/api/suppliers/{supplier['supplier_id']}/config",
+            json={"values": {"video_endpoint": "https://local.example.invalid/v1/videos"}},
+            headers={"If-Match": f'"config-{supplier["config_revision"]}"'},
+        )
+        assert saved.status_code == 200, saved.text
+        current = client.portal.call(
+            lambda: client.app.state.product_store.get_supplier(
+                supplier["supplier_id"]
+            )
+        )
+        config = client.portal.call(
+            lambda: client.app.state.product_store.get_config_revision(
+                current.current_config_revision_id
+            )
+        )
+        stored = client.portal.call(
+            lambda: client.app.state.runtime_store.read_text(config.config_object_id)
+        )
+
+    assert json.loads(stored)["result_origins"] == [
+        "https://platform-outputs.agnes-ai.space"
+    ]
 
 
 def test_custom_empty_supplier_management_projection_is_safe(tmp_path):

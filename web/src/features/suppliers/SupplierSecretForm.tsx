@@ -1,4 +1,4 @@
-import { Button, Input, Modal } from "antd";
+import { Button, Checkbox, Input, Modal } from "antd";
 import { FormEvent, useEffect, useState } from "react";
 import {
   deleteSupplierSecret,
@@ -13,6 +13,7 @@ export function SupplierSecretForm({ supplier }: { supplier: SupplierRead }) {
   const [visible, setVisible] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [forceAcknowledged, setForceAcknowledged] = useState(false);
   const [status, setStatus] = useState<SupplierCredentialStatus>(supplier.credential);
   const [credentialRevision, setCredentialRevision] = useState(supplier.credential_revision);
   const [error, setError] = useState<ManagementError | null>(null);
@@ -51,10 +52,12 @@ export function SupplierSecretForm({ supplier }: { supplier: SupplierRead }) {
       const deleted = await deleteSupplierSecret(
         supplier.supplier_id,
         `"credential-${credentialRevision}"`,
+        supplier.credential_active_job_count > 0,
       );
       setStatus(deleted.data);
       setCredentialRevision((current) => current + 1);
       setDeleteOpen(false);
+      setForceAcknowledged(false);
     } catch (caught) {
       setError(toManagementError(caught));
     } finally {
@@ -101,7 +104,7 @@ export function SupplierSecretForm({ supplier }: { supplier: SupplierRead }) {
           <Button htmlType="submit" type="primary" disabled={credential.length < 8} loading={saving}>
             保存密钥
           </Button>
-          <Button danger disabled={!status.configured} onClick={() => setDeleteOpen(true)}>
+          <Button danger disabled={!status.configured} onClick={() => { setForceAcknowledged(false); setDeleteOpen(true); }}>
             删除密钥
           </Button>
         </div>
@@ -110,14 +113,30 @@ export function SupplierSecretForm({ supplier }: { supplier: SupplierRead }) {
       <Modal
         title="确认删除密钥"
         open={deleteOpen}
-        onCancel={() => setDeleteOpen(false)}
+        onCancel={() => { setDeleteOpen(false); setForceAcknowledged(false); }}
         onOk={() => void remove()}
         okText="确认删除"
         cancelText="取消"
-        okButtonProps={{ danger: true, loading: saving }}
+        okButtonProps={{
+          danger: true,
+          loading: saving,
+          disabled: supplier.credential_active_job_count > 0 && !forceAcknowledged,
+        }}
         destroyOnHidden
       >
-        <p>删除后无法恢复。已有任务可能无法继续轮询或重新运行，请确认影响范围后再继续。</p>
+        {supplier.credential_active_job_count > 0 ? (
+          <>
+            <p>
+              当前密钥仍被 {supplier.credential_active_job_count} 个活动任务引用。强制删除会取消尚未提交的任务，
+              并将已提交或轮询中的任务标记为 credential_revoked；供应商侧任务不会被重新提交。
+            </p>
+            <Checkbox checked={forceAcknowledged} onChange={(event) => setForceAcknowledged(event.target.checked)}>
+              我已确认强制删除对这 {supplier.credential_active_job_count} 个活动任务的影响
+            </Checkbox>
+          </>
+        ) : (
+          <p>删除后无法恢复。后续任务和重新运行将无法解析此密钥。</p>
+        )}
       </Modal>
     </section>
   );

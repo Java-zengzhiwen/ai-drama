@@ -53,6 +53,7 @@ const supplier = {
   model_count: 0,
   base_url_summary: "https://api.example.invalid/v1",
   credential: { configured: true, masked_suffix: "ABCD" },
+  credential_active_job_count: 0,
 };
 
 function mockReads() {
@@ -117,6 +118,40 @@ describe("supplier detail page", () => {
       ),
     );
     expect(await screen.findByText("配置已保存为新版本。" )).toBeInTheDocument();
+    await waitFor(() =>
+      expect(get.mock.calls.filter(([url]) => url === "/suppliers/supplier-1")).toHaveLength(2),
+    );
+  });
+
+  test("uses the refreshed config ETag for a consecutive save", async () => {
+    let detailReads = 0;
+    get.mockImplementation(async (url: string) => {
+      if (url === "/suppliers") return { data: [supplier], headers: {} };
+      if (url === "/suppliers/supplier-1") {
+        detailReads += 1;
+        const next = detailReads > 1
+          ? { ...supplier, config_revision: 4, current_config_revision_id: "config-4" }
+          : supplier;
+        return { data: next, headers: { etag: '"supplier-2"' } };
+      }
+      if (url === "/suppliers/supplier-1/models") return { data: [], headers: { etag: '"model-catalog-0"' } };
+      throw new Error(`unexpected GET ${url}`);
+    });
+    put.mockResolvedValue({ data: { config_revision_id: "config-next", revision: 4 }, headers: {} });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Local Supplier" });
+    fireEvent.click(screen.getByRole("tab", { name: "配置" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+    await waitFor(() => expect(screen.getAllByText("config-4").length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+
+    await waitFor(() => expect(put).toHaveBeenNthCalledWith(
+      2,
+      "/suppliers/supplier-1/config",
+      { values: supplier.config_values },
+      { headers: { "If-Match": '"config-4"' } },
+    ));
   });
 
   test("rejects a non-HTTPS Base URL before mutation", async () => {
@@ -129,6 +164,19 @@ describe("supplier detail page", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
 
     expect(await screen.findByText("Base URL 必须使用 HTTPS。" )).toBeInTheDocument();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  test("rejects Base URL userinfo before mutation", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Local Supplier" });
+    fireEvent.click(screen.getByRole("tab", { name: "配置" }));
+    fireEvent.change(screen.getByLabelText("Base URL"), {
+      target: { value: "https://user:password@api.example.invalid/v1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+
+    expect(await screen.findByText("Base URL 不能包含用户名或密码。")).toBeInTheDocument();
     expect(put).not.toHaveBeenCalled();
   });
 
@@ -171,13 +219,51 @@ describe("supplier detail page", () => {
     fireEvent.click(screen.getByRole("button", { name: "删除密钥" }));
 
     expect(screen.getByRole("dialog", { name: "确认删除密钥" })).toBeInTheDocument();
-    expect(screen.getByText(/已有任务可能无法继续轮询或重新运行/)).toBeInTheDocument();
+    expect(screen.getByText(/后续任务和重新运行将无法解析此密钥/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
     await waitFor(() =>
       expect(remove).toHaveBeenCalledWith("/suppliers/supplier-1/secret", {
         headers: { "If-Match": '"credential-1"' },
+        params: undefined,
       }),
     );
+  });
+
+  test("requires a second acknowledgement before force-deleting an active credential", async () => {
+    get.mockImplementation(async (url: string) => {
+      if (url === "/suppliers") return { data: [{ ...supplier, credential_active_job_count: 2 }], headers: {} };
+      if (url === "/suppliers/supplier-1") return { data: { ...supplier, credential_active_job_count: 2 }, headers: { etag: '"supplier-2"' } };
+      if (url === "/suppliers/supplier-1/models") return { data: [], headers: { etag: '"model-catalog-0"' } };
+      throw new Error(`unexpected GET ${url}`);
+    });
+    remove.mockResolvedValue({ data: { configured: false, masked_suffix: "" }, headers: {} });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Local Supplier" });
+    fireEvent.click(screen.getByRole("tab", { name: "密钥" }));
+    fireEvent.click(screen.getByRole("button", { name: "删除密钥" }));
+
+    expect(screen.getByText(/当前密钥仍被 2 个活动任务引用/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "确认删除" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("checkbox", { name: /我已确认强制删除/ }));
+    fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+
+    await waitFor(() => expect(remove).toHaveBeenCalledWith(
+      "/suppliers/supplier-1/secret",
+      { headers: { "If-Match": '"credential-1"' }, params: { force: true } },
+    ));
+  });
+
+  test("supports arrow-key navigation between tabs with roving focus", async () => {
+    render(<App />);
+    await screen.findByRole("heading", { name: "Local Supplier" });
+    const modelsTab = screen.getByRole("tab", { name: "模型" });
+    modelsTab.focus();
+    fireEvent.keyDown(modelsTab, { key: "ArrowLeft" });
+
+    const codeTab = screen.getByRole("tab", { name: "适配代码" });
+    expect(codeTab).toHaveFocus();
+    expect(codeTab).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("tabpanel")).toHaveAttribute("aria-labelledby", "supplier-tab-code");
   });
 
   test("lazy-loads TypeScript source and renders safe line-column diagnostics", async () => {

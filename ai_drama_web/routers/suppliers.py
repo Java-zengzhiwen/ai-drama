@@ -14,6 +14,7 @@ from ai_drama_web.schemas.suppliers import (
     SupplierUpdate,
 )
 from ai_drama_web.suppliers.compiler import SupplierCompileError, compile_supplier
+from ai_drama_web.suppliers.credentials import CredentialInUse
 from ai_drama_web.suppliers.models import RevisionConflict
 
 
@@ -176,7 +177,10 @@ async def put_supplier_config(
     if_match: str | None = Header(default=None),
 ):
     revision = _expected_revision(if_match, "config")
-    normalized = json.dumps(payload.values, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    supplier = _require_supplier(request, supplier_id)
+    current_values = _current_config_object(request, supplier)
+    current_values.update(payload.values)
+    normalized = json.dumps(current_values, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     object_id = request.app.state.runtime_store.write_text_object(normalized)
     try:
         record = request.app.state.product_store.replace_supplier_config(
@@ -216,14 +220,23 @@ async def delete_supplier_secret(
     request: Request,
     response: Response,
     if_match: str | None = Header(default=None),
+    force: bool = False,
 ):
     revision = _expected_revision(if_match, "credential")
     try:
         request.app.state.supplier_credential_store.delete(
-            supplier_id, expected_revision=revision
+            supplier_id, expected_revision=revision, force=force
         )
     except RevisionConflict as exc:
         raise HTTPException(409, detail={"error_code": "REVISION_CONFLICT"}) from exc
+    except CredentialInUse as exc:
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": "CREDENTIAL_IN_USE",
+                "active_job_count": exc.active_job_count,
+            },
+        ) from exc
     current_revision = request.app.state.product_store.get_supplier(
         supplier_id
     ).credential_revision
@@ -268,6 +281,7 @@ def _supplier_read(request, supplier):
     return {
         **supplier.__dict__,
         "credential": _stored_credential_status(request, supplier),
+        "credential_active_job_count": _credential_active_job_count(request, supplier),
         "author": str(manifest.get("author") or ""),
         "version": str(manifest.get("version") or ""),
         "manifest": safe_manifest,
@@ -292,6 +306,10 @@ def _current_manifest(request, supplier):
 
 
 def _current_config_values(request, supplier):
+    return _safe_string_map(_current_config_object(request, supplier))
+
+
+def _current_config_object(request, supplier):
     if not supplier.current_config_revision_id:
         return {}
     revision = request.app.state.product_store.get_config_revision(
@@ -299,7 +317,7 @@ def _current_config_values(request, supplier):
     )
     if revision is None or not revision.config_object_id:
         return {}
-    return _safe_string_map(_read_json_object(request, revision.config_object_id))
+    return _read_json_object(request, revision.config_object_id)
 
 
 def _read_json_object(request, object_id):
@@ -356,7 +374,16 @@ def _strip_url_query(value):
         return value
     if parsed.scheme not in {"http", "https"}:
         return value
-    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+    try:
+        hostname = parsed.hostname or ""
+        port = parsed.port
+    except ValueError:
+        return ""
+    if not hostname:
+        return ""
+    safe_host = f"[{hostname}]" if ":" in hostname else hostname
+    safe_netloc = f"{safe_host}:{port}" if port is not None else safe_host
+    return urlunsplit((parsed.scheme, safe_netloc, parsed.path, "", ""))
 
 
 def _base_url_summary(config_values):
@@ -376,6 +403,16 @@ def _stored_credential_status(request, supplier):
     except RuntimeError:
         return {"configured": True, "masked_suffix": ""}
     return _credential_status(value)
+
+
+def _credential_active_job_count(request, supplier):
+    if not supplier.current_credential_version_id:
+        return 0
+    return len(
+        request.app.state.supplier_credential_store.active_job_references(
+            supplier.current_credential_version_id
+        )
+    )
 
 
 def _credential_status(value):

@@ -18,6 +18,12 @@ const ERROR_MESSAGES: Record<string, string> = {
   SUPPLIER_NOT_FOUND: "供应商不存在或已被移除。",
   MODEL_NOT_FOUND: "模型不存在或已被移除。",
   MODEL_BINDING_MISSING: "尚未配置此步骤所需的模型。",
+  MODEL_CAPABILITY_MISMATCH: "所选模型能力与此步骤不匹配，请重新选择。",
+  MODEL_DISABLED: "所选模型已停用，请重新选择。",
+  SUPPLIER_DISABLED: "所选模型的供应商已停用，请重新选择。",
+  PROJECT_NOT_FOUND: "项目不存在或已被移除。",
+  OPERATION_NOT_FOUND: "当前步骤不支持模型覆盖。",
+  CREDENTIAL_IN_USE: "当前密钥仍被活动任务使用，请确认影响后再强制删除。",
 };
 
 export function toManagementError(error: unknown): ManagementError {

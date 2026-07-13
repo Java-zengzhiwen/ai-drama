@@ -28,6 +28,19 @@ def pytest_cases(*cases):
 
 
 def verify():
+    playwright_source = (ROOT / "web/tests/m6d-management-ui.spec.ts").read_text()
+    required_browser_evidence = all(
+        marker in playwright_source
+        for marker in (
+            "M6D_BROWSER_VERSION_1",
+            "M6D_BROWSER_VERSION_2",
+            "现有 queued/submitted/polling 任务继续使用创建时快照",
+            "unexpectedNetwork",
+            "恢复内置版本",
+            "Disposable Image",
+            "stale config code and model writes",
+        )
+    )
     supplier_ui = run(
         [
             "npm",
@@ -65,9 +78,7 @@ def verify():
             "src/features/projects/ProjectModelBindings.test.tsx",
         ]
     )
-    playwright = run(
-        ["npm", "--prefix", "web", "run", "test:e2e", "--", "m6d-management-ui.spec.ts"]
-    )
+    playwright = run(["npm", "--prefix", "web", "run", "test:e2e"])
     supplier_api = pytest_cases("tests/web/test_supplier_api.py")
     model_api = pytest_cases("tests/web/test_model_api.py")
     binding_api = pytest_cases("tests/web/test_model_binding_api.py")
@@ -76,10 +87,20 @@ def verify():
         "tests/web/test_m6d_management_contract.py",
         "tests/web/test_m6c_adapter_cutover.py::test_poller_routes_active_job_only_by_frozen_snapshot_and_video_id",
     )
-    zero_network = pytest_cases("tests/suppliers/test_worker_isolation.py") and playwright
-    regression = run([sys.executable, "tools/verify_m6b_model_catalog_binding.py"]) and run(
-        [sys.executable, "tools/verify_m6c_adapter_cutover.py"]
+    zero_network = (
+        pytest_cases("tests/suppliers/test_worker_isolation.py")
+        and playwright
+        and required_browser_evidence
     )
+    regression = all(
+        run([sys.executable, verifier])
+        for verifier in (
+            "tools/verify_m3_agnes_generation.py",
+            "tools/verify_m4_chapter_rehearsal.py",
+            "tools/verify_m6b_model_catalog_binding.py",
+            "tools/verify_m6c_adapter_cutover.py",
+        )
+    ) and playwright
 
     values = {
         "M6D-001": supplier_ui and supplier_api and playwright,
@@ -94,7 +115,7 @@ def verify():
         "M6D-010": binding_ui and binding_api,
         "M6D-011": supplier_ui and model_ui and binding_ui and playwright,
         "M6D-012": local_guard and playwright,
-        "M6D-013": fake_execution,
+        "M6D-013": fake_execution and playwright and required_browser_evidence,
         "M6D-014": zero_network,
         "M6D-015": regression,
     }
@@ -104,7 +125,7 @@ def verify():
         "checks": checks,
         "result": "PASS" if all(values.values()) else "FAIL",
         "real_request_counts": {"text": 0, "image": 0, "video": 0},
-        "network_evidence": "Playwright allowed loopback only; Worker isolation denied validation network",
+        "network_evidence": "Full Playwright suite enforced loopback-only browser requests; Worker isolation denied validation network; browser fake V1/V2 execution passed",
     }
 
 

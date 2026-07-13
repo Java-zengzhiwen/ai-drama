@@ -41,6 +41,7 @@ const suppliers = [
     model_count: 2,
     base_url_summary: "https://agnes.example.invalid",
     credential: { configured: true, masked_suffix: "ABCD" },
+    credential_active_job_count: 0,
   },
   {
     supplier_id: "custom-1",
@@ -67,6 +68,7 @@ const suppliers = [
     model_count: 0,
     base_url_summary: "",
     credential: { configured: false, masked_suffix: "" },
+    credential_active_job_count: 0,
   },
 ];
 

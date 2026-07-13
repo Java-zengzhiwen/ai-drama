@@ -131,3 +131,24 @@ def test_saved_supplier_version_affects_only_future_execution_snapshots(client):
     assert old_snapshot.supplier_version_id == first_version_id
     assert new_snapshot.supplier_version_id == second_version_id
     assert old_snapshot.supplier_version_id != new_snapshot.supplier_version_id
+
+    blocked = client.delete(
+        f"/api/suppliers/{supplier_id}/secret",
+        headers={"If-Match": '"credential-1"'},
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"] == {
+        "error_code": "CREDENTIAL_IN_USE",
+        "active_job_count": 2,
+    }
+    forced = client.delete(
+        f"/api/suppliers/{supplier_id}/secret?force=true",
+        headers={"If-Match": '"credential-1"'},
+    )
+    assert forced.status_code == 200, forced.text
+    assert client.portal.call(
+        lambda: client.app.state.product_store.get_generation_job(old_job.job_id).internal_status
+    ) == "cancelled"
+    assert client.portal.call(
+        lambda: client.app.state.product_store.get_generation_job(new_job.job_id).internal_status
+    ) == "cancelled"

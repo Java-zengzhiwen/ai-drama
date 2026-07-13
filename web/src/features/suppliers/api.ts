@@ -43,6 +43,7 @@ export type SupplierRead = {
   model_count: number;
   base_url_summary: string;
   credential: SupplierCredentialStatus;
+  credential_active_job_count: number;
 };
 
 export type SupplierCreate = { slug: string; display_name: string };
@@ -156,10 +157,12 @@ export async function saveSupplierSecret(
 export async function deleteSupplierSecret(
   supplierId: string,
   etag: string,
+  force = false,
 ): Promise<WithEtag<SupplierCredentialStatus>> {
   return withEtag(
     await apiClient.delete(`/suppliers/${supplierId}/secret`, {
       headers: { "If-Match": etag },
+      params: force ? { force: true } : undefined,
     }),
   );
 }

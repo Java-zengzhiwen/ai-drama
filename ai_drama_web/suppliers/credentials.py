@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 import hashlib
+import json
 import os
 import stat
 import time
@@ -18,6 +19,12 @@ class CredentialRecoveryReport:
     deleted: int = 0
     corrupt: int = 0
     orphans_removed: int = 0
+
+
+class CredentialInUse(RuntimeError):
+    def __init__(self, active_job_count):
+        super().__init__("CREDENTIAL_IN_USE")
+        self.active_job_count = active_job_count
 
 
 class SupplierCredentialStore:
@@ -134,7 +141,29 @@ class SupplierCredentialStore:
         self._checkpoint("ready_committed")
         return self.get(credential_version_id)
 
-    def delete(self, supplier_id, expected_revision):
+    def active_job_references(self, credential_version_id):
+        rows = self.conn.execute(
+            """
+            SELECT job_id, internal_status, snapshot_object_id
+            FROM generation_jobs
+            WHERE internal_status IN ('draft','queued','submitting','submitted','polling')
+              AND snapshot_object_id <> ''
+            ORDER BY created_at, job_id
+            """
+        ).fetchall()
+        references = []
+        for row in rows:
+            try:
+                snapshot = json.loads(
+                    self.product_store.runtime.read_text(row["snapshot_object_id"])
+                )
+            except (OSError, ValueError, KeyError):
+                continue
+            if snapshot.get("resolved_credential_version_id") == credential_version_id:
+                references.append((row["job_id"], row["internal_status"]))
+        return references
+
+    def delete(self, supplier_id, expected_revision, *, force=False):
         supplier = self.product_store.get_supplier(supplier_id)
         if supplier is None:
             raise NotFound("supplier not found: %s" % supplier_id)
@@ -144,9 +173,42 @@ class SupplierCredentialStore:
         if not credential_version_id:
             return False
         record = self.get(credential_version_id)
+        active_references = self.active_job_references(credential_version_id)
+        if active_references and not force:
+            raise CredentialInUse(len(active_references))
         operation_id = uuid.uuid4().hex
         updated_at = now_iso()
         with self.conn:
+            cancel_ids = [
+                job_id
+                for job_id, status in active_references
+                if status in {"draft", "queued"}
+            ]
+            fail_ids = [
+                job_id
+                for job_id, status in active_references
+                if status in {"submitting", "submitted", "polling"}
+            ]
+            if cancel_ids:
+                self.conn.executemany(
+                    """
+                    UPDATE generation_jobs
+                    SET internal_status='cancelled', error_code='credential_revoked',
+                        error_message='credential was force deleted', updated_at=?
+                    WHERE job_id=?
+                    """,
+                    [(updated_at, job_id) for job_id in cancel_ids],
+                )
+            if fail_ids:
+                self.conn.executemany(
+                    """
+                    UPDATE generation_jobs
+                    SET internal_status='failed', error_code='credential_revoked',
+                        error_message='credential was force deleted', updated_at=?
+                    WHERE job_id=?
+                    """,
+                    [(updated_at, job_id) for job_id in fail_ids],
+                )
             self.conn.execute(
                 """
                 INSERT INTO credential_migration_journal
