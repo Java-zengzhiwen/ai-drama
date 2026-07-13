@@ -48,6 +48,15 @@ export type SupplierRead = {
 export type SupplierCreate = { slug: string; display_name: string };
 export type SupplierPatch = { display_name?: string; enabled?: boolean };
 export type WithEtag<T> = { data: T; etag: string };
+export type SupplierCodeRead = { source: string; supplier_version_id: string };
+export type SupplierCodeSaved = {
+  supplier_version_id: string;
+  source_hash: string;
+  compiled_artifact_hash: string;
+  manifest_hash: string;
+  compiler_name: string;
+  compiler_version: string;
+};
 
 function withEtag<T>(response: AxiosResponse<T>): WithEtag<T> {
   return { data: response.data, etag: String(response.headers?.etag ?? "") };
@@ -79,6 +88,69 @@ export async function updateSupplier(
 ): Promise<WithEtag<SupplierRead>> {
   return withEtag(
     await apiClient.patch<SupplierRead>(`/suppliers/${supplierId}`, payload, {
+      headers: { "If-Match": etag },
+    }),
+  );
+}
+
+export async function saveSupplierConfig(
+  supplierId: string,
+  values: Record<string, string>,
+  etag: string,
+): Promise<WithEtag<{ config_revision_id: string; revision: number }>> {
+  return withEtag(
+    await apiClient.put(`/suppliers/${supplierId}/config`, { values }, {
+      headers: { "If-Match": etag },
+    }),
+  );
+}
+
+export async function saveSupplierSecret(
+  supplierId: string,
+  credential: string,
+  etag: string,
+): Promise<WithEtag<SupplierCredentialStatus>> {
+  return withEtag(
+    await apiClient.put(`/suppliers/${supplierId}/secret`, { credential }, {
+      headers: { "If-Match": etag },
+    }),
+  );
+}
+
+export async function deleteSupplierSecret(
+  supplierId: string,
+  etag: string,
+): Promise<WithEtag<SupplierCredentialStatus>> {
+  return withEtag(
+    await apiClient.delete(`/suppliers/${supplierId}/secret`, {
+      headers: { "If-Match": etag },
+    }),
+  );
+}
+
+export async function getSupplierCode(supplierId: string): Promise<SupplierCodeRead> {
+  const response = await apiClient.get<SupplierCodeRead>(`/suppliers/${supplierId}/code`);
+  return response.data;
+}
+
+export async function saveSupplierCode(
+  supplierId: string,
+  source: string,
+  etag: string,
+): Promise<WithEtag<SupplierCodeSaved>> {
+  return withEtag(
+    await apiClient.put(`/suppliers/${supplierId}/code`, { source }, {
+      headers: { "If-Match": etag },
+    }),
+  );
+}
+
+export async function restoreBuiltinSupplier(
+  supplierId: string,
+  etag: string,
+): Promise<WithEtag<SupplierRead>> {
+  return withEtag(
+    await apiClient.post(`/suppliers/${supplierId}/restore-built-in`, undefined, {
       headers: { "If-Match": etag },
     }),
   );

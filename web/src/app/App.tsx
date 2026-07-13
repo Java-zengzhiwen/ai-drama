@@ -7,6 +7,7 @@ import { ProjectDashboardPage } from "../features/projects/ProjectDashboardPage"
 import { ProjectListPage } from "../features/projects/ProjectListPage";
 import { AgnesSettingsPage } from "../features/settings/AgnesSettingsPage";
 import { SupplierListPage } from "../features/suppliers/SupplierListPage";
+import { SupplierDetailPage } from "../features/suppliers/SupplierDetailPage";
 import "./app.css";
 
 function ChapterWorkspacePage() {
@@ -36,6 +37,7 @@ function AppShell() {
             element={<ChapterWorkspacePage />}
           />
           <Route path="/suppliers" element={<SupplierListPage />} />
+          <Route path="/suppliers/:supplierId" element={<SupplierDetailPage />} />
           <Route path="/settings/agnes" element={<AgnesSettingsPage />} />
           <Route path="*" element={<Navigate to="/projects" replace />} />
         </Routes>
