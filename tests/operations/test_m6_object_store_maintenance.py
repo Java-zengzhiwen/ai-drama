@@ -8,6 +8,7 @@ import time
 import pytest
 
 from ai_drama_runtime.store import RuntimeStore
+from ai_drama_web.operations.backup_restore import M6BackupService
 from ai_drama_web.operations.object_store_maintenance import (
     GCGuardError,
     ObjectGarbageCollector,
@@ -35,21 +36,8 @@ def _fixture(tmp_path):
     return data_root, runtime, store, source.object_id, orphan_json, unknown, corrupt
 
 
-def _backup_manifest(data_root, inventory_hash):
-    path = data_root / "backup-manifest.json"
-    path.write_text(
-        json.dumps(
-            {
-                "schema_version": "m6-backup-v1",
-                "status": "verified",
-                "source_data_root": str(data_root.resolve()),
-                "inventory_hash": inventory_hash,
-            },
-            sort_keys=True,
-        ),
-        encoding="utf-8",
-    )
-    return path
+def _backup_manifest(store, data_root, name="backup"):
+    return M6BackupService(store, data_root).create(data_root.parent / name).path
 
 
 def test_inventory_protects_db_references_and_classifies_safe_candidates(tmp_path):
@@ -93,7 +81,7 @@ def test_gc_is_dry_run_by_default_and_apply_requires_all_guards(tmp_path):
     with pytest.raises(GCGuardError, match="BACKUP_REQUIRED"):
         collector.apply(plan.inventory_hash, backup_manifest=None, grace_seconds=300)
 
-    manifest = _backup_manifest(data_root, plan.inventory_hash)
+    manifest = _backup_manifest(store, data_root)
     runtime.write_text_object('{"new":"object"}')
     with pytest.raises(GCGuardError, match="INVENTORY_CHANGED"):
         collector.apply(plan.inventory_hash, backup_manifest=manifest, grace_seconds=300)
@@ -103,7 +91,7 @@ def test_gc_apply_deletes_only_planned_objects_in_marked_temp_root(tmp_path):
     data_root, runtime, store, protected, orphan_json, unknown, corrupt = _fixture(tmp_path)
     collector = ObjectGarbageCollector(store, data_root)
     plan = collector.plan(grace_seconds=300)
-    manifest = _backup_manifest(data_root, plan.inventory_hash)
+    manifest = _backup_manifest(store, data_root)
 
     result = collector.apply(
         plan.inventory_hash,
@@ -123,10 +111,33 @@ def test_gc_apply_rejects_unmarked_root(tmp_path):
     (data_root / ".m6e-temporary-root").unlink()
     collector = ObjectGarbageCollector(store, data_root)
     plan = collector.plan(grace_seconds=300)
-    manifest = _backup_manifest(data_root, plan.inventory_hash)
+    manifest = _backup_manifest(store, data_root)
 
     with pytest.raises(GCGuardError, match="TEMPORARY_ROOT_REQUIRED"):
         collector.apply(plan.inventory_hash, backup_manifest=manifest, grace_seconds=300)
+
+
+def test_gc_rejects_self_declared_manifest_without_verified_payload(tmp_path):
+    data_root, runtime, store, _protected, orphan_json, _unknown, _corrupt = _fixture(tmp_path)
+    collector = ObjectGarbageCollector(store, data_root)
+    plan = collector.plan(grace_seconds=300)
+    forged = data_root / "forged-manifest.json"
+    forged.write_text(
+        json.dumps(
+            {
+                "schema_version": "m6-backup-v1",
+                "status": "verified",
+                "source_data_root": str(data_root.resolve()),
+                "inventory_hash": plan.inventory_hash,
+                "files": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(GCGuardError, match="BACKUP_INVALID"):
+        collector.apply(plan.inventory_hash, backup_manifest=forged, grace_seconds=300)
+    assert runtime.object_path(orphan_json).is_file()
 
 
 def test_inventory_and_gc_cli_default_to_read_only_json(tmp_path):

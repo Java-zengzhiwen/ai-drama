@@ -39,6 +39,8 @@ class GenerationExecutionService:
             raise ValueError("generation job not found")
         if job.internal_status != "queued":
             raise ValueError("only queued jobs can be submitted")
+        if job.snapshot_hash and not self.supplier_execution_enabled:
+            return job
         attempt = self.product_store.get_submission_attempt(job_id)
         if attempt is not None and attempt["state"] == "accepted":
             return self.product_store.commit_accepted_submission(job_id)
@@ -124,6 +126,8 @@ class GenerationExecutionService:
         if job.internal_status == "queued":
             return job
         if job.internal_status in {"completed", "failed", "cancelled"}:
+            return job
+        if job.snapshot_hash and not self.supplier_execution_enabled:
             return job
         if job.internal_status not in {"submitted", "polling"}:
             raise ValueError("generation job is not refreshable")

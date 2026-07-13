@@ -4,7 +4,7 @@ M6 backup/restore is a local operator workflow. Automated acceptance uses marked
 
 ## Backup
 
-Stop new submissions, allow active local writes to drain, and run:
+Stop the application and every process that can mutate the database, object store, or supplier credentials. Confirm no writer remains, then run:
 
 ```bash
 python3 tools/backup_m6_store.py \
@@ -12,7 +12,7 @@ python3 tools/backup_m6_store.py \
   --destination /absolute/path/to/new-backup-directory
 ```
 
-The destination must be absent or empty. The command checkpoints SQLite through its backup API and copies the content-addressed object store and credential files. `manifest.json` records only relative paths, modes, sizes, and SHA-256 hashes; it never contains credential plaintext.
+The destination must be absent or empty and must not overlap the source data root. The command checkpoints SQLite through its backup API, copies the content-addressed object store and credential files, fsyncs payload files/directories, and validates the copied snapshot against its own database. Missing referenced objects, corrupt referenced content-addressed objects, unsafe credential paths, symlinks, non-ready credentials, credential hash mismatch, or credential mode other than `0600` fail the backup. `manifest.json` records only relative paths, modes, sizes, and SHA-256 hashes; it never contains credential plaintext.
 
 Keep the returned `inventory_hash`. A GC apply must use the same verified backup manifest and an unchanged inventory hash.
 
@@ -26,7 +26,7 @@ python3 tools/restore_m6_store.py \
   --destination /absolute/path/to/restored-runtime-data
 ```
 
-Restore rejects path traversal, missing/unexpected members, hash mismatch, non-empty targets, and credential paths outside the original data root. Credential and journal paths are relocated to the restored root and credential files are forced to mode `0600`.
+Restore rejects path overlap, path traversal, missing/unexpected members, size/hash/mode mismatch, non-empty targets, inconsistent object inventory, and credential paths outside the original data root. Credential and journal paths are relocated to the restored root after the verified backup has proved credential mode `0600`.
 
 Start a local verification instance against the restored root with M6 execution disabled:
 

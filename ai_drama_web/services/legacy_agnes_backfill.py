@@ -34,17 +34,18 @@ class LegacyAgnesBackfill:
         ).fetchall()
         if not rows:
             return 0
-        supplier, model, revision = self._ensure_runtime()
-        count = 0
+        eligible = []
         for row in rows:
             job = self.store.get_generation_job(row["job_id"])
             if not job.provider_job_id:
-                self.store.conn.execute(
-                    "UPDATE generation_jobs SET legacy_backfill_state='failed', error_code='LEGACY_PROVIDER_ID_MISSING', updated_at=? WHERE job_id=?",
-                    (now_iso(), job.job_id),
-                )
-                self.store.conn.commit()
+                self._fail_missing_provider_id(job)
                 continue
+            eligible.append(job)
+        if not eligible:
+            return 0
+        supplier, model, revision = self._ensure_runtime()
+        count = 0
+        for job in eligible:
             resolved = ResolvedModel(
                 job.project_id, "shot_video_generation", "video", "legacy_backfill",
                 supplier, model, revision,
@@ -70,6 +71,20 @@ class LegacyAgnesBackfill:
                 )
             count += 1
         return count
+
+    def _fail_missing_provider_id(self, job):
+        terminal_status = "cancelled" if job.internal_status == "queued" else "failed"
+        self.store.transition_generation_job(
+            job.job_id,
+            terminal_status,
+            error_code="LEGACY_PROVIDER_ID_MISSING",
+            error_message="legacy provider job id is missing",
+        )
+        self.store.conn.execute(
+            "UPDATE generation_jobs SET legacy_backfill_state='failed', legacy_backfill_version=?, updated_at=? WHERE job_id=?",
+            (LEGACY_VERSION, now_iso(), job.job_id),
+        )
+        self.store.conn.commit()
 
     def _ensure_runtime(self):
         supplier = next((item for item in self.store.list_suppliers() if item.slug == LEGACY_VERSION), None)

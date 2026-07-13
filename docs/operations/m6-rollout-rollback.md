@@ -4,7 +4,7 @@ This runbook keeps M6 supplier execution disabled by default. Real Provider smok
 
 ## Preconditions
 
-1. Stop new generation submissions and allow active work to drain or record every active provider job ID.
+1. Stop new generation submissions and allow active work to drain or record every active provider job ID. Stop all management writes before backup.
 2. Run `python3 tools/inventory_object_store.py --data-root <root>` and retain the dry-run JSON.
 3. Create and verify a backup with `python3 tools/backup_m6_store.py --data-root <root> --destination <empty-backup-dir>`.
 4. Run `python3 migration/tools/verify_migration.py` and `python3 tools/verify_m6_supplier_model_management.py` with no real Provider credentials in the process environment.
@@ -29,11 +29,11 @@ Abort immediately if a queued job is submitted twice, an active job loses its pr
 
 1. Stop the service so no submission or poll transaction is in progress.
 2. Set `AI_DRAMA_M6_SUPPLIER_EXECUTION_ENABLED=false` and restart.
-3. Verify legacy routes are active, M6 supplier/model/binding/snapshot/job rows remain readable, and no row or object was deleted.
+3. Verify legacy routes are active, M6 supplier/model/binding/snapshot/job rows remain readable, and no row or object was deleted. Snapshot-bearing queued/submitting/submitted/polling jobs are deliberately frozen while the flag is off; they must never fall through to legacy submit or poll.
 4. Run the inventory command again and compare protected object IDs.
 5. Run the migration verifier and the M1-M5 regression verifiers.
 
-Rollback disables new M6 routing. It does not delete M6 audit evidence, immutable versions, credentials, snapshots, jobs, or results.
+Rollback disables new M6 routing. It does not delete M6 audit evidence, immutable versions, credentials, snapshots, jobs, or results. Re-enable M6 only after the incident is resolved to drain frozen snapshot jobs through their original immutable runtime; do not recreate them through the legacy path.
 
 ## Restore From Backup
 

@@ -46,7 +46,10 @@ def verify():
         "M6C-011": run([sys.executable, "-m", "pytest", "-q",
                          TEST + "test_atomic_enqueue_rejects_same_scope_key_with_changed_snapshot",
                          TEST + "test_m6_legacy_unique_key_is_namespaced_by_supplier_and_capability"]),
-        "M6C-012": pytest_case("test_feature_flag_defaults_off") and run(["npm", "--prefix", "worker", "test"]),
+        "M6C-012": run([sys.executable, "-m", "pytest", "-q",
+                         TEST + "test_feature_flag_defaults_off",
+                         TEST + "test_feature_flag_off_freezes_snapshot_jobs_without_legacy_submit_or_poll"])
+                    and run(["npm", "--prefix", "worker", "test"]),
         "M6C-013": pytest_case("test_evidence_removes_secret_keys_and_signed_query") and run([sys.executable, "tools/verify_m3_agnes_generation.py"]),
         "M6C-014": run(["npm", "--prefix", "worker", "test"]) and run(
             [sys.executable, "-m", "pytest", "-q", "tests/suppliers/test_worker_isolation.py"]

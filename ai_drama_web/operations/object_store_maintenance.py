@@ -176,7 +176,12 @@ class ObjectGarbageCollector:
             raise GCGuardError("TEMPORARY_ROOT_REQUIRED")
         if backup_manifest is None:
             raise GCGuardError("BACKUP_REQUIRED")
-        manifest = _read_manifest(backup_manifest)
+        try:
+            from .backup_restore import BackupIntegrityError, verify_backup_manifest
+
+            manifest = verify_backup_manifest(backup_manifest)
+        except (BackupIntegrityError, OSError, ValueError) as exc:
+            raise GCGuardError("BACKUP_INVALID") from exc
         if (
             manifest.get("status") != "verified"
             or Path(str(manifest.get("source_data_root", ""))).resolve() != self.data_root
@@ -203,16 +208,6 @@ class ObjectGarbageCollector:
             deleted_bytes,
             tuple(deleted),
         )
-
-
-def _read_manifest(path):
-    try:
-        value = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise GCGuardError("BACKUP_INVALID") from exc
-    if not isinstance(value, dict):
-        raise GCGuardError("BACKUP_INVALID")
-    return value
 
 
 def _kind(data):

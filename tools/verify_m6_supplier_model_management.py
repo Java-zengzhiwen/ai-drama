@@ -113,7 +113,7 @@ CHECK_DEFINITIONS = OrderedDict(
         ("M6E-010", ("fake_provider+adapter_contract", "video submit is exactly once across recovery")),
         ("M6E-011", ("fake_provider+adapter_contract", "both rerun resolution modes preserve contract")),
         ("M6E-012", ("fake_provider+browser", "hot reload preserves old snapshots and routes new work")),
-        ("M6E-013", ("rollback", "off on off restart preserves history and legacy routing")),
+        ("M6E-013", ("rollback+adapter_contract", "off on off restart preserves history and freezes active snapshots")),
         ("M6E-014", ("browser", "complete Playwright management and execution acceptance")),
         ("M6E-015", ("security+browser", "secrets are write-only and sanitized")),
         ("M6E-016", ("security+browser", "network isolation proves zero real requests")),

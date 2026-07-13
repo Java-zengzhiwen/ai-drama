@@ -32,6 +32,53 @@ def test_feature_flag_defaults_off():
     assert Settings().m6_supplier_execution_enabled is False
 
 
+@pytest.mark.asyncio
+async def test_feature_flag_off_freezes_snapshot_jobs_without_legacy_submit_or_poll(tmp_path):
+    runtime, store, project, snapshot = _snapshot_fixture(tmp_path)
+    queued, _ = store.enqueue_generation_job_with_snapshot(
+        supplier_id=snapshot.supplier_id, capability="video", provider="m6:test:video",
+        job_type="video", project_id=project.project_id, chapter_id="chapter",
+        shot_id="queued", prompt_revision_id="prompt", idempotency_key="rollback-queued",
+        request={"prompt": "queued"}, snapshot=snapshot,
+    )
+    polling, _ = store.enqueue_generation_job_with_snapshot(
+        supplier_id=snapshot.supplier_id, capability="video", provider="m6:test:video",
+        job_type="video", project_id=project.project_id, chapter_id="chapter",
+        shot_id="polling", prompt_revision_id="prompt", idempotency_key="rollback-polling",
+        request={"prompt": "polling"}, snapshot=snapshot,
+    )
+    store.transition_generation_job(polling.job_id, "submitting")
+    store.record_submission_attempt(polling.job_id, state="accepted", provider_job_id="frozen-video")
+    store.commit_accepted_submission(polling.job_id)
+    store.transition_generation_job(polling.job_id, "polling")
+
+    class LegacyBackend:
+        submit_count = 0
+        poll_count = 0
+
+        def create_video_job(self, _request):
+            self.submit_count += 1
+            raise AssertionError("snapshot job must not fall through legacy submit")
+
+        def get_video_job_status(self, _provider_job_id):
+            self.poll_count += 1
+            raise AssertionError("snapshot job must not fall through legacy poll")
+
+    backend = LegacyBackend()
+    execution = GenerationExecutionService(
+        store, runtime, backend, supplier_execution_enabled=False
+    )
+    cycle = await GenerationPoller(
+        store, runtime, backend, rpm=60, poll_interval_seconds=1,
+        execution_service=execution,
+    ).run_cycle()
+
+    assert (cycle.submitted, cycle.polled, cycle.skipped) == (0, 0, 2)
+    assert (backend.submit_count, backend.poll_count) == (0, 0)
+    assert store.get_generation_job(queued.job_id).internal_status == "queued"
+    assert store.get_generation_job(polling.job_id).internal_status == "polling"
+
+
 def test_fake_video_polls_video_id_and_submits_once():
     fake = FakeSupplierAdapter()
     gateway = SupplierAdapterGateway(fake, supplier_slug="fake")

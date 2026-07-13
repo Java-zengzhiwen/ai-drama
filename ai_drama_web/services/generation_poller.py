@@ -67,10 +67,16 @@ class GenerationPoller:
         self.execution_service.recover_submission_attempts()
         unknown = self._mark_orphaned_submitting()
         pollable_jobs, skipped = self._due_jobs_by_status("submitted", "polling")
+        pollable_jobs, frozen_pollable = self._without_disabled_snapshot_jobs(pollable_jobs)
+        skipped += frozen_pollable
         limited_pollable = self._rate_limited_jobs(pollable_jobs, mutate_unavailable=False)
         skipped += len(pollable_jobs) - len(limited_pollable)
         submitted = 0
-        for job in self._rate_limited_jobs(self._jobs_by_status("queued")):
+        queued_jobs, frozen_queued = self._without_disabled_snapshot_jobs(
+            self._jobs_by_status("queued")
+        )
+        skipped += frozen_queued
+        for job in self._rate_limited_jobs(queued_jobs):
             self.execution_service.submit_queued_job(job.job_id)
             submitted += 1
         polled = 0
@@ -90,6 +96,12 @@ class GenerationPoller:
             skipped=skipped,
             submission_outcome_unknown=unknown,
         )
+
+    def _without_disabled_snapshot_jobs(self, jobs):
+        if self.execution_service.supplier_execution_enabled:
+            return jobs, 0
+        eligible = [job for job in jobs if not job.snapshot_hash]
+        return eligible, len(jobs) - len(eligible)
 
     def _rate_limited_jobs(self, jobs, *, mutate_unavailable=True):
         counts = {}
@@ -116,6 +128,8 @@ class GenerationPoller:
     def _mark_orphaned_submitting(self) -> int:
         count = 0
         for job in self._jobs_by_status("submitting"):
+            if job.snapshot_hash and not self.execution_service.supplier_execution_enabled:
+                continue
             if not job.provider_job_id:
                 attempt = self.product_store.get_submission_attempt(job.job_id)
                 if attempt is not None and attempt["state"] == "accepted":

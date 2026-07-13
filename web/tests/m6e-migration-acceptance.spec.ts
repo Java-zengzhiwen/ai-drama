@@ -1,5 +1,5 @@
 import { expect, type APIRequestContext, type Page, test } from "@playwright/test";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -161,10 +161,85 @@ test("M6E completes offline text image video reruns and keeps restart-visible ev
   expect(JSON.stringify(browserState)).not.toContain(secret);
   const supplierReadback = await request.get(`${backendURL}/api/suppliers/${supplier.supplier_id}`);
   expect(await supplierReadback.text()).not.toContain(secret);
+  const publicPage = await page.context().newPage();
+  const publicResponse = await publicPage.goto(
+    `${String(testInfo.config.metadata.m6ePublicBackendURL)}/api/suppliers`,
+  );
+  expect(publicResponse?.status()).toBe(403);
+  await expect(publicPage.locator("body")).toContainText("LOCAL_MANAGEMENT_ONLY");
+  await publicPage.close();
   expect(consoleErrors).toEqual([]);
   expect(unexpectedNetwork).toEqual([]);
   expect(unexpectedResponses).toEqual([]);
   await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
+test("M6E restarts the local app and resumes frozen snapshot evidence", async ({ page, request }, testInfo) => {
+  const port = 18768;
+  const restartURL = `http://127.0.0.1:${port}`;
+  const dataRoot = testInfo.outputPath("restart-runtime");
+  let server = startRestartServer(dataRoot, port);
+  try {
+    await waitForHealth(request, restartURL);
+    const unique = `restart-${Date.now().toString(36)}`;
+    const supplier = await apiJson<{ supplier_id: string }>(request, "post", "/api/suppliers", {
+      data: { slug: unique, display_name: "M6E Restart Fake" },
+      headers: { "If-None-Match": "*", "Idempotency-Key": unique },
+    }, restartURL);
+    await apiJson(request, "put", `/api/suppliers/${supplier.supplier_id}/code`, {
+      data: { source: adapterSource("RESTART") }, headers: { "If-Match": '"supplier-1"' },
+    }, restartURL);
+    await apiJson(request, "put", `/api/suppliers/${supplier.supplier_id}/secret`, {
+      data: { credential: "restart-local-only" }, headers: { "If-Match": '"credential-0"' },
+    }, restartURL);
+    const modelsResponse = await request.get(`${restartURL}/api/suppliers/${supplier.supplier_id}/models`);
+    const models = (await modelsResponse.json()) as Array<{ supplier_model_id: string; capability: string }>;
+    const modelId = (capability: string) => models.find((item) => item.capability === capability)!.supplier_model_id;
+    const project = await apiJson<{ project_id: string }>(request, "post", "/api/projects", {
+      data: { name: "M6E Restart", description: "offline", series_canon: "", characters_context: "", production_brief: "" },
+    }, restartURL);
+    const chapter = await apiJson<{ chapter_id: string }>(request, "post", `/api/projects/${project.project_id}/chapters`, {
+      data: { title: "Restart", position: 1 },
+    }, restartURL);
+    await apiJson(request, "post", `/api/chapters/${chapter.chapter_id}/source-revisions`, {
+      data: { content: "本地重启恢复验收。" },
+    }, restartURL);
+    await apiJson(request, "put", `/api/projects/${project.project_id}/model-bindings`, {
+      data: {
+        defaults: { text: modelId("text"), image: modelId("image"), video: modelId("video") },
+        operation_overrides: { script_adaptation: modelId("text") },
+      },
+      headers: { "If-Match": '"binding-set-0"' },
+    }, restartURL);
+    await proxyApi(page, request, restartURL);
+    await page.goto(`/projects/${project.project_id}/chapters/${chapter.chapter_id}`);
+    const script = await browserPost<{ content: string }>(page, `/api/chapters/${chapter.chapter_id}/script/generate`, {});
+    expect(script.content).toContain("M6E_BROWSER_RESTART");
+    const jobs = videoFixture(dataRoot, "create", project.project_id, chapter.chapter_id, unique);
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+
+    await stopRestartServer(server);
+    server = startRestartServer(dataRoot, port);
+    await waitForHealth(request, restartURL);
+    await proxyApi(page, request, restartURL);
+    const resumed = await browserGet<{ internal_status: string; provider_job_id: string }>(
+      page, `/api/generation/jobs/${jobs.old_queued_job_id}`,
+    );
+    expect(resumed.internal_status).toBe("submitted");
+    expect(resumed.provider_job_id).toBe("m6e-video-RESTART");
+    const completed = await browserPost<{ internal_status: string }>(
+      page, `/api/generation/jobs/${jobs.old_queued_job_id}/refresh`, {},
+    );
+    expect(completed.internal_status).toBe("completed");
+    await page.goto(`/projects/${project.project_id}/chapters/${chapter.chapter_id}`);
+    await page.getByRole("tab", { name: /结果与重跑/ }).click();
+    await expect(page.getByText("local_result_available").first()).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("tab", { name: /结果与重跑/ })).toBeVisible();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  } finally {
+    await stopRestartServer(server);
+  }
 });
 }
 
@@ -227,11 +302,11 @@ runtime.close()
   return JSON.parse(output.trim()) as VideoEvidence;
 }
 
-async function proxyApi(page: Page, request: APIRequestContext) {
+async function proxyApi(page: Page, request: APIRequestContext, targetBackendURL = backendURL) {
   await page.route(`${frontendURL}/api/**`, async (route) => {
     const browserRequest = route.request();
     const url = new URL(browserRequest.url());
-    const response = await request.fetch(`${backendURL}${url.pathname}${url.search}`, {
+    const response = await request.fetch(`${targetBackendURL}${url.pathname}${url.search}`, {
       data: browserRequest.postDataBuffer() ?? undefined,
       headers: browserRequest.headers(),
       method: browserRequest.method(),
@@ -240,10 +315,65 @@ async function proxyApi(page: Page, request: APIRequestContext) {
   });
 }
 
-async function apiJson<T>(request: APIRequestContext, method: "post" | "put", path: string, options: object) {
-  const response = await request[method](`${backendURL}${path}`, options);
+async function apiJson<T>(
+  request: APIRequestContext,
+  method: "post" | "put",
+  path: string,
+  options: object,
+  targetBackendURL = backendURL,
+) {
+  const response = await request[method](`${targetBackendURL}${path}`, options);
   expect(response.ok(), `${response.status()} ${await response.text()}`).toBeTruthy();
   return response.json() as Promise<T>;
+}
+
+async function browserGet<T>(page: Page, path: string): Promise<T> {
+  return page.evaluate(async (target) => {
+    const response = await fetch(target);
+    const value = await response.json();
+    if (!response.ok) throw new Error(`${response.status}: ${JSON.stringify(value)}`);
+    return value;
+  }, path) as Promise<T>;
+}
+
+function startRestartServer(dataRoot: string, port: number) {
+  return spawn(
+    "python3",
+    ["-m", "uvicorn", "ai_drama_web.app:create_app", "--factory", "--host", "127.0.0.1", "--port", String(port)],
+    {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        AI_DRAMA_DATA_ROOT: dataRoot,
+        AI_DRAMA_M6_SUPPLIER_EXECUTION_ENABLED: "true",
+        AI_DRAMA_AGNES_POLL_INTERVAL_SECONDS: "3600",
+        PYTHONDONTWRITEBYTECODE: "1",
+      },
+      stdio: "ignore",
+    },
+  );
+}
+
+async function waitForHealth(request: APIRequestContext, url: string) {
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    try {
+      if ((await request.get(`${url}/api/health`)).ok()) return;
+    } catch {
+      // The child process may still be binding its loopback socket.
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }
+  throw new Error(`restart server did not become healthy: ${url}`);
+}
+
+async function stopRestartServer(child: ChildProcess) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
+  await Promise.race([
+    new Promise<void>((resolvePromise) => child.once("exit", () => resolvePromise())),
+    new Promise<void>((resolvePromise) => setTimeout(resolvePromise, 3000)),
+  ]);
+  if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
 }
 
 async function browserPost<T>(page: Page, path: string, body: object): Promise<T> {

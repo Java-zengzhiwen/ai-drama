@@ -49,7 +49,11 @@ class M6BackupService:
 
     def create(self, destination):
         destination = Path(destination).resolve()
+        _require_disjoint(self.data_root, destination, "BACKUP_PATH_OVERLAP")
         _require_empty(destination, "BACKUP_DESTINATION_NOT_EMPTY")
+        _reject_symlinks(self.data_root / "objects")
+        _reject_symlinks(self.data_root / "secrets")
+        _validate_ready_credentials(self.store, self.data_root)
         payload = destination / "payload"
         payload.mkdir(parents=True)
         self.store.conn.execute("PRAGMA wal_checkpoint(FULL)")
@@ -58,14 +62,15 @@ class M6BackupService:
             self.store.conn.backup(target)
         finally:
             target.close()
+        _fsync_file(payload / "runtime.db")
         for name in ("objects", "secrets"):
             source = self.data_root / name
             if source.is_dir():
                 shutil.copytree(source, payload / name, copy_function=shutil.copy2)
+        _fsync_tree(payload)
+        inventory_hash = _validate_payload_consistency(payload, self.data_root)
+        _fsync_tree(payload)
         files = tuple(_file_record(path, destination) for path in _payload_files(payload))
-        inventory_hash = ObjectInventory(self.store, self.data_root).build(
-            grace_seconds=0
-        ).inventory_hash
         manifest_path = destination / "manifest.json"
         manifest_payload = {
             "schema_version": "m6-backup-v1",
@@ -81,6 +86,7 @@ class M6BackupService:
             encoding="utf-8",
         )
         _fsync_file(manifest_path)
+        _fsync_directory(destination)
         return BackupManifest(
             manifest_path,
             "verified",
@@ -96,23 +102,10 @@ class M6RestoreService:
     def restore(self, manifest_path, destination):
         manifest_path = Path(manifest_path).resolve()
         destination = Path(destination).resolve()
+        _require_disjoint(manifest_path.parent, destination, "RESTORE_PATH_OVERLAP")
         _require_empty(destination, "RESTORE_DESTINATION_NOT_EMPTY")
-        manifest = _load_manifest(manifest_path)
+        manifest = verify_backup_manifest(manifest_path)
         backup_root = manifest_path.parent
-        expected = {item["path"] for item in manifest["files"]}
-        actual = {
-            str(path.relative_to(backup_root))
-            for path in _payload_files(backup_root / "payload")
-        }
-        if actual != expected:
-            raise BackupIntegrityError("BACKUP_FILE_SET_MISMATCH")
-        for item in manifest["files"]:
-            path = _safe_member(backup_root, item["path"])
-            if (
-                path.stat().st_size != item["size"]
-                or hashlib.sha256(path.read_bytes()).hexdigest() != item["sha256"]
-            ):
-                raise BackupIntegrityError("BACKUP_HASH_MISMATCH")
         destination.mkdir(parents=True)
         for source in sorted((backup_root / "payload").iterdir()):
             target = destination / source.name
@@ -164,6 +157,43 @@ class M6RestoreService:
             database.commit()
         finally:
             database.close()
+
+
+def verify_backup_manifest(manifest_path):
+    manifest_path = Path(manifest_path).resolve()
+    manifest = _load_manifest(manifest_path)
+    backup_root = manifest_path.parent
+    entries = manifest["files"]
+    try:
+        expected = {str(item["path"]) for item in entries}
+    except (KeyError, TypeError) as exc:
+        raise BackupIntegrityError("BACKUP_MANIFEST_INVALID") from exc
+    if not entries or len(expected) != len(entries):
+        raise BackupIntegrityError("BACKUP_MANIFEST_INVALID")
+    actual = {
+        str(path.relative_to(backup_root))
+        for path in _payload_files(backup_root / "payload")
+    }
+    if actual != expected:
+        raise BackupIntegrityError("BACKUP_FILE_SET_MISMATCH")
+    for item in entries:
+        try:
+            path = _safe_member(backup_root, str(item["path"]))
+            size = int(item["size"])
+            expected_hash = str(item["sha256"])
+            expected_mode = int(item["mode"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise BackupIntegrityError("BACKUP_MANIFEST_INVALID") from exc
+        if path.stat().st_size != size or hashlib.sha256(path.read_bytes()).hexdigest() != expected_hash:
+            raise BackupIntegrityError("BACKUP_HASH_MISMATCH")
+        if path.stat().st_mode & 0o777 != expected_mode:
+            raise BackupIntegrityError("BACKUP_MODE_MISMATCH")
+    inventory_hash = _validate_payload_consistency(
+        backup_root / "payload", Path(str(manifest.get("source_data_root", "")))
+    )
+    if inventory_hash != manifest.get("inventory_hash"):
+        raise BackupIntegrityError("BACKUP_INVENTORY_MISMATCH")
+    return manifest
 
 
 def semantic_store_summary(product_store):
@@ -262,6 +292,88 @@ def _require_empty(path, code):
         raise BackupIntegrityError(code)
 
 
+def _require_disjoint(first, second, code):
+    first = Path(first).resolve()
+    second = Path(second).resolve()
+    if first == second or first.is_relative_to(second) or second.is_relative_to(first):
+        raise BackupIntegrityError(code)
+
+
+def _reject_symlinks(root):
+    root = Path(root)
+    if root.is_symlink():
+        raise BackupIntegrityError("BACKUP_SYMLINK_FORBIDDEN")
+    if root.is_dir() and any(path.is_symlink() for path in root.rglob("*")):
+        raise BackupIntegrityError("BACKUP_SYMLINK_FORBIDDEN")
+
+
+def _validate_ready_credentials(store, data_root, source_paths_root=None):
+    secrets_root = (Path(data_root) / "secrets").resolve()
+    source_paths_root = Path(source_paths_root or data_root).resolve()
+    rows = store.conn.execute(
+        "SELECT state, secret_path, content_hash FROM credential_versions ORDER BY credential_version_id"
+    ).fetchall()
+    for row in rows:
+        if row["state"] != "ready":
+            raise BackupIntegrityError("CREDENTIAL_BACKUP_NOT_READY")
+        recorded = Path(row["secret_path"])
+        try:
+            relative = recorded.resolve().relative_to(source_paths_root)
+        except ValueError as exc:
+            raise BackupIntegrityError("CREDENTIAL_BACKUP_UNSAFE") from exc
+        path = Path(data_root) / relative
+        resolved = path.resolve()
+        if (
+            path.is_symlink()
+            or not path.is_file()
+            or not resolved.is_relative_to(secrets_root)
+            or path.stat().st_mode & 0o777 != 0o600
+        ):
+            raise BackupIntegrityError("CREDENTIAL_BACKUP_UNSAFE")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != row["content_hash"]:
+            raise BackupIntegrityError("CREDENTIAL_BACKUP_CORRUPT")
+
+
+def _validate_payload_consistency(payload, source_data_root):
+    from ai_drama_runtime.store import RuntimeStore
+    from ai_drama_web.store import ProductStore
+
+    payload = Path(payload).resolve()
+    runtime = RuntimeStore(payload / "runtime.db", payload / "objects")
+    try:
+        store = ProductStore(runtime)
+        inventory = ObjectInventory(store, payload).build(grace_seconds=0)
+        if inventory.missing_references:
+            raise BackupIntegrityError("BACKUP_OBJECT_REFERENCE_MISSING")
+        if any(item.corrupt and item.referenced for item in inventory.entries):
+            raise BackupIntegrityError("BACKUP_OBJECT_CORRUPT")
+        _validate_ready_credentials(store, payload, source_data_root)
+        return inventory.inventory_hash
+    finally:
+        runtime.close()
+
+
 def _fsync_file(path):
     with path.open("rb") as stream:
         os.fsync(stream.fileno())
+
+
+def _fsync_directory(path):
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _fsync_tree(root):
+    root = Path(root)
+    for path in _payload_files(root):
+        _fsync_file(path)
+    for directory in sorted(
+        (path for path in root.rglob("*") if path.is_dir()),
+        key=lambda path: len(path.parts),
+        reverse=True,
+    ):
+        _fsync_directory(directory)
+    _fsync_directory(root)
