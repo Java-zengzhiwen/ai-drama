@@ -79,7 +79,7 @@ PASS
 
 ## Bundle and visual QA
 
-The TypeScript editor remains a lazy chunk (`2.61 kB`, `1.30 kB` gzip). The M6D build produces a main JavaScript chunk of `1,029.49 kB` (`321.25 kB` gzip) and CSS of `13.41 kB` (`3.63 kB` gzip). Relative to the M6C baseline recorded during implementation (`965.10 kB`, `302.55 kB` gzip), main JavaScript increased by `64.39 kB` raw and `18.70 kB` gzip. No eager editor dependency was added.
+The TypeScript editor remains a lazy chunk (`2.61 kB`, `1.30 kB` gzip). The M6D build produces a main JavaScript chunk of `1,029.51 kB` (`321.26 kB` gzip) and CSS of `13.41 kB` (`3.63 kB` gzip). Relative to the M6C baseline recorded during implementation (`965.10 kB`, `302.55 kB` gzip), main JavaScript increased by `64.41 kB` raw and `18.71 kB` gzip. No eager editor dependency was added.
 
 Product Design QA is archived at `docs/product-design/m6d/design-qa.md`; the approved reference remains `docs/product-design/m6d/assets/selected-direction-supplier-operations-workbench.png`.
 

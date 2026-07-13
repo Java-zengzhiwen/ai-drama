@@ -173,6 +173,7 @@ describe("supplier models panel", () => {
       revision: 3,
       current_model_revision_id: "revision-base-3",
       model_revision_id: "revision-base-3",
+      binding_count: 3,
     };
     get
       .mockResolvedValueOnce({ data: models, headers: { etag: '"model-catalog-4"' } })
@@ -192,11 +193,14 @@ describe("supplier models panel", () => {
     const reload = await screen.findByRole("button", { name: "重新加载模型" });
     fireEvent.click(reload);
     await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: "保存新版本" })).toBeDisabled();
+    fireEvent.click(screen.getByLabelText("我已确认将影响 3 处项目绑定"));
     fireEvent.click(screen.getByRole("button", { name: "保存新版本" }));
 
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
     expect(patch.mock.calls[1][2]).toEqual({
       headers: { "If-Match": '"model-stable-base-text-3", "model-catalog-5"' },
     });
+    expect(patch.mock.calls[1][1]).toEqual(expect.objectContaining({ acknowledged_binding_count: 3 }));
   });
 });

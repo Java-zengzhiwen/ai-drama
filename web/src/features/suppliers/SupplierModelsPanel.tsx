@@ -177,7 +177,10 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
     const current = refreshed.data.data.find(
       (model) => model.supplier_model_id === editing.supplier_model_id,
     );
-    if (current) setEditing(current);
+    if (current) {
+      setEditing(current);
+      setAcknowledged(current.binding_count === 0);
+    }
   }
 
   const form = (mode: "create" | "edit") => (

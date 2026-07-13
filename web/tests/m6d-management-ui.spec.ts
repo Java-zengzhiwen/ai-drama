@@ -1,6 +1,6 @@
 import { expect, type APIRequestContext, type Page, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const backendPort = process.env.AI_DRAMA_PLAYWRIGHT_M6D_BACKEND_PORT ?? "18766";
@@ -251,26 +251,25 @@ if (runningInVitest) {
     await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 
-  test("M6D captures approved desktop 1180 and 768 visual QA", async ({ page, request }) => {
+  test("M6D captures approved desktop 1180 and 768 visual QA", async ({ page, request }, testInfo) => {
     await proxyApi(page, request);
-    const assets = join(repoRoot, "docs/product-design/m6d/assets");
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto("/suppliers");
     await page.getByRole("link", { name: /OpenAI/ }).click();
     await page.getByRole("tab", { name: "模型" }).click();
     await expect(page.getByRole("heading", { name: "模型目录" })).toBeVisible();
-    await page.screenshot({ path: join(assets, "m6d-implementation-desktop-1440.png"), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath("m6d-implementation-desktop-1440.png"), fullPage: true });
 
     await page.setViewportSize({ width: 1180, height: 1000 });
     await expect(page.getByRole("complementary", { name: "供应商检查器" })).toBeVisible();
     const command = await page.locator(".supplier-command").boundingBox();
     const inspector = await page.locator(".supplier-inspector").boundingBox();
     expect(inspector!.y).toBeGreaterThan(command!.y);
-    await page.screenshot({ path: join(assets, "m6d-implementation-1180.png"), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath("m6d-implementation-1180.png"), fullPage: true });
 
     await page.setViewportSize({ width: 768, height: 1000 });
     await expect(page.getByLabel("切换供应商")).toBeVisible();
-    await page.screenshot({ path: join(assets, "m6d-implementation-768.png"), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath("m6d-implementation-768.png"), fullPage: true });
     await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 
