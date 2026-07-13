@@ -41,4 +41,16 @@ describe("App routes", () => {
     await waitFor(() => expect(window.location.pathname).toBe("/projects"));
     expect(screen.getByRole("heading", { name: "项目列表" })).toBeInTheDocument();
   });
+
+  test("/suppliers renders the local supplier management destination", async () => {
+    window.history.replaceState({}, "", "/suppliers");
+
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "模型供应商" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "模型供应商" })).toHaveAttribute(
+      "href",
+      "/suppliers",
+    );
+  });
 });

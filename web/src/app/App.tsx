@@ -6,6 +6,8 @@ import { ChapterWorkspace } from "../features/chapter/ChapterWorkspace";
 import { ProjectDashboardPage } from "../features/projects/ProjectDashboardPage";
 import { ProjectListPage } from "../features/projects/ProjectListPage";
 import { AgnesSettingsPage } from "../features/settings/AgnesSettingsPage";
+import { SupplierListPage } from "../features/suppliers/SupplierListPage";
+import "./app.css";
 
 function ChapterWorkspacePage() {
   const { chapterId = "", projectId = "" } = useParams();
@@ -15,27 +17,17 @@ function ChapterWorkspacePage() {
 
 function AppShell() {
   return (
-    <Layout style={{ minHeight: "100vh" }}>
-      <Layout.Header
-        style={{
-          alignItems: "center",
-          display: "flex",
-          paddingInline: 24,
-        }}
-      >
-        <Typography.Title
-          level={2}
-          style={{ color: "white", fontSize: 18, lineHeight: 1, margin: 0, width: 180 }}
-        >
-          AI Drama
-        </Typography.Title>
-        <nav style={{ flex: 1, minWidth: 0 }}>
-          <Link style={{ color: "white" }} to="/projects">
+    <Layout className="app-shell">
+      <Layout.Header className="app-header">
+        <Typography.Text className="app-brand">AI 剧集制作</Typography.Text>
+        <nav className="app-nav" aria-label="主导航">
+          <Link to="/projects">
             项目
           </Link>
+          <Link to="/suppliers">模型供应商</Link>
         </nav>
       </Layout.Header>
-      <Layout.Content style={{ padding: 24 }}>
+      <Layout.Content className="app-content">
         <Routes>
           <Route path="/projects" element={<ProjectListPage />} />
           <Route path="/projects/:projectId" element={<ProjectDashboardPage />} />
@@ -43,6 +35,7 @@ function AppShell() {
             path="/projects/:projectId/chapters/:chapterId"
             element={<ChapterWorkspacePage />}
           />
+          <Route path="/suppliers" element={<SupplierListPage />} />
           <Route path="/settings/agnes" element={<AgnesSettingsPage />} />
           <Route path="*" element={<Navigate to="/projects" replace />} />
         </Routes>
@@ -52,7 +45,15 @@ function AppShell() {
 }
 
 export function App() {
-  const [queryClient] = useState(() => new QueryClient());
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: { retry: false },
+          mutations: { retry: false },
+        },
+      }),
+  );
 
   return (
     <QueryClientProvider client={queryClient}>
