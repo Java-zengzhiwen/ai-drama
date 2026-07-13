@@ -49,6 +49,10 @@ if (runningInVitest) {
     await page.getByLabel("供应商名称").fill(supplierName);
     await page.getByLabel("供应商标识").fill(`m6d-${unique}`);
     await page.getByRole("button", { name: "创建空模板" }).click();
+    await page.getByRole("button", { name: `停用 ${supplierName}` }).click();
+    await expect(page.getByRole("button", { name: `启用 ${supplierName}` })).toBeVisible();
+    await page.getByRole("button", { name: `启用 ${supplierName}` }).click();
+    await expect(page.getByRole("button", { name: `停用 ${supplierName}` })).toBeVisible();
     await page.getByRole("link", { name: new RegExp(supplierName) }).click();
     await expect(page.getByRole("heading", { name: supplierName })).toBeVisible();
     const supplierId = new URL(page.url()).pathname.split("/suppliers/")[1];

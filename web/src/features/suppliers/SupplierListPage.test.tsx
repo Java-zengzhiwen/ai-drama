@@ -13,6 +13,7 @@ vi.mock("../../api/client", () => ({
 
 const get = apiClient.get as unknown as Mock;
 const post = apiClient.post as unknown as Mock;
+const patch = apiClient.patch as unknown as Mock;
 
 const suppliers = [
   {
@@ -73,6 +74,7 @@ describe("supplier list page", () => {
   beforeEach(() => {
     get.mockReset();
     post.mockReset();
+    patch.mockReset();
     window.history.replaceState({}, "", "/suppliers");
   });
 
@@ -94,7 +96,25 @@ describe("supplier list page", () => {
     expect(screen.getByText("已配置 ····ABCD")).toBeInTheDocument();
     expect(screen.getByText("已停用")).toBeInTheDocument();
     expect(screen.getByText("2 个模型")).toBeInTheDocument();
+    expect(screen.getByText("https://agnes.example.invalid")).toBeInTheDocument();
+    expect(screen.getByText("supplier-2 · config-3 · catalog-4")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /复制供应商|供应商市场/ })).not.toBeInTheDocument();
+  });
+
+  test("toggles a supplier with its current supplier ETag", async () => {
+    get.mockResolvedValue({ data: suppliers, headers: {} });
+    patch.mockResolvedValue({ data: { ...suppliers[0], enabled: 0, revision: 3 }, headers: { etag: '"supplier-3"' } });
+    render(<App />);
+
+    await screen.findByRole("link", { name: /Agnes/ });
+    fireEvent.click(screen.getByRole("button", { name: "停用 Agnes" }));
+
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch).toHaveBeenCalledWith(
+      "/suppliers/agnes-1",
+      { enabled: false },
+      { headers: { "If-Match": '"supplier-2"' } },
+    );
   });
 
   test("creates a custom empty-template supplier", async () => {

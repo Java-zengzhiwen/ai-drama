@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Modal, Tag } from "antd";
 import { FormEvent, useState } from "react";
 import { Link } from "react-router-dom";
-import { createSupplier, listSuppliers, newIdempotencyKey, type SupplierRead } from "./api";
+import { createSupplier, listSuppliers, newIdempotencyKey, updateSupplier, type SupplierRead } from "./api";
 import { toManagementError } from "./managementErrors";
 
 const CAPABILITY_LABEL: Record<string, string> = {
@@ -24,33 +24,46 @@ function LocalManagementError({ error }: { error: unknown }) {
   );
 }
 
-function SupplierRow({ supplier }: { supplier: SupplierRead }) {
+function SupplierRow({ supplier, onToggle, toggling }: { supplier: SupplierRead; onToggle: () => void; toggling: boolean }) {
   const capabilities = supplier.capabilities.map((item) => CAPABILITY_LABEL[item] ?? item);
   return (
-    <Link className="supplier-row" to={`/suppliers/${supplier.supplier_id}`}>
+    <div className="supplier-row">
       <span className="supplier-mark" aria-hidden="true">
         {supplier.display_name.slice(0, 1).toUpperCase()}
       </span>
-      <span className="supplier-row-main">
+      <Link className="supplier-row-main" to={`/suppliers/${supplier.supplier_id}`}>
         <strong>{supplier.display_name}</strong>
         <small>
           {supplier.source === "built_in" ? "内置" : "自定义"}
+          {supplier.author ? ` · ${supplier.author}` : ""}
           {supplier.version ? ` · ${supplier.version}` : ""}
         </small>
-      </span>
+      </Link>
       <span className="supplier-row-meta">
         <span>{capabilities.length ? capabilities.join(" · ") : "暂无能力"}</span>
         <span>{supplier.model_count} 个模型</span>
       </span>
       <span className="supplier-row-meta">
+        <span>{supplier.base_url_summary || "未配置 Base URL"}</span>
+        <span>supplier-{supplier.revision} · config-{supplier.config_revision} · catalog-{supplier.model_catalog_revision}</span>
+      </span>
+      <span className="supplier-row-actions">
         <span>{supplier.enabled ? "已启用" : "已停用"}</span>
         <span>
           {supplier.credential.configured
             ? `已配置 ····${supplier.credential.masked_suffix}`
             : "未配置密钥"}
         </span>
+        <Button
+          size="small"
+          aria-label={`${supplier.enabled ? "停用" : "启用"} ${supplier.display_name}`}
+          loading={toggling}
+          onClick={onToggle}
+        >
+          {supplier.enabled ? "停用" : "启用"}
+        </Button>
       </span>
-    </Link>
+    </div>
   );
 }
 
@@ -72,6 +85,15 @@ export function SupplierListPage() {
       setSlug("");
       await queryClient.invalidateQueries({ queryKey: ["suppliers"] });
     },
+  });
+  const toggle = useMutation({
+    mutationFn: (supplier: SupplierRead) =>
+      updateSupplier(
+        supplier.supplier_id,
+        { enabled: !supplier.enabled },
+        `"supplier-${supplier.revision}"`,
+      ),
+    onSuccess: async () => queryClient.invalidateQueries({ queryKey: ["suppliers"] }),
   });
 
   function submit(event: FormEvent) {
@@ -105,11 +127,18 @@ export function SupplierListPage() {
           <div className="supplier-list-header">
             <span>供应商</span>
             <span>能力与模型</span>
+            <span>连接与修订</span>
             <span>状态</span>
           </div>
           {suppliers.data.map((supplier) => (
-            <SupplierRow key={supplier.supplier_id} supplier={supplier} />
+            <SupplierRow
+              key={supplier.supplier_id}
+              supplier={supplier}
+              toggling={toggle.isPending && toggle.variables?.supplier_id === supplier.supplier_id}
+              onToggle={() => toggle.mutate(supplier)}
+            />
           ))}
+          {toggle.isError ? <LocalManagementError error={toggle.error} /> : null}
         </div>
       ) : null}
 
