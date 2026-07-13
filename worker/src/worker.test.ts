@@ -4,15 +4,18 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 
-function invoke(compiledCode, mode = "execution") {
-  const result = spawnSync(process.execPath, [fileURLToPath(new URL("./worker.ts", import.meta.url))], {
+function invoke(compiledCode, mode = "execution", payload = {}) {
+  const result = spawnSync(process.execPath, [
+    "--import", fileURLToPath(new URL("./network-denial.mjs", import.meta.url)),
+    fileURLToPath(new URL("./worker.ts", import.meta.url)),
+  ], {
     input: JSON.stringify({
       workerProtocolVersion: "1",
       helperApiVersion: "ai-drama-helper-v1",
       workerRuntimeVersion: process.version,
       compiledCode,
       operation: "textRequest",
-      payload: {},
+      payload,
       mode,
       timeoutMs: 1000,
       maxOutputBytes: 1024 * 1024,
@@ -38,4 +41,41 @@ test("validation helper denies network", () => {
   );
   assert.equal(response.ok, false);
   assert.equal(response.error.code, "NETWORK_DISABLED_DURING_VALIDATION");
+});
+
+test("execution helper rejects destinations outside selected config", () => {
+  const response = invoke(
+    "module.exports.textRequest = async (_payload, helpers) => helpers.http.request({url:'https://blocked.invalid/v1'});",
+    "execution",
+    {config: {base_url: "https://allowed.invalid/v1"}},
+  );
+  assert.equal(response.ok, false);
+  assert.equal(response.error.code, "HTTP_DESTINATION_NOT_ALLOWED");
+});
+
+for (const url of [
+  "https://127.0.0.1/resource",
+  "https://169.254.169.254/latest/meta-data",
+  "https://[::1]/resource",
+  "https://[fd00::1]/resource",
+]) {
+  test(`execution helper rejects non-public destination ${url}`, () => {
+    const response = invoke(
+      `module.exports.textRequest = async (_payload, helpers) => helpers.http.request({url:${JSON.stringify(url)}});`,
+      "execution",
+      {config: {base_url: url}},
+    );
+    assert.equal(response.ok, false);
+    assert.equal(response.error.code, "HTTP_DESTINATION_NOT_ALLOWED");
+  });
+}
+
+test("worker test transport denies external DNS even for configured origin", () => {
+  const response = invoke(
+    "module.exports.textRequest = async (_payload, helpers) => helpers.http.request({url:'https://example.invalid/v1'});",
+    "execution",
+    {config: {base_url: "https://example.invalid/v1"}},
+  );
+  assert.equal(response.ok, false);
+  assert.match(response.error.code, /SUPPLIER_EXECUTION_FAILED|UNEXPECTED_REAL_NETWORK/);
 });

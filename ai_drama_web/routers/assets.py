@@ -54,7 +54,13 @@ def get_generation_service(
     backend = getattr(request.app.state, "generation_backend", None)
     if backend is None:
         raise RuntimeError("generation backend is not configured")
-    return AssetGenerationService(product_store, runtime_store, backend)
+    return AssetGenerationService(
+        product_store,
+        runtime_store,
+        backend,
+        m6_coordinator=getattr(request.app.state, "m6_generation_coordinator", None),
+        supplier_execution_enabled=request.app.state.settings.m6_supplier_execution_enabled,
+    )
 
 
 @router.post("/chapters/{chapter_id}/assets", response_model=AssetRead)

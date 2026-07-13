@@ -22,7 +22,7 @@ from .parser import (
     parse_storyboard_response,
 )
 from .request import build_runtime_request, build_runtime_request_from_inputs, build_shot_prompt_runtime_request, build_storyboard_runtime_request
-from .runtime import RuntimeErrorBase, run_runtime
+from .runtime import RuntimeErrorBase, RuntimeResponse, run_runtime
 from .validators import recursive_freshness_status, run_declared_validators
 from .storyboard_canonical import CONTENT_PROFILE as STORYBOARD_CANONICAL_PROFILE, canonical_storyboard_hash, parse_canonical_json, serialize_canonical_json
 from .shot_prompt_canonical import CONTENT_PROFILE as SHOT_PROMPT_PROFILE, parse_shot_prompt_json, serialize_shot_prompt_json, shot_prompt_content_hash
@@ -135,9 +135,29 @@ def _validate_skill_input_mode(skill, provided_mode):
 
 
 class RuntimeService:
-    def __init__(self, store, repo_root=None):
+    def __init__(self, store, repo_root=None, supplier_text_executor=None):
         self.store = store
         self.repo_root = Path(repo_root or Path.cwd()).resolve()
+        self.supplier_text_executor = supplier_text_executor
+
+    def _run_text_provider(self, *, project_id, operation_key, runtime_request, runtime, mock_mode, run_id):
+        if self.supplier_text_executor is None:
+            return run_runtime(runtime_request, mock_mode=mock_mode)
+        started = time.time()
+        try:
+            result = self.supplier_text_executor.execute_text(
+                project_id=project_id,
+                operation_key=operation_key,
+                idempotency_key=run_id,
+                request=json.loads(runtime_request.to_json()),
+            )
+        except Exception as exc:
+            code = getattr(exc, "code", str(exc) or "SUPPLIER_EXECUTION_FAILED")
+            raise RuntimeErrorBase(code, "supplier text execution failed") from exc
+        return RuntimeResponse(
+            raw=result["output"], provider="supplier", model="resolved-by-snapshot",
+            usage=result["usage"], duration_ms=int((time.time() - started) * 1000),
+        )
 
     def close(self):
         self.store.close()
@@ -654,7 +674,11 @@ class RuntimeService:
                 text=item["text"],
             )
         try:
-            response = run_runtime(runtime_request, mock_mode=mock_mode)
+            response = self._run_text_provider(
+                project_id=project_id, operation_key="script_adaptation",
+                runtime_request=runtime_request, runtime=runtime,
+                mock_mode=mock_mode, run_id=run.run_id,
+            )
         except RuntimeErrorBase as exc:
             run = self.store.update_run(
                 run.run_id,
@@ -1054,7 +1078,11 @@ class RuntimeService:
         )
         self._insert_shot_prompt_input_snapshots(run, source_revision, runtime_request)
         try:
-            response = run_runtime(runtime_request, mock_mode=mock_mode)
+            response = self._run_text_provider(
+                project_id=source_revision.project_id, operation_key="shot_prompt_generation",
+                runtime_request=runtime_request, runtime=runtime,
+                mock_mode=mock_mode, run_id=run.run_id,
+            )
         except RuntimeErrorBase as exc:
             run = self.store.update_run(
                 run.run_id,
@@ -1216,7 +1244,11 @@ class RuntimeService:
                 text=self.store.read_text(snapshot.object_id),
             )
         try:
-            response = run_runtime(runtime_request, mock_mode=mock_mode)
+            response = self._run_text_provider(
+                project_id=source_revision.project_id, operation_key="storyboard_design",
+                runtime_request=runtime_request, runtime=runtime,
+                mock_mode=mock_mode, run_id=run.run_id,
+            )
         except RuntimeErrorBase as exc:
             run = self.store.update_run(
                 run.run_id,

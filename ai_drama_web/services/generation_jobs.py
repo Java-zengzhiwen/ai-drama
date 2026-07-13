@@ -41,6 +41,8 @@ class GenerationJobService:
         secret_store: LocalSecretStore,
         *,
         public_base_url: str,
+        m6_coordinator=None,
+        supplier_execution_enabled: bool = False,
     ) -> None:
         self.product_store = product_store
         self.runtime_store = runtime_store
@@ -50,6 +52,8 @@ class GenerationJobService:
             secret_store,
             public_base_url=public_base_url,
         )
+        self.m6_coordinator = m6_coordinator
+        self.supplier_execution_enabled = supplier_execution_enabled
 
     def queue_video_job(
         self,
@@ -60,6 +64,8 @@ class GenerationJobService:
         expected_chapter_id: str | None = None,
         explicit_rerun: bool = False,
         overrides: dict | None = None,
+        rerun_source_job=None,
+        use_current_project_model: bool = False,
     ):
         revision = self._shot_prompt_revision(prompt_revision_id)
         if expected_chapter_id is not None and revision.chapter_id != expected_chapter_id:
@@ -86,6 +92,22 @@ class GenerationJobService:
                 provider="agnes",
                 job_type="video",
             )
+        if self.supplier_execution_enabled:
+            if rerun_source_job is not None:
+                return self.m6_coordinator.rerun_video(
+                    source_job=rerun_source_job,
+                    idempotency_key=idempotency_key,
+                    request=request,
+                    use_current_project_model=use_current_project_model,
+                )[0]
+            return self.m6_coordinator.enqueue_video(
+                project_id=revision.project_id,
+                chapter_id=revision.chapter_id,
+                shot_id=shot_id,
+                prompt_revision_id=revision.revision_id,
+                idempotency_key=idempotency_key,
+                request=request,
+            )[0]
         job = self.product_store.create_generation_job(
             provider="agnes",
             job_type="video",

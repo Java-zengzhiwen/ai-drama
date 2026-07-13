@@ -41,6 +41,58 @@ def test_submit_queued_video_job_sends_only_the_standard_shot_keyframe(tmp_path)
     assert len(response["colliding_keys"]) == 2
     signature = backend.requests[0].input_images[0].split("signature=", 1)[1]
     assert signature not in json.dumps(response)
+    assert store.get_submission_attempt(submitted.job_id)["state"] == "committed"
+
+
+def test_accepted_submission_recovers_local_commit_without_resubmit(tmp_path):
+    runtime, store, queue_service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+    queued = queue_service.queue_video_job(
+        prompt_revision_id=revision.revision_id, shot_id="SHOT_001", idempotency_key="accepted-crash"
+    )
+    backend = CapturingVideoBackend()
+
+    def crash(name):
+        if name == "accepted_persisted":
+            raise SystemExit("crash")
+
+    service = _execution_service(tmp_path, runtime, store, backend)
+    service._checkpoint = crash
+    with pytest.raises(SystemExit, match="crash"):
+        service.submit_queued_job(queued.job_id)
+    assert store.get_submission_attempt(queued.job_id)["state"] == "accepted"
+    assert store.get_generation_job(queued.job_id).internal_status == "submitting"
+
+    recovered = service.recover_submission_attempts()
+    assert recovered == 1
+    assert store.get_generation_job(queued.job_id).provider_job_id == "video-provider-1"
+    assert store.get_submission_attempt(queued.job_id)["state"] == "committed"
+    assert len(backend.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_crash_before_acceptance_persistence_fails_closed_without_resubmit(tmp_path):
+    from ai_drama_web.services.generation_poller import GenerationPoller
+
+    runtime, store, queue_service, revision, _canonical, _asset_ids = _ready_fixture(tmp_path)
+    queued = queue_service.queue_video_job(
+        prompt_revision_id=revision.revision_id, shot_id="SHOT_001", idempotency_key="unknown-crash"
+    )
+    backend = CapturingVideoBackend()
+    service = _execution_service(tmp_path, runtime, store, backend)
+
+    def crash(name):
+        if name == "provider_returned":
+            raise SystemExit("crash")
+
+    service._checkpoint = crash
+    with pytest.raises(SystemExit, match="crash"):
+        service.submit_queued_job(queued.job_id)
+    assert store.get_submission_attempt(queued.job_id)["state"] == "submitting"
+    poller = GenerationPoller(store, runtime, backend, rpm=1, poll_interval_seconds=1, execution_service=service)
+    result = await poller.run_cycle()
+    assert result.submission_outcome_unknown == 1
+    assert store.get_generation_job(queued.job_id).error_code == "submission_outcome_unknown"
+    assert len(backend.requests) == 1
 
 
 def test_execution_rejects_legacy_queued_standard_video_with_multiple_shot_keyframes(tmp_path):

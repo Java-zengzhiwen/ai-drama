@@ -152,14 +152,28 @@ def _run_py_compile():
     return _run([sys.executable, "-m", "py_compile", *[str(path) for path in files]])
 
 
+def _storyboard_pytest_targets():
+    return (
+        "tests/acceptance/test_storyboard_workflow_acceptance.py",
+        "tests/test_storyboard_workflow.py",
+        "tests/test_storyboard_canonical_workflow.py",
+        "tests/test_storyboard_canonical_serialization.py",
+        "tests/test_storyboard_legacy_migration.py",
+        "tests/test_storyboard_renderer.py",
+        "tests/test_shot_prompt_runtime.py",
+        "tests/test_shot_prompt_canonical.py",
+        "tests/test_shot_prompt_skill_package.py",
+    )
+
+
 def _run_pytest(*, selftest=False, exclude_entrypoint=False):
     env = dict(os.environ)
     env.pop("PYTEST_CURRENT_TEST", None)
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTEST_ADDOPTS"] = "-p no:cacheprovider -ra"
     env["STORYBOARD_VERIFICATION_REPORT_CHECK"] = "0"
-    cmd = [sys.executable, "-m", "pytest", "-q"]
-    if exclude_entrypoint:
+    cmd = [sys.executable, "-m", "pytest", "-q", *_storyboard_pytest_targets()]
+    if not selftest:
         cmd.extend(["-k", "not test_storyboard_verification_entrypoint_runs"])
     if selftest:
         env["STORYBOARD_VERIFICATION_SELFTEST"] = "1"

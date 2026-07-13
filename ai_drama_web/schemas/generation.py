@@ -124,6 +124,7 @@ class GenerationRerunCreate(BaseModel):
     duration_seconds: int | None = None
     mode: Literal["std", "pro", "keyframes"] | None = None
     seed: int | None = None
+    use_current_project_model: bool = False
 
     @field_validator("idempotency_key")
     @classmethod

@@ -104,8 +104,11 @@ class GenerationJobRecord:
     updated_at: str
     snapshot_hash: str = ""
     snapshot_object_id: str = ""
+    resolved_snapshot_object_id: str = ""
     source_job_id: str = ""
     rerun_resolution_mode: str = ""
+    legacy_backfill_state: str = ""
+    legacy_backfill_version: str = ""
 
 
 @dataclass(frozen=True)

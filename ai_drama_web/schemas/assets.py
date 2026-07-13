@@ -44,6 +44,7 @@ class AssetGenerateImageRequest(BaseModel):
     input_asset_ids: list[str] = Field(default_factory=list)
     input_images: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str = ""
 
     @field_validator("name", "prompt", "size")
     @classmethod

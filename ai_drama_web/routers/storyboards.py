@@ -23,12 +23,14 @@ def get_repo_root(request: Request):
 
 
 def get_service(
+    request: Request,
     product_store: ProductStore = Depends(get_product_store),
     runtime_store: RuntimeStore = Depends(get_runtime_store),
     settings: Settings = Depends(get_settings),
     repo_root=Depends(get_repo_root),
 ) -> StoryboardWorkflowService:
-    return StoryboardWorkflowService(product_store, runtime_store, settings, repo_root)
+    executor = request.app.state.m6_generation_coordinator if settings.m6_supplier_execution_enabled else None
+    return StoryboardWorkflowService(product_store, runtime_store, settings, repo_root, executor)
 
 
 def _error(status_code: int, error_code: str, error_message: str) -> JSONResponse:

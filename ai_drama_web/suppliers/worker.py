@@ -27,6 +27,7 @@ class WorkerLimits:
     timeout_seconds: float = 30.0
     max_request_bytes: int = 4 * 1024 * 1024
     max_output_bytes: int = 4 * 1024 * 1024
+    max_media_bytes: int = 512 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,7 @@ class SupplierWorker:
                 "mode": mode,
                 "timeoutMs": max(1, int(limits.timeout_seconds * 1000)),
                 "maxOutputBytes": limits.max_output_bytes,
+                "maxMediaBytes": limits.max_media_bytes,
             },
             ensure_ascii=False,
             separators=(",", ":"),

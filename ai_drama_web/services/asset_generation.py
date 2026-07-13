@@ -30,10 +30,14 @@ class AssetGenerationService:
         product_store: ProductStore,
         runtime_store: RuntimeStore,
         backend: GenerationBackend,
+        m6_coordinator=None,
+        supplier_execution_enabled: bool = False,
     ) -> None:
         self.product_store = product_store
         self.runtime_store = runtime_store
         self.backend = backend
+        self.m6_coordinator = m6_coordinator
+        self.supplier_execution_enabled = supplier_execution_enabled
 
     def generate_image_asset(self, chapter_id: str, request: AssetGenerateImageRequest):
         chapter = self.product_store.get_chapter(chapter_id)
@@ -50,6 +54,19 @@ class AssetGenerationService:
             ):
                 raise MissingRecord
             input_images.append(asset_data_uri(input_asset.media_type, self.runtime_store.read_bytes_object(input_asset.object_id)))
+
+        if self.supplier_execution_enabled:
+            request_body = request.model_dump()
+            request_body["input_images"] = input_images
+            key = request.idempotency_key or __import__("hashlib").sha256(
+                json.dumps(request_body, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            return self.m6_coordinator.generate_image(
+                project_id=chapter.project_id,
+                chapter_id=chapter.chapter_id,
+                idempotency_key=key,
+                request=request_body,
+            )
 
         image_request = ImageGenerationRequest(
             prompt=request.prompt,

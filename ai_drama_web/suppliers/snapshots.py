@@ -5,7 +5,7 @@ import json
 from ai_drama_runtime.store import now_iso
 
 from .models import ExecutionSnapshotRecord
-from .worker import HELPER_API_VERSION, WORKER_PROTOCOL_VERSION, current_worker_runtime_version
+from .worker import HELPER_API_VERSION, WORKER_PROTOCOL_VERSION, WorkerLimits, current_worker_runtime_version
 
 
 class SupplierRuntimeUnavailable(RuntimeError):
@@ -41,6 +41,7 @@ class ExecutionSnapshot:
     credential_resolution_mode: str
     resolved_credential_version_id: str
     resolved_constraints: dict
+    worker_limits: dict
     worker_limits_hash: str
     source_snapshot_hash: str
     source_supplier_version_id: str
@@ -80,7 +81,9 @@ class SnapshotBuilder:
             self._require_object(object_id)
         if config.config_object_id:
             self._require_object(config.config_object_id)
-        limits_hash = hashlib.sha256(_canonical(worker_limits).encode("utf-8")).hexdigest()
+        normalized_limits = asdict(WorkerLimits())
+        normalized_limits.update(worker_limits)
+        limits_hash = hashlib.sha256(_canonical(normalized_limits).encode("utf-8")).hexdigest()
         return ExecutionSnapshot(
             snapshot_schema_version="execution-snapshot-v1",
             supplier_id=supplier.supplier_id,
@@ -109,6 +112,7 @@ class SnapshotBuilder:
             credential_resolution_mode=credential_resolution_mode,
             resolved_credential_version_id=resolved_credential_version_id,
             resolved_constraints=dict(resolved_constraints),
+            worker_limits=normalized_limits,
             worker_limits_hash=limits_hash,
             source_snapshot_hash=source_snapshot_hash,
             source_supplier_version_id=source_supplier_version_id,
@@ -248,6 +252,9 @@ def _validate_snapshot(store, snapshot):
             raise ValueError("helper API unavailable")
         if snapshot.worker_runtime_version != current_worker_runtime_version():
             raise ValueError("worker runtime unavailable")
+        if hashlib.sha256(_canonical(snapshot.worker_limits).encode("utf-8")).hexdigest() != snapshot.worker_limits_hash:
+            raise ValueError("worker limits fingerprint mismatch")
+        WorkerLimits(**snapshot.worker_limits)
         if snapshot.resolved_credential_version_id:
             credential = store.get_credential_version(snapshot.resolved_credential_version_id)
             if (

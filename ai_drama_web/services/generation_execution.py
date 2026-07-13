@@ -23,6 +23,7 @@ class GenerationExecutionService:
         asset_delivery: AssetDeliveryService | None = None,
         supplier_gateway=None,
         supplier_execution_enabled: bool = False,
+        checkpoint=None,
     ) -> None:
         self.product_store = product_store
         self.runtime_store = runtime_store
@@ -30,6 +31,7 @@ class GenerationExecutionService:
         self.asset_delivery = asset_delivery
         self.supplier_gateway = supplier_gateway
         self.supplier_execution_enabled = supplier_execution_enabled
+        self._checkpoint = checkpoint or (lambda _name: None)
 
     def submit_queued_job(self, job_id: str):
         job = self.product_store.get_generation_job(job_id)
@@ -38,18 +40,19 @@ class GenerationExecutionService:
         if job.internal_status != "queued":
             raise ValueError("only queued jobs can be submitted")
         attempt = self.product_store.get_submission_attempt(job_id)
-        if attempt is not None and attempt["state"] in {"submitted", "committed", "unknown"}:
-            if attempt["provider_job_id"] and not job.provider_job_id:
-                return self.product_store.attach_generation_provider_job(
-                    job_id, provider_job_id=attempt["provider_job_id"], response_object_id=attempt["evidence_object_id"]
-                )
+        if attempt is not None and attempt["state"] == "accepted":
+            return self.product_store.commit_accepted_submission(job_id)
+        if attempt is not None and attempt["state"] in {"committed", "submitting", "unknown_outcome", "failed"}:
             return job
         self.product_store.prepare_submission_attempt(job_id, attempt_number=job.attempt_number)
         submitting = self.product_store.transition_generation_job(job.job_id, "submitting")
+        self.product_store.record_submission_attempt(job_id, state="submitting")
         request = json.loads(self.runtime_store.read_text(submitting.request_object_id))
         try:
             if self.supplier_execution_enabled and submitting.snapshot_hash:
-                response = self.supplier_gateway.invoke(submitting.snapshot_hash, "videoSubmit", request)
+                supplier_request = dict(request)
+                supplier_request["input_images"] = self._materialize_asset_urls(request)
+                response = self.supplier_gateway.invoke(submitting.snapshot_hash, "videoSubmit", supplier_request)
                 from ai_drama_web.providers.models import ProviderJob
                 video_id = response.get("video_id") or response.get("videoId")
                 if not video_id:
@@ -66,7 +69,7 @@ class GenerationExecutionService:
                 ))
         except ProviderError as exc:
             response_object_id = self._provider_error_object_id(exc)
-            self.product_store.record_submission_attempt(job_id, state="unknown", evidence_object_id=response_object_id)
+            self.product_store.record_submission_attempt(job_id, state="failed", evidence_object_id=response_object_id)
             return self.product_store.transition_generation_job(
                 submitting.job_id,
                 "failed",
@@ -75,6 +78,7 @@ class GenerationExecutionService:
                 response_object_id=response_object_id,
             )
         except AssetDeliveryInvalidPublicBaseUrl:
+            self.product_store.record_submission_attempt(job_id, state="failed")
             return self.product_store.transition_generation_job(
                 submitting.job_id,
                 "failed",
@@ -82,13 +86,14 @@ class GenerationExecutionService:
                 error_message="video input asset is not provider reachable",
             )
         except Exception:
-            self.product_store.record_submission_attempt(job_id, state="unknown")
+            self.product_store.record_submission_attempt(job_id, state="unknown_outcome")
             return self.product_store.transition_generation_job(
                 submitting.job_id,
                 "failed",
                 error_code="unknown_provider_error",
                 error_message="video provider failed",
             )
+        self._checkpoint("provider_returned")
         response_object_id = self.runtime_store.write_text_object(
             json.dumps(
                 _sanitize_persisted_provider_metadata(provider_job.raw),
@@ -99,13 +104,18 @@ class GenerationExecutionService:
             )
         )
         self.product_store.record_submission_attempt(
-            job_id, state="submitted", provider_job_id=provider_job.provider_job_id, evidence_object_id=response_object_id
+            job_id, state="accepted", provider_job_id=provider_job.provider_job_id, evidence_object_id=response_object_id
         )
-        return self.product_store.attach_generation_provider_job(
-            submitting.job_id,
-            provider_job_id=provider_job.provider_job_id,
-            response_object_id=response_object_id,
-        )
+        self._checkpoint("accepted_persisted")
+        return self.product_store.commit_accepted_submission(job_id)
+
+    def recover_submission_attempts(self):
+        rows = self.product_store.conn.execute(
+            "SELECT job_id FROM generation_submission_attempts WHERE state = 'accepted' ORDER BY created_at, attempt_id"
+        ).fetchall()
+        for row in rows:
+            self.product_store.commit_accepted_submission(row["job_id"])
+        return len(rows)
 
     def refresh_job(self, job_id: str):
         job = self.product_store.get_generation_job(job_id)
@@ -165,6 +175,14 @@ class GenerationExecutionService:
                 error_code=exc.code,
                 error_message="video provider failed",
                 response_object_id=response_object_id,
+            )
+        except Exception as exc:
+            code = getattr(exc, "code", "SUPPLIER_EXECUTION_FAILED")
+            return self.product_store.transition_generation_job(
+                job.job_id,
+                "failed",
+                error_code=code,
+                error_message="supplier execution failed",
             )
         object_id = ""
         if result.content is not None:
@@ -342,6 +360,8 @@ def _sanitize_persisted_provider_metadata(value: Any) -> Any:
 
 
 def _persisted_source_url(url: str) -> tuple[str, str]:
+    if not url:
+        return "", "source_url_unavailable"
     parsed = urlsplit(url)
     filtered_query = []
     removed_sensitive_value = bool(parsed.username or parsed.password or parsed.fragment)

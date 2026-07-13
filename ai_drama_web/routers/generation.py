@@ -1,5 +1,4 @@
 import json
-from dataclasses import replace
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -30,7 +29,7 @@ from ai_drama_web.services.generation_jobs import (
     GenerationJobBlocked,
     GenerationJobService,
 )
-from ai_drama_web.suppliers.snapshots import load_snapshot, persist_snapshot
+from ai_drama_web.suppliers.execution import SnapshotExecutionGateway
 from ai_drama_web.store import ProductStore
 
 router = APIRouter(prefix="/api")
@@ -63,6 +62,7 @@ def get_generation_backend(request: Request) -> GenerationBackend:
 
 
 def get_service(
+    request: Request,
     product_store: ProductStore = Depends(get_product_store),
     runtime_store: RuntimeStore = Depends(get_runtime_store),
     settings: Settings = Depends(get_settings),
@@ -73,6 +73,8 @@ def get_service(
         runtime_store,
         secret_store,
         public_base_url=settings.public_base_url,
+        m6_coordinator=getattr(request.app.state, "m6_generation_coordinator", None),
+        supplier_execution_enabled=settings.m6_supplier_execution_enabled,
     )
 
 
@@ -92,6 +94,10 @@ def get_execution_service(
             request.app.state.secret_store,
             public_base_url=request.app.state.settings.public_base_url,
         ),
+        supplier_gateway=SnapshotExecutionGateway(
+            product_store, request.app.state.supplier_credential_store
+        ),
+        supplier_execution_enabled=request.app.state.settings.m6_supplier_execution_enabled,
     )
 
 
@@ -247,12 +253,6 @@ async def rerun_generation_job(
     if source is None:
         raise HTTPException(status_code=404, detail="generation job not found")
     overrides = _rerun_overrides(payload)
-    inherited_snapshot = None
-    if source.snapshot_hash:
-        inherited_snapshot = load_snapshot(product_store, source.snapshot_hash)
-        supplier = product_store.get_supplier(inherited_snapshot.supplier_id)
-        if supplier is None or not supplier.current_credential_version_id:
-            return _error(409, "CREDENTIAL_MISSING", "current supplier credential is missing")
     try:
         new_job = service.queue_video_job(
             prompt_revision_id=source.prompt_revision_id,
@@ -260,6 +260,8 @@ async def rerun_generation_job(
             idempotency_key=payload.idempotency_key,
             explicit_rerun=True,
             overrides=overrides,
+            rerun_source_job=source,
+            use_current_project_model=payload.use_current_project_model,
         )
     except GenerationJobBlocked as exc:
         return _error(409, "shot_prompt_blocked", str(exc))
@@ -269,6 +271,10 @@ async def rerun_generation_job(
         return _error(409, "idempotency_conflict", str(exc))
     except AssetDeliveryInvalidPublicBaseUrl:
         return _error(409, "input_unreachable", "public asset delivery URL is not provider reachable")
+    except Exception as exc:
+        if str(exc) in {"CREDENTIAL_MISSING", "CREDENTIAL_NOT_READY", "CREDENTIAL_STORAGE_CORRUPT"}:
+            return _error(409, str(exc), "supplier credential is unavailable")
+        raise
     rerun = product_store.create_rerun_record(
         source_job_id=source.job_id,
         new_job_id=new_job.job_id,
@@ -281,31 +287,10 @@ async def rerun_generation_job(
                 allow_nan=False,
             )
         ),
-        resolution_mode="inherit_source_snapshot" if inherited_snapshot else "legacy",
+        resolution_mode=new_job.rerun_resolution_mode or "legacy",
         source_snapshot_hash=source.snapshot_hash,
-        new_snapshot_hash=(
-            persist_snapshot(
-                product_store,
-                replace(
-                    inherited_snapshot,
-                    credential_resolution_mode="current",
-                    resolved_credential_version_id=supplier.current_credential_version_id,
-                    source_snapshot_hash=source.snapshot_hash,
-                    source_supplier_version_id=inherited_snapshot.supplier_version_id,
-                    source_config_revision_id=inherited_snapshot.config_revision_id,
-                    source_model_revision_id=inherited_snapshot.model_revision_id,
-                ),
-            ).snapshot_hash
-            if inherited_snapshot else ""
-        ),
+        new_snapshot_hash=new_job.snapshot_hash,
     )
-    if rerun.new_snapshot_hash:
-        snapshot_record = product_store.conn.execute(
-            "SELECT snapshot_object_id FROM execution_snapshots WHERE snapshot_hash = ?", (rerun.new_snapshot_hash,)
-        ).fetchone()
-        new_job = product_store.attach_generation_snapshot(
-            new_job.job_id, snapshot_hash=rerun.new_snapshot_hash, snapshot_object_id=snapshot_record["snapshot_object_id"]
-        )
     return {
         "rerun_id": rerun.rerun_id,
         "source_job_id": rerun.source_job_id,

@@ -28,7 +28,10 @@ from .secrets import LocalSecretStore
 from .services.asset_delivery import AssetDeliveryService
 from .services.generation_execution import GenerationExecutionService
 from .services.generation_poller import GenerationPoller
+from .services.m6_generation import M6GenerationCoordinator
+from .services.legacy_agnes_backfill import LegacyAgnesBackfill
 from .suppliers.execution import SnapshotExecutionGateway
+from .suppliers.builtin_adapters import install_builtin_adapters
 from .store import ProductStore
 from .suppliers.credentials import SupplierCredentialStore
 
@@ -57,6 +60,15 @@ def create_app(
             product_store, settings.data_root
         )
         app.state.supplier_credential_recovery = app.state.supplier_credential_store.recover()
+        supplier_gateway = SnapshotExecutionGateway(product_store, app.state.supplier_credential_store)
+        app.state.m6_generation_coordinator = M6GenerationCoordinator(
+            product_store, runtime_store, app.state.supplier_credential_store, supplier_gateway
+        )
+        if settings.m6_supplier_execution_enabled:
+            app.state.m6_builtin_adapter_install_count = install_builtin_adapters(product_store)
+            app.state.legacy_agnes_backfill_count = LegacyAgnesBackfill(
+                product_store, runtime_store, settings.data_root, app.state.secret_store, settings
+            ).run()
         if getattr(app.state, "generation_backend", None) is None:
             try:
                 app.state.generation_backend = create_generation_backend(settings, app.state.secret_store)
@@ -71,22 +83,24 @@ def create_app(
                 app.state.secret_store,
                 public_base_url=settings.public_base_url,
             )
+            execution_service = GenerationExecutionService(
+                product_store,
+                runtime_store,
+                app.state.generation_backend,
+                asset_delivery=asset_delivery,
+                supplier_gateway=supplier_gateway,
+                supplier_execution_enabled=settings.m6_supplier_execution_enabled,
+            )
+            execution_service.recover_submission_attempts()
+            if settings.m6_supplier_execution_enabled:
+                app.state.m6_generation_coordinator.recover_image_jobs()
             app.state.generation_poller = GenerationPoller(
                 product_store,
                 runtime_store,
                 app.state.generation_backend,
                 rpm=settings.agnes_video_rpm,
                 poll_interval_seconds=settings.agnes_poll_interval_seconds,
-                execution_service=GenerationExecutionService(
-                    product_store,
-                    runtime_store,
-                    app.state.generation_backend,
-                    asset_delivery=asset_delivery,
-                    supplier_gateway=SnapshotExecutionGateway(
-                        product_store, app.state.supplier_credential_store
-                    ),
-                    supplier_execution_enabled=settings.m6_supplier_execution_enabled,
-                ),
+                execution_service=execution_service,
             )
             await app.state.generation_poller.start()
         else:

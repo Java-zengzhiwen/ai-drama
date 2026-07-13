@@ -1,0 +1,268 @@
+import json
+from dataclasses import replace
+
+from ai_drama_web.services.generation_execution import _persisted_source_url
+from ai_drama_web.suppliers.adapters import sanitize_evidence
+from ai_drama_web.suppliers.resolution import ModelResolver, ModelResolutionError
+from ai_drama_web.suppliers.snapshots import SnapshotBuilder
+from ai_drama_web.suppliers.snapshots import load_snapshot
+from ai_drama_runtime.store import now_iso
+
+
+class M6GenerationError(RuntimeError):
+    def __init__(self, code):
+        super().__init__(code)
+        self.code = code
+
+
+class M6GenerationCoordinator:
+    def __init__(self, store, runtime_store, credential_store, gateway, checkpoint=None):
+        self.store = store
+        self.runtime = runtime_store
+        self.credentials = credential_store
+        self.gateway = gateway
+        self._checkpoint = checkpoint or (lambda _name: None)
+
+    def _resolve_snapshot(self, project_id, operation_key, constraints=None):
+        try:
+            resolved = ModelResolver(self.store).resolve(project_id, operation_key)
+        except ModelResolutionError as exc:
+            raise M6GenerationError(exc.code) from exc
+        supplier = resolved.supplier
+        credential_id = supplier.current_credential_version_id
+        if not credential_id:
+            raise M6GenerationError("CREDENTIAL_MISSING")
+        credential = self.store.get_credential_version(credential_id)
+        if credential is None:
+            raise M6GenerationError("CREDENTIAL_MISSING")
+        if credential.state != "ready":
+            raise M6GenerationError(
+                "CREDENTIAL_STORAGE_CORRUPT"
+                if credential.state == "credential_storage_corrupt"
+                else "CREDENTIAL_NOT_READY"
+            )
+        return SnapshotBuilder(self.store).build(
+            resolved,
+            credential_resolution_mode="current",
+            resolved_credential_version_id=credential_id,
+            resolved_constraints=constraints or {},
+            worker_limits={"timeout_seconds": 30, "max_output_bytes": 4 * 1024 * 1024},
+        )
+
+    def enqueue_video(self, *, project_id, chapter_id, shot_id, prompt_revision_id,
+                      idempotency_key, request, snapshot=None, source_job_id="",
+                      rerun_resolution_mode=""):
+        snapshot = snapshot or self._resolve_snapshot(project_id, "shot_video_generation")
+        return self.store.enqueue_generation_job_with_snapshot(
+            supplier_id=snapshot.supplier_id,
+            capability="video",
+            provider=f"m6:{snapshot.supplier_id}:video",
+            job_type="video",
+            project_id=project_id,
+            chapter_id=chapter_id,
+            shot_id=shot_id,
+            prompt_revision_id=prompt_revision_id,
+            idempotency_key=idempotency_key,
+            request=request,
+            snapshot=snapshot,
+            source_job_id=source_job_id,
+            rerun_resolution_mode=rerun_resolution_mode,
+        )
+
+    def rerun_video(self, *, source_job, idempotency_key, request,
+                    use_current_project_model=False):
+        if use_current_project_model:
+            snapshot = self._resolve_snapshot(source_job.project_id, "shot_video_generation")
+            resolution_mode = "current_project_model"
+        else:
+            source = load_snapshot(self.store, source_job.snapshot_hash)
+            supplier = self.store.get_supplier(source.supplier_id)
+            credential_id = supplier.current_credential_version_id if supplier else ""
+            credential = self.store.get_credential_version(credential_id) if credential_id else None
+            if credential is None:
+                raise M6GenerationError("CREDENTIAL_MISSING")
+            if credential.state != "ready":
+                raise M6GenerationError("CREDENTIAL_STORAGE_CORRUPT" if credential.state == "credential_storage_corrupt" else "CREDENTIAL_NOT_READY")
+            snapshot = replace(
+                source,
+                credential_resolution_mode="current",
+                resolved_credential_version_id=credential_id,
+                source_snapshot_hash=source_job.snapshot_hash,
+                source_supplier_version_id=source.supplier_version_id,
+                source_config_revision_id=source.config_revision_id,
+                source_model_revision_id=source.model_revision_id,
+                created_at=now_iso(),
+            )
+            resolution_mode = "inherit_source_snapshot"
+        return self.enqueue_video(
+            project_id=source_job.project_id,
+            chapter_id=source_job.chapter_id,
+            shot_id=source_job.shot_id,
+            prompt_revision_id=source_job.prompt_revision_id,
+            idempotency_key=idempotency_key,
+            request=request,
+            snapshot=snapshot,
+            source_job_id=source_job.job_id,
+            rerun_resolution_mode=resolution_mode,
+        )
+
+    def execute_text(self, *, project_id, operation_key, idempotency_key, request):
+        snapshot = self._resolve_snapshot(project_id, operation_key)
+        run, created = self.store.enqueue_text_run_with_snapshot(
+            project_id=project_id,
+            operation_key=operation_key,
+            supplier_id=snapshot.supplier_id,
+            idempotency_key=idempotency_key,
+            request=request,
+            snapshot=snapshot,
+        )
+        if not created:
+            if run["status"] == "completed":
+                payload = json.loads(self.runtime.read_text(run["result_object_id"]))
+                return {"run_id": run["run_id"], **payload}
+            raise M6GenerationError("IDEMPOTENT_RUN_NOT_COMPLETED")
+        try:
+            response = self.gateway.invoke(run["snapshot_hash"], "textRequest", request)
+        except Exception as exc:
+            self.store.fail_supplier_text_run(run["run_id"], error_code=getattr(exc, "code", "SUPPLIER_EXECUTION_FAILED"))
+            raise
+        normalized = {
+            "output": response.get("output", ""),
+            "usage": dict(response.get("usage") or {}),
+        }
+        safe = sanitize_evidence(response)
+        result_object_id = self.runtime.write_text_object(
+            json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+        )
+        evidence_object_id = self.runtime.write_text_object(
+            json.dumps(safe, sort_keys=True, separators=(",", ":"))
+        )
+        self.store.complete_supplier_text_run(
+            run["run_id"], result_object_id=result_object_id,
+            evidence_object_id=evidence_object_id,
+        )
+        return {"run_id": run["run_id"], **normalized}
+
+    def generate_image(self, *, project_id, chapter_id, idempotency_key, request):
+        snapshot = self._resolve_snapshot(project_id, "storyboard_keyframe_image")
+        job, created = self.store.enqueue_generation_job_with_snapshot(
+            supplier_id=snapshot.supplier_id,
+            capability="image",
+            provider=f"m6:{snapshot.supplier_id}:image",
+            job_type="image",
+            project_id=project_id,
+            chapter_id=chapter_id,
+            shot_id=str(request.get("shot_id") or ""),
+            prompt_revision_id="",
+            idempotency_key=idempotency_key,
+            request=request,
+            snapshot=snapshot,
+        )
+        if not created:
+            row = self.store.conn.execute(
+                "SELECT asset_id FROM assets WHERE source_job_id = ? ORDER BY created_at, asset_id LIMIT 1",
+                (job.job_id,),
+            ).fetchone()
+            if row is not None:
+                return self._asset(row["asset_id"], job.job_id)
+        attempt = self.store.get_submission_attempt(job.job_id)
+        if attempt["state"] != "prepared":
+            raise M6GenerationError("SUBMISSION_OUTCOME_UNKNOWN")
+        self.store.transition_generation_job(job.job_id, "submitting")
+        self.store.record_submission_attempt(job.job_id, state="submitting")
+        try:
+            response = self.gateway.invoke(job.snapshot_hash, "imageRequest", request)
+        except Exception as exc:
+            self.store.record_submission_attempt(job.job_id, state="unknown_outcome")
+            self.store.transition_generation_job(
+                job.job_id, "failed", error_code="SUBMISSION_OUTCOME_UNKNOWN",
+                error_message="image submission outcome is unknown",
+            )
+            raise
+        content = response.get("content") or response.get("bytes")
+        if isinstance(content, str):
+            content = content.encode("utf-8")
+        if not content:
+            raise M6GenerationError("RESULT_MISSING")
+        media_type = str(response.get("media_type") or "image/png")
+        object_id = self.runtime.write_bytes_object(content)
+        safe_response = sanitize_evidence({key: value for key, value in response.items() if key not in {"content", "bytes"}})
+        safe_response["object_id"] = object_id
+        evidence_object_id = self.runtime.write_text_object(
+            json.dumps(safe_response, sort_keys=True, separators=(",", ":"))
+        )
+        provider_job_id = str(response.get("provider_job_id") or f"image-{job.job_id}")
+        self.store.record_submission_attempt(
+            job.job_id, state="accepted", provider_job_id=provider_job_id,
+            evidence_object_id=evidence_object_id,
+        )
+        self._checkpoint("image_accepted_persisted")
+        self.store.commit_accepted_submission(job.job_id)
+        return self._finalize_image(job.job_id)
+
+    def recover_image_jobs(self):
+        rows = self.store.conn.execute(
+            """
+            SELECT j.job_id FROM generation_jobs j
+            JOIN generation_submission_attempts a ON a.job_id=j.job_id
+            WHERE j.job_type='image' AND j.internal_status='submitted'
+              AND a.state='committed' AND j.provider_result_id=''
+            ORDER BY j.created_at, j.job_id
+            """
+        ).fetchall()
+        for row in rows:
+            self._finalize_image(row["job_id"])
+        return len(rows)
+
+    def _finalize_image(self, job_id):
+        job = self.store.get_generation_job(job_id)
+        attempt = self.store.get_submission_attempt(job_id)
+        response = json.loads(self.runtime.read_text(attempt["evidence_object_id"]))
+        request = json.loads(self.runtime.read_text(job.request_object_id))
+        object_id = response["object_id"]
+        media_type = str(response.get("media_type") or "image/png")
+        content = self.runtime.read_bytes_object(object_id)
+        source_url, source_state = _persisted_source_url(str(response.get("url") or ""))
+        completed = self.store.complete_generation_job_with_result(
+            job_id=job_id, object_id=object_id, media_type=media_type,
+            source_url=source_url, source_url_state=source_state,
+            metadata_object_id=attempt["evidence_object_id"],
+        )
+        existing = self.store.conn.execute(
+            "SELECT asset_id FROM assets WHERE source_job_id=? ORDER BY created_at, asset_id LIMIT 1",
+            (job_id,),
+        ).fetchone()
+        if existing is not None:
+            return self._asset(existing["asset_id"], job_id)
+        asset = self.store.create_generated_asset(
+            project_id=job.project_id,
+            chapter_id=job.chapter_id,
+            asset_type=str(request["asset_type"]),
+            name=str(request["name"]),
+            data=content,
+            media_type=media_type,
+            source_job_id=job_id,
+            metadata={"generation_job_id": job_id, "generation_result_id": completed.provider_result_id},
+        )
+        return self._asset(asset.asset_id, job_id)
+
+    def _asset(self, asset_id, job_id):
+        asset = self.store.get_asset(asset_id)
+        return {
+            "asset_id": asset.asset_id,
+            "project_id": asset.project_id,
+            "chapter_id": asset.chapter_id,
+            "asset_type": asset.asset_type,
+            "name": asset.name,
+            "object_id": asset.object_id,
+            "media_type": asset.media_type,
+            "width": asset.width,
+            "height": asset.height,
+            "status": asset.status,
+            "source_type": asset.source_type,
+            "source_job_id": asset.source_job_id,
+            "metadata": json.loads(self.runtime.read_text(asset.metadata_object_id)),
+            "created_at": asset.created_at,
+            "updated_at": asset.updated_at,
+            "job_id": job_id,
+        }

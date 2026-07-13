@@ -22,12 +22,13 @@ class StoryboardWorkflowService:
         runtime_store: RuntimeStore,
         settings: Settings,
         repo_root: Path,
+        supplier_text_executor=None,
     ):
         self.product_store = product_store
         self.runtime_store = runtime_store
         self.settings = settings
         self.repo_root = Path(repo_root).resolve()
-        self.runtime_service = RuntimeService(runtime_store, repo_root=self.repo_root)
+        self.runtime_service = RuntimeService(runtime_store, repo_root=self.repo_root, supplier_text_executor=supplier_text_executor)
 
     def generate_storyboard(self, chapter_id: str):
         self._chapter_or_raise(chapter_id)

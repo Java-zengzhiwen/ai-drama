@@ -41,12 +41,14 @@ def get_repo_root(request: Request):
 
 
 def get_service(
+    request: Request,
     product_store: ProductStore = Depends(get_product_store),
     runtime_store: RuntimeStore = Depends(get_runtime_store),
     settings: Settings = Depends(get_settings),
     repo_root=Depends(get_repo_root),
 ) -> ShotPromptService:
-    return ShotPromptService(product_store, runtime_store, settings, repo_root)
+    executor = request.app.state.m6_generation_coordinator if settings.m6_supplier_execution_enabled else None
+    return ShotPromptService(product_store, runtime_store, settings, repo_root, executor)
 
 
 @router.post("/chapters/{chapter_id}/shot-prompts/generate")

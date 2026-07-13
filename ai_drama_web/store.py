@@ -48,6 +48,7 @@ M6A_SUPPLIER_MIGRATION_ID = "m6a_supplier_core_v1"
 M6A_SUPPLIER_FINGERPRINT_MIGRATION_ID = "m6a_supplier_runtime_fingerprint_v2"
 M6B_MODEL_CATALOG_MIGRATION_ID = "m6b_model_catalog_binding_v1"
 M6C_ADAPTER_CUTOVER_MIGRATION_ID = "m6c_adapter_cutover_v1"
+M6C_SUBMISSION_STATE_MIGRATION_ID = "m6c_submission_state_v2"
 BUILTIN_SUPPLIERS = (
     ("agnes", "Agnes"),
     ("anthropic", "Anthropic"),
@@ -211,9 +212,26 @@ class ProductStore:
               attempt_id TEXT PRIMARY KEY,
               job_id TEXT NOT NULL UNIQUE REFERENCES generation_jobs(job_id) ON DELETE RESTRICT,
               attempt_number INTEGER NOT NULL,
-              state TEXT NOT NULL CHECK (state IN ('prepared','submitted','committed','unknown')),
+              state TEXT NOT NULL CHECK (state IN ('prepared','submitting','accepted','committed','unknown_outcome','failed')),
               provider_job_id TEXT NOT NULL DEFAULT '',
               evidence_object_id TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS supplier_text_runs (
+              run_id TEXT PRIMARY KEY,
+              project_id TEXT NOT NULL,
+              operation_key TEXT NOT NULL,
+              supplier_id TEXT NOT NULL REFERENCES suppliers(supplier_id) ON DELETE RESTRICT,
+              snapshot_hash TEXT NOT NULL REFERENCES execution_snapshots(snapshot_hash) ON DELETE RESTRICT,
+              snapshot_object_id TEXT NOT NULL,
+              idempotency_key TEXT NOT NULL,
+              request_hash TEXT NOT NULL,
+              request_object_id TEXT NOT NULL,
+              status TEXT NOT NULL CHECK (status IN ('prepared','completed','failed')),
+              result_object_id TEXT NOT NULL DEFAULT '',
+              evidence_object_id TEXT NOT NULL DEFAULT '',
+              error_code TEXT NOT NULL DEFAULT '',
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
             );
@@ -390,15 +408,47 @@ class ProductStore:
         self._apply_supplier_runtime_fingerprint_migration()
         self._apply_model_catalog_binding_migration()
         self._apply_m6c_adapter_cutover_migration()
+        self._apply_m6c_submission_state_migration()
         self.conn.commit()
+
+    def _apply_m6c_submission_state_migration(self):
+        if self.conn.execute("SELECT 1 FROM schema_migrations WHERE migration_id = ?", (M6C_SUBMISSION_STATE_MIGRATION_ID,)).fetchone():
+            return
+        definition = self.conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='generation_submission_attempts'").fetchone()
+        if definition is not None and "unknown_outcome" not in definition["sql"]:
+            self.conn.executescript(
+                """
+                ALTER TABLE generation_submission_attempts RENAME TO generation_submission_attempts_v1;
+                CREATE TABLE generation_submission_attempts (
+                  attempt_id TEXT PRIMARY KEY,
+                  job_id TEXT NOT NULL UNIQUE REFERENCES generation_jobs(job_id) ON DELETE RESTRICT,
+                  attempt_number INTEGER NOT NULL,
+                  state TEXT NOT NULL CHECK (state IN ('prepared','submitting','accepted','committed','unknown_outcome','failed')),
+                  provider_job_id TEXT NOT NULL DEFAULT '',
+                  evidence_object_id TEXT NOT NULL DEFAULT '',
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                INSERT INTO generation_submission_attempts
+                SELECT attempt_id, job_id, attempt_number,
+                       CASE state WHEN 'submitted' THEN 'accepted' WHEN 'unknown' THEN 'unknown_outcome' ELSE state END,
+                       provider_job_id, evidence_object_id, created_at, updated_at
+                FROM generation_submission_attempts_v1;
+                DROP TABLE generation_submission_attempts_v1;
+                """
+            )
+        self.conn.execute("INSERT INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)", (M6C_SUBMISSION_STATE_MIGRATION_ID, now_iso()))
 
     def _apply_m6c_adapter_cutover_migration(self):
         if self.conn.execute("SELECT 1 FROM schema_migrations WHERE migration_id = ?", (M6C_ADAPTER_CUTOVER_MIGRATION_ID,)).fetchone():
             return
         self._ensure_column("generation_jobs", "snapshot_hash", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("generation_jobs", "snapshot_object_id", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("generation_jobs", "resolved_snapshot_object_id", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("generation_jobs", "source_job_id", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("generation_jobs", "rerun_resolution_mode", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("generation_jobs", "legacy_backfill_state", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("generation_jobs", "legacy_backfill_version", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("rerun_records", "resolution_mode", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("rerun_records", "source_snapshot_hash", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("rerun_records", "new_snapshot_hash", "TEXT NOT NULL DEFAULT ''")
@@ -2053,6 +2103,134 @@ class ProductStore:
         self.conn.commit()
         return self.get_generation_job(job_id)
 
+    def enqueue_generation_job_with_snapshot(
+        self, *, supplier_id, capability, provider, job_type, project_id,
+        chapter_id, shot_id, prompt_revision_id, idempotency_key, request,
+        snapshot, attempt_number=1, source_job_id="", rerun_resolution_mode="",
+    ):
+        from .suppliers.idempotency import SupplierIdempotencyConflict, canonical_request_hash
+        from .suppliers.snapshots import _validate_snapshot, canonical_snapshot_json, snapshot_hash
+
+        _validate_snapshot(self, snapshot)
+        snapshot_raw = canonical_snapshot_json(snapshot)
+        resolved_snapshot_hash = snapshot_hash(snapshot)
+        snapshot_object_id = self.runtime.write_text_object(snapshot_raw)
+        request_raw = _normalized_json(request)
+        request_object_id = self.runtime.write_text_object(request_raw)
+        request_hash = canonical_request_hash(request, resolved_snapshot_hash)
+        created_at = now_iso()
+        job_id = uuid.uuid4().hex
+        attempt_id = uuid.uuid4().hex
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            replay = self.conn.execute(
+                "SELECT * FROM supplier_idempotency_records WHERE supplier_id = ? AND capability = ? AND idempotency_key = ?",
+                (supplier_id, capability, idempotency_key),
+            ).fetchone()
+            if replay is not None:
+                if replay["request_hash"] != request_hash:
+                    raise SupplierIdempotencyConflict("IDEMPOTENCY_CONFLICT")
+                self.conn.commit()
+                return self.get_generation_job(replay["existing_id"]), False
+            self.conn.execute(
+                "INSERT OR IGNORE INTO execution_snapshots (snapshot_hash, snapshot_object_id, supplier_id, supplier_model_id, model_revision_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (resolved_snapshot_hash, snapshot_object_id, snapshot.supplier_id,
+                 snapshot.supplier_model_id, snapshot.model_revision_id, snapshot.created_at),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO generation_jobs
+                (job_id, provider, job_type, project_id, chapter_id, shot_id,
+                 prompt_revision_id, internal_status, idempotency_key, request_hash,
+                 request_object_id, attempt_number, created_at, updated_at,
+                 snapshot_hash, snapshot_object_id, resolved_snapshot_object_id,
+                 source_job_id, rerun_resolution_mode)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (job_id, provider, job_type, project_id, chapter_id, shot_id,
+                 prompt_revision_id, idempotency_key, request_hash,
+                 request_object_id, attempt_number, created_at, created_at,
+                 resolved_snapshot_hash, snapshot_object_id, snapshot_object_id,
+                 source_job_id, rerun_resolution_mode),
+            )
+            self.conn.execute(
+                "INSERT INTO generation_submission_attempts (attempt_id, job_id, attempt_number, state, created_at, updated_at) VALUES (?, ?, ?, 'prepared', ?, ?)",
+                (attempt_id, job_id, attempt_number, created_at, created_at),
+            )
+            self.conn.execute(
+                "INSERT INTO supplier_idempotency_records (supplier_id, capability, idempotency_key, request_hash, existing_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (supplier_id, capability, idempotency_key, request_hash, job_id, created_at),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return self.get_generation_job(job_id), True
+
+    def enqueue_text_run_with_snapshot(self, *, project_id, operation_key, supplier_id,
+                                       idempotency_key, request, snapshot):
+        from .suppliers.idempotency import SupplierIdempotencyConflict, canonical_request_hash
+        from .suppliers.snapshots import _validate_snapshot, canonical_snapshot_json, snapshot_hash
+
+        _validate_snapshot(self, snapshot)
+        snapshot_raw = canonical_snapshot_json(snapshot)
+        digest = snapshot_hash(snapshot)
+        snapshot_object_id = self.runtime.write_text_object(snapshot_raw)
+        request_object_id = self.runtime.write_text_object(_normalized_json(request))
+        request_hash = canonical_request_hash(request, digest)
+        run_id = uuid.uuid4().hex
+        created_at = now_iso()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            replay = self.conn.execute(
+                "SELECT * FROM supplier_idempotency_records WHERE supplier_id=? AND capability='text' AND idempotency_key=?",
+                (supplier_id, idempotency_key),
+            ).fetchone()
+            if replay:
+                if replay["request_hash"] != request_hash:
+                    raise SupplierIdempotencyConflict("IDEMPOTENCY_CONFLICT")
+                self.conn.commit()
+                return self.get_supplier_text_run(replay["existing_id"]), False
+            self.conn.execute(
+                "INSERT OR IGNORE INTO execution_snapshots (snapshot_hash, snapshot_object_id, supplier_id, supplier_model_id, model_revision_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (digest, snapshot_object_id, snapshot.supplier_id, snapshot.supplier_model_id,
+                 snapshot.model_revision_id, snapshot.created_at),
+            )
+            self.conn.execute(
+                "INSERT INTO supplier_text_runs (run_id, project_id, operation_key, supplier_id, snapshot_hash, snapshot_object_id, idempotency_key, request_hash, request_object_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?, ?)",
+                (run_id, project_id, operation_key, supplier_id, digest, snapshot_object_id,
+                 idempotency_key, request_hash, request_object_id, created_at, created_at),
+            )
+            self.conn.execute(
+                "INSERT INTO supplier_idempotency_records (supplier_id, capability, idempotency_key, request_hash, existing_id, created_at) VALUES (?, 'text', ?, ?, ?, ?)",
+                (supplier_id, idempotency_key, request_hash, run_id, created_at),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return self.get_supplier_text_run(run_id), True
+
+    def get_supplier_text_run(self, run_id):
+        row = self.conn.execute("SELECT * FROM supplier_text_runs WHERE run_id = ?", (run_id,)).fetchone()
+        return None if row is None else dict(row)
+
+    def complete_supplier_text_run(self, run_id, *, result_object_id, evidence_object_id):
+        self.conn.execute(
+            "UPDATE supplier_text_runs SET status='completed', result_object_id=?, evidence_object_id=?, updated_at=? WHERE run_id=? AND status='prepared'",
+            (result_object_id, evidence_object_id, now_iso(), run_id),
+        )
+        self.conn.commit()
+        return self.get_supplier_text_run(run_id)
+
+    def fail_supplier_text_run(self, run_id, *, error_code, evidence_object_id=""):
+        self.conn.execute(
+            "UPDATE supplier_text_runs SET status='failed', error_code=?, evidence_object_id=?, updated_at=? WHERE run_id=? AND status='prepared'",
+            (error_code, evidence_object_id, now_iso(), run_id),
+        )
+        self.conn.commit()
+        return self.get_supplier_text_run(run_id)
+
     def get_generation_job(self, job_id):
         row = self.conn.execute("SELECT * FROM generation_jobs WHERE job_id = ?", (job_id,)).fetchone()
         return None if row is None else GenerationJobRecord(**dict(row))
@@ -2163,8 +2341,8 @@ class ProductStore:
 
     def attach_generation_snapshot(self, job_id, *, snapshot_hash, snapshot_object_id):
         self.conn.execute(
-            "UPDATE generation_jobs SET snapshot_hash = ?, snapshot_object_id = ?, updated_at = ? WHERE job_id = ?",
-            (snapshot_hash, snapshot_object_id, now_iso(), job_id),
+            "UPDATE generation_jobs SET snapshot_hash = ?, snapshot_object_id = ?, resolved_snapshot_object_id = ?, updated_at = ? WHERE job_id = ?",
+            (snapshot_hash, snapshot_object_id, snapshot_object_id, now_iso(), job_id),
         )
         self.conn.commit()
         return self.get_generation_job(job_id)
@@ -2185,7 +2363,7 @@ class ProductStore:
         return dict(self.conn.execute("SELECT * FROM generation_submission_attempts WHERE attempt_id = ?", (attempt_id,)).fetchone())
 
     def record_submission_attempt(self, job_id, *, state, provider_job_id="", evidence_object_id=""):
-        if state not in {"submitted", "committed", "unknown"}:
+        if state not in {"submitting", "accepted", "committed", "unknown_outcome", "failed"}:
             raise ValueError("invalid submission attempt state")
         self.conn.execute(
             "UPDATE generation_submission_attempts SET state = ?, provider_job_id = ?, evidence_object_id = ?, updated_at = ? WHERE job_id = ?",
@@ -2194,6 +2372,32 @@ class ProductStore:
         self.conn.commit()
         row = self.conn.execute("SELECT * FROM generation_submission_attempts WHERE job_id = ?", (job_id,)).fetchone()
         return None if row is None else dict(row)
+
+    def commit_accepted_submission(self, job_id):
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            attempt = self.conn.execute(
+                "SELECT * FROM generation_submission_attempts WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            job = self.conn.execute("SELECT * FROM generation_jobs WHERE job_id = ?", (job_id,)).fetchone()
+            if attempt is None or job is None or attempt["state"] != "accepted" or not attempt["provider_job_id"]:
+                raise ValueError("accepted submission is not recoverable")
+            if job["internal_status"] == "submitting":
+                self.conn.execute(
+                    "UPDATE generation_jobs SET internal_status='submitted', provider_job_id=?, response_object_id=?, updated_at=? WHERE job_id=?",
+                    (attempt["provider_job_id"], attempt["evidence_object_id"], now_iso(), job_id),
+                )
+            elif job["internal_status"] != "submitted":
+                raise ValueError("accepted submission job state is invalid")
+            self.conn.execute(
+                "UPDATE generation_submission_attempts SET state='committed', updated_at=? WHERE job_id=?",
+                (now_iso(), job_id),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return self.get_generation_job(job_id)
 
     def get_submission_attempt(self, job_id):
         row = self.conn.execute("SELECT * FROM generation_submission_attempts WHERE job_id = ?", (job_id,)).fetchone()
