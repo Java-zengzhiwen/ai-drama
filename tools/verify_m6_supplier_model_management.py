@@ -30,7 +30,7 @@ GROUP_COMMANDS = OrderedDict(
             [
                 PYTEST
                 + [
-                    "tests/migration/test_m6e_migration_matrix.py::test_active_legacy_status_matrix_backfills_only_recoverable_non_terminal_jobs",
+                    "tests/migration/test_m6e_migration_matrix.py::test_active_legacy_matrix_backfills_queryable_jobs_and_fails_closed_without_id",
                     "tests/web/test_m6c_adapter_cutover.py::test_backfilled_legacy_job_completes_via_poll_fetch_without_submit",
                 ]
             ],
@@ -78,7 +78,12 @@ GROUP_COMMANDS = OrderedDict(
                 [sys.executable, "tools/verify_m4_chapter_rehearsal.py"],
                 [sys.executable, "tools/verify_m6b_model_catalog_binding.py"],
                 [sys.executable, "tools/verify_m6d_management_ui.py"],
-                [sys.executable, "tools/verify_storyboard_workflow.py"],
+                [
+                    sys.executable,
+                    "tools/verify_storyboard_workflow.py",
+                    "--report-dir",
+                    "/tmp/ai-drama-m6e-storyboard-report",
+                ],
             ],
         ),
         (

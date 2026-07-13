@@ -7,7 +7,10 @@ const backendPort = process.env.AI_DRAMA_PLAYWRIGHT_M6D_BACKEND_PORT ?? "18766";
 const frontendPort = process.env.AI_DRAMA_PLAYWRIGHT_FRONTEND_PORT ?? "15173";
 const backendURL = `http://127.0.0.1:${backendPort}`;
 const frontendURL = `http://127.0.0.1:${frontendPort}`;
-const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
+const runningInVitest = Boolean(process.env.VITEST);
+const repoRoot = runningInVitest
+  ? resolve(process.cwd(), "..")
+  : fileURLToPath(new URL("../..", import.meta.url));
 
 const TEXT_MODEL_ID = "88888888-8888-4888-8888-888888888888";
 const IMAGE_MODEL_ID = "99999999-9999-4999-8999-999999999999";
@@ -33,6 +36,10 @@ export async function videoPoll(payload) { return { video_id: payload.request.vi
 export async function videoFetch() { return { media_type: "video/mp4", content: "m6e-video-content-${version}" }; }`;
 }
 
+if (runningInVitest) {
+  const { test: vitestTest } = await import("vitest");
+  vitestTest.skip("M6E Playwright acceptance runs through npm run test:e2e", () => undefined);
+} else {
 test("M6E completes offline text image video reruns and keeps restart-visible evidence", async ({
   page,
   request,
@@ -159,6 +166,7 @@ test("M6E completes offline text image video reruns and keeps restart-visible ev
   expect(unexpectedResponses).toEqual([]);
   await page.unrouteAll({ behavior: "ignoreErrors" });
 });
+}
 
 type VideoEvidence = {
   source_job_id: string;
