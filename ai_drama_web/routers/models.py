@@ -130,6 +130,7 @@ def _model_read(request, model):
     return {
         **model.__dict__,
         **revision.__dict__,
+        "entity_revision": model.revision,
         "definition": definition,
         "binding_count": request.app.state.product_store.count_project_binding_references(
             model.supplier_model_id

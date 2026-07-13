@@ -37,6 +37,7 @@ def test_model_crud_uses_stable_ids_etags_and_idempotency(client):
     listing = client.get(f"/api/suppliers/{supplier['supplier_id']}/models")
     assert listing.headers["etag"] == '"model-catalog-1"'
     assert [item["supplier_model_id"] for item in listing.json()] == [model_id]
+    assert listing.json()[0]["entity_revision"] == 1
 
     fetched = client.get(f"/api/models/{model_id}")
     assert fetched.status_code == 200
@@ -50,6 +51,7 @@ def test_model_crud_uses_stable_ids_etags_and_idempotency(client):
     assert updated.status_code == 200, updated.text
     assert updated.json()["display_name"] == "API Text Renamed"
     assert updated.json()["supplier_model_id"] == model_id
+    assert updated.json()["entity_revision"] == 2
     assert updated.headers["etag"] == '"model-%s-2"' % model_id
 
     stale = client.patch(

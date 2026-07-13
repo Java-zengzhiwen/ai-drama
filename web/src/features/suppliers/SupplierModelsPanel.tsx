@@ -31,7 +31,7 @@ const EMPTY_DRAFT: ModelDraft = {
 };
 
 function modelEtag(model: SupplierModelRead): string {
-  return `"model-${model.supplier_model_id}-${model.revision}"`;
+  return `"model-${model.supplier_model_id}-${model.entity_revision}"`;
 }
 
 export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {

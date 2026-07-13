@@ -134,7 +134,7 @@ export function SupplierListPage() {
             <span>供应商标识</span>
             <Input
               aria-label="供应商标识"
-              pattern="[a-z0-9][a-z0-9-]{0,63}"
+              pattern="[a-z0-9][a-z0-9\\-]{0,63}"
               value={slug}
               onChange={(event) => setSlug(event.target.value)}
             />

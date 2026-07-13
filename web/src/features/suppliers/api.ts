@@ -69,6 +69,7 @@ export type SupplierModelRead = {
   source: "built_in" | "overlay";
   enabled: number;
   revision: number;
+  entity_revision: number;
   definition: Record<string, unknown>;
   binding_count: number;
   created_at: string;
