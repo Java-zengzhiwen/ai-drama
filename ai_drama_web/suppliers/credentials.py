@@ -88,6 +88,7 @@ class SupplierCredentialStore:
             raise
         os.chmod(temp_path, 0o600)
         _fsync_directory(self.secrets_root)
+        self._checkpoint("file_fsynced")
         self.conn.execute(
             "UPDATE credential_migration_journal SET state = 'temp_written', updated_at = ? WHERE operation_id = ?",
             (now_iso(), operation_id),
@@ -251,6 +252,7 @@ class SupplierCredentialStore:
                 "DELETE FROM credential_migration_journal WHERE operation_id = ?",
                 (operation_id,),
             )
+        self._checkpoint("delete_finalized")
         return True
 
     def get(self, credential_version_id):

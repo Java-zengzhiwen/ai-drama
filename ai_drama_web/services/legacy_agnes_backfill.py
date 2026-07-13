@@ -27,7 +27,7 @@ class LegacyAgnesBackfill:
             """
             SELECT job_id FROM generation_jobs
             WHERE provider='agnes' AND job_type='video'
-              AND internal_status IN ('submitted','polling')
+              AND internal_status IN ('queued','submitting','submitted','polling')
               AND snapshot_hash='' AND legacy_backfill_state!='completed'
             ORDER BY created_at, job_id
             """

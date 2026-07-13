@@ -34,6 +34,7 @@ def _stores(tmp_path, crash_after=None):
     "crash_after,expected_ready",
     [
         ("journal_created", False),
+        ("file_fsynced", False),
         ("temp_written", False),
         ("pending_committed", True),
         ("renamed", True),
@@ -125,6 +126,21 @@ def test_delete_is_recovered_idempotently(tmp_path):
     assert second.deleted == 0
     assert product.get_supplier(supplier.supplier_id).current_credential_version_id == ""
     assert recovery_store.get(created.credential_version_id) is None
+
+
+def test_delete_finalized_crash_is_already_converged(tmp_path):
+    _, product, supplier, credentials = _stores(tmp_path)
+    created = credentials.replace(supplier.supplier_id, "credential-value", expected_revision=0)
+    credentials._checkpoint = lambda name: (_ for _ in ()).throw(SimulatedCrash(name)) \
+        if name == "delete_finalized" else None
+
+    with pytest.raises(SimulatedCrash, match="delete_finalized"):
+        credentials.delete(supplier.supplier_id, expected_revision=1)
+
+    report = SupplierCredentialStore(product, tmp_path / "runtime-data").recover()
+    assert report.deleted == 0
+    assert product.get_supplier(supplier.supplier_id).current_credential_version_id == ""
+    assert credentials.get(created.credential_version_id) is None
 
 
 def test_recovery_removes_unreferenced_temp_orphans(tmp_path):
