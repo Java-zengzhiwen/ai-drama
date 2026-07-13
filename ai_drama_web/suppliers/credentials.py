@@ -194,20 +194,20 @@ class SupplierCredentialStore:
                     """
                     UPDATE generation_jobs
                     SET internal_status='cancelled', error_code='credential_revoked',
-                        error_message='credential was force deleted', updated_at=?
+                        error_message='credential was force deleted', completed_at=?, updated_at=?
                     WHERE job_id=?
                     """,
-                    [(updated_at, job_id) for job_id in cancel_ids],
+                    [(updated_at, updated_at, job_id) for job_id in cancel_ids],
                 )
             if fail_ids:
                 self.conn.executemany(
                     """
                     UPDATE generation_jobs
                     SET internal_status='failed', error_code='credential_revoked',
-                        error_message='credential was force deleted', updated_at=?
+                        error_message='credential was force deleted', completed_at=?, updated_at=?
                     WHERE job_id=?
                     """,
-                    [(updated_at, job_id) for job_id in fail_ids],
+                    [(updated_at, updated_at, job_id) for job_id in fail_ids],
                 )
             self.conn.execute(
                 """

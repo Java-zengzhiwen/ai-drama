@@ -8,7 +8,13 @@ import {
 } from "./api";
 import { toManagementError, type ManagementError } from "./managementErrors";
 
-export function SupplierSecretForm({ supplier }: { supplier: SupplierRead }) {
+export function SupplierSecretForm({
+  supplier,
+  onReload,
+}: {
+  supplier: SupplierRead;
+  onReload: () => Promise<unknown>;
+}) {
   const [credential, setCredential] = useState("");
   const [visible, setVisible] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -36,6 +42,7 @@ export function SupplierSecretForm({ supplier }: { supplier: SupplierRead }) {
       );
       setStatus(saved.data);
       setCredentialRevision((current) => current + 1);
+      await onReload();
     } catch (caught) {
       setError(toManagementError(caught));
     } finally {
@@ -58,6 +65,7 @@ export function SupplierSecretForm({ supplier }: { supplier: SupplierRead }) {
       setCredentialRevision((current) => current + 1);
       setDeleteOpen(false);
       setForceAcknowledged(false);
+      await onReload();
     } catch (caught) {
       setError(toManagementError(caught));
     } finally {

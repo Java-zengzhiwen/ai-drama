@@ -22,9 +22,11 @@ Approved reference: `assets/selected-direction-supplier-operations-workbench.png
 
 ## Viewport and automation evidence
 
-- Desktop Chrome: the M6D Playwright management flow validates the complete workbench, table, inspector, dialogs, keyboard tab navigation, and route refresh.
-- 768x900 Chrome: `M6D uses the approved compact supplier selector at 768px` validates selector visibility and desktop rail suppression.
-- Playwright is configured to retain a screenshot on failure and a trace on first retry. The final verification run completed without a retry; therefore no failure artifact containing form state or secrets was retained.
+- 1440x1000: [`assets/m6d-implementation-desktop-1440.png`](assets/m6d-implementation-desktop-1440.png) preserves the reference's left supplier rail, central tabbed model table, and right inspector. Compared with the approved reference, the implementation intentionally has fewer toolbar actions because duplication, marketplace, batch operations, and multi-account management are outside M6D scope.
+- 1180x1000: [`assets/m6d-implementation-1180.png`](assets/m6d-implementation-1180.png) shows the inspector stacked below the command surface with no overlap or clipped table actions, matching the frozen responsive rule.
+- 768x1000: [`assets/m6d-implementation-768.png`](assets/m6d-implementation-768.png) shows the compact supplier selector, horizontally scrollable model table, wrapped command header, and stacked inspector.
+- Desktop Chrome automation also validates dialogs, keyboard tab navigation, route refresh, and the actual model-management workflow.
+- The committed QA screenshots use the built-in OpenAI supplier and contain no credential input or secret value. Playwright separately retains a screenshot on failure and a trace on first retry.
 - The approved reference image remains the visual comparison baseline and its frozen hash is recorded in the visual-design specification.
 
 ## Security-sensitive visual QA

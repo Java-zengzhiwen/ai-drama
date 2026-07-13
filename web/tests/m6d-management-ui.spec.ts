@@ -1,11 +1,16 @@
 import { expect, type APIRequestContext, type Page, test } from "@playwright/test";
+import { execFileSync } from "node:child_process";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const backendPort = process.env.AI_DRAMA_PLAYWRIGHT_M6D_BACKEND_PORT ?? "18766";
 const frontendPort = process.env.AI_DRAMA_PLAYWRIGHT_FRONTEND_PORT ?? "15173";
 const backendURL = `http://127.0.0.1:${backendPort}`;
 const frontendURL = `http://127.0.0.1:${frontendPort}`;
-
 const runningInVitest = Boolean(process.env.VITEST);
+const repoRoot = runningInVitest
+  ? resolve(process.cwd(), "..")
+  : fileURLToPath(new URL("../..", import.meta.url));
 
 function sourceFor(version: string, marker: string) {
   return `export const vendor = {
@@ -34,7 +39,7 @@ if (runningInVitest) {
   test("M6D manages supplier code, config, write-only secret, models, and project bindings", async ({
     page,
     request,
-  }) => {
+  }, testInfo) => {
     const unexpectedNetwork: string[] = [];
     await proxyApi(page, request);
     page.on("request", (browserRequest) => {
@@ -122,9 +127,17 @@ if (runningInVitest) {
     await page.getByRole("button", { name: "确认删除模型" }).click();
     await expect(page.getByRole("row", { name: /Disposable Image/ })).toHaveCount(0);
 
+    await page.getByRole("button", { name: "新增模型" }).click();
+    await page.getByLabel("显示名称").fill("Queued Video");
+    await page.getByLabel("供应商模型名").fill("queued-video-v1");
+    await page.getByLabel("能力", { exact: true }).selectOption("video");
+    await page.getByRole("button", { name: "保存新模型" }).click();
+    await expect(page.getByRole("row", { name: /Queued Video/ })).toContainText("Overlay");
+
     const modelsResponse = await request.get(`${backendURL}/api/suppliers/${supplierId}/models`);
-    const models = (await modelsResponse.json()) as Array<{ supplier_model_id: string }>;
-    const modelId = models.find((model) => Boolean(model.supplier_model_id))!.supplier_model_id;
+    const models = (await modelsResponse.json()) as Array<{ supplier_model_id: string; capability: string }>;
+    const modelId = models.find((model) => model.capability === "text")!.supplier_model_id;
+    const videoModelId = models.find((model) => model.capability === "video")!.supplier_model_id;
     const projectResponse = await request.post(`${backendURL}/api/projects`, {
       data: {
         name: `M6D Project ${unique}`,
@@ -141,6 +154,7 @@ if (runningInVitest) {
     await expect(page.getByRole("heading", { name: "项目模型配置" })).toBeVisible();
     await expect(page.getByRole("note")).toContainText("现有 queued/submitted/polling 任务继续使用创建时快照");
     await page.getByLabel("默认文本模型").selectOption(modelId);
+    await page.getByLabel("默认视频模型").selectOption(videoModelId);
     await page.getByLabel("剧本改编").selectOption(modelId);
     await expect(page.getByTestId("binding-source-script_adaptation")).toHaveText("显式覆盖");
     await page.getByRole("button", { name: "保存全部模型配置" }).click();
@@ -164,6 +178,16 @@ if (runningInVitest) {
       `/api/chapters/${chapter.chapter_id}/script/generate`,
     );
     expect(firstExecution.content).toContain("M6D_BROWSER_VERSION_1");
+    const dataRoot = String(testInfo.config.metadata.m6dDataRoot);
+    const queued = createQueuedSnapshotJob(dataRoot, project.project_id, chapter.chapter_id, unique);
+    const queuedRead = await browserGet<Array<{ job_id: string; internal_status: string }>>(
+      page,
+      `/api/chapters/${chapter.chapter_id}/generation/jobs`,
+    );
+    expect(queuedRead).toContainEqual(expect.objectContaining({
+      job_id: queued.job_id,
+      internal_status: "queued",
+    }));
 
     await page.goto(`/suppliers/${supplierId}`);
     await page.getByRole("tab", { name: "模型" }).click();
@@ -187,6 +211,10 @@ if (runningInVitest) {
       `/api/chapters/${chapter.chapter_id}/script/generate`,
     );
     expect(secondExecution.content).toContain("M6D_BROWSER_VERSION_2");
+    const afterSave = readQueuedSnapshotJob(dataRoot, queued.job_id);
+    expect(afterSave.snapshot_hash).toBe(queued.snapshot_hash);
+    expect(afterSave.supplier_version_id).toBe(queued.supplier_version_id);
+    expect(afterSave.internal_status).toBe("queued");
 
     expect(unexpectedNetwork).toEqual([]);
     await page.unrouteAll({ behavior: "ignoreErrors" });
@@ -220,6 +248,29 @@ if (runningInVitest) {
     await page.getByRole("link", { name: /OpenAI/ }).click();
     await expect(page.getByLabel("切换供应商")).toBeVisible();
     await expect(page.locator(".supplier-rail > a").first()).toBeHidden();
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+  });
+
+  test("M6D captures approved desktop 1180 and 768 visual QA", async ({ page, request }) => {
+    await proxyApi(page, request);
+    const assets = join(repoRoot, "docs/product-design/m6d/assets");
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto("/suppliers");
+    await page.getByRole("link", { name: /OpenAI/ }).click();
+    await page.getByRole("tab", { name: "模型" }).click();
+    await expect(page.getByRole("heading", { name: "模型目录" })).toBeVisible();
+    await page.screenshot({ path: join(assets, "m6d-implementation-desktop-1440.png"), fullPage: true });
+
+    await page.setViewportSize({ width: 1180, height: 1000 });
+    await expect(page.getByRole("complementary", { name: "供应商检查器" })).toBeVisible();
+    const command = await page.locator(".supplier-command").boundingBox();
+    const inspector = await page.locator(".supplier-inspector").boundingBox();
+    expect(inspector!.y).toBeGreaterThan(command!.y);
+    await page.screenshot({ path: join(assets, "m6d-implementation-1180.png"), fullPage: true });
+
+    await page.setViewportSize({ width: 768, height: 1000 });
+    await expect(page.getByLabel("切换供应商")).toBeVisible();
+    await page.screenshot({ path: join(assets, "m6d-implementation-768.png"), fullPage: true });
     await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 
@@ -308,9 +359,17 @@ if (runningInVitest) {
 
     await page.getByRole("tab", { name: "模型" }).click();
     await page.getByRole("row", { name: /CAS Text/ }).getByRole("button", { name: "编辑 CAS Text" }).click();
-    await page.route(`${frontendURL}/api/models/${model.supplier_model_id}`, staleMutation);
+    const remoteEdit = await request.patch(`${backendURL}/api/models/${model.supplier_model_id}`, {
+      data: { display_name: "CAS Text Remote" },
+      headers: { "If-Match": `"model-${model.supplier_model_id}-1", "model-catalog-1"` },
+    });
+    expect(remoteEdit.ok()).toBeTruthy();
     await page.getByRole("button", { name: "保存新版本" }).click();
-    await expect(page.getByRole("dialog", { name: /编辑模型/ }).getByRole("button", { name: "重新加载模型" })).toBeVisible();
+    const reloadModel = page.getByRole("dialog", { name: /编辑模型/ }).getByRole("button", { name: "重新加载模型" });
+    await expect(reloadModel).toBeVisible();
+    await reloadModel.click();
+    await page.getByRole("button", { name: "保存新版本" }).click();
+    await expect(page.getByRole("dialog", { name: /编辑模型/ })).toHaveCount(0);
     await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 }
@@ -351,4 +410,99 @@ async function browserPost<T>(page: Page, path: string): Promise<T> {
     if (!response.ok) throw new Error(`${response.status}: ${JSON.stringify(body)}`);
     return body;
   }, path) as Promise<T>;
+}
+
+async function browserGet<T>(page: Page, path: string): Promise<T> {
+  return page.evaluate(async (target) => {
+    const response = await fetch(target);
+    const body = await response.json();
+    if (!response.ok) throw new Error(`${response.status}: ${JSON.stringify(body)}`);
+    return body;
+  }, path) as Promise<T>;
+}
+
+type QueuedSnapshotEvidence = {
+  job_id: string;
+  snapshot_hash: string;
+  supplier_version_id: string;
+  internal_status: string;
+};
+
+function pythonEvidence(dataRoot: string, script: string, ...args: string[]): QueuedSnapshotEvidence {
+  if (!dataRoot) throw new Error("M6D Playwright data root is not configured");
+  const output = execFileSync("python3", ["-c", script, dataRoot, ...args], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
+  });
+  return JSON.parse(output.trim()) as QueuedSnapshotEvidence;
+}
+
+function createQueuedSnapshotJob(dataRoot: string, projectId: string, chapterId: string, unique: string) {
+  return pythonEvidence(dataRoot, `
+import json, sys
+from pathlib import Path
+from ai_drama_runtime.store import RuntimeStore
+from ai_drama_web.store import ProductStore
+from ai_drama_web.suppliers.resolution import ModelResolver
+from ai_drama_web.suppliers.snapshots import SnapshotBuilder
+
+root = Path(sys.argv[1])
+project_id, chapter_id, unique = sys.argv[2:5]
+runtime = RuntimeStore(root / "runtime.db", root / "objects")
+store = ProductStore(runtime)
+resolved = ModelResolver(store).resolve(project_id, "shot_video_generation")
+credential_id = resolved.supplier.current_credential_version_id
+snapshot = SnapshotBuilder(store).build(
+    resolved,
+    credential_resolution_mode="current",
+    resolved_credential_version_id=credential_id,
+    resolved_constraints={},
+    worker_limits={"timeout_seconds": 30, "max_output_bytes": 4194304},
+)
+job, created = store.enqueue_generation_job_with_snapshot(
+    supplier_id=snapshot.supplier_id,
+    capability="video",
+    provider=f"m6:{snapshot.supplier_id}:video",
+    job_type="video",
+    project_id=project_id,
+    chapter_id=chapter_id,
+    shot_id=f"shot-{unique}",
+    prompt_revision_id=f"prompt-{unique}",
+    idempotency_key=f"queued-{unique}",
+    request={"prompt": "offline queued snapshot"},
+    snapshot=snapshot,
+)
+print(json.dumps({
+    "job_id": job.job_id,
+    "snapshot_hash": job.snapshot_hash,
+    "supplier_version_id": snapshot.supplier_version_id,
+    "internal_status": job.internal_status,
+}))
+runtime.close()
+`, projectId, chapterId, unique);
+}
+
+function readQueuedSnapshotJob(dataRoot: string, jobId: string) {
+  return pythonEvidence(dataRoot, `
+import json, sys
+from pathlib import Path
+from ai_drama_runtime.store import RuntimeStore
+from ai_drama_web.store import ProductStore
+from ai_drama_web.suppliers.snapshots import load_snapshot
+
+root = Path(sys.argv[1])
+job_id = sys.argv[2]
+runtime = RuntimeStore(root / "runtime.db", root / "objects")
+store = ProductStore(runtime)
+job = store.get_generation_job(job_id)
+snapshot = load_snapshot(store, job.snapshot_hash)
+print(json.dumps({
+    "job_id": job.job_id,
+    "snapshot_hash": job.snapshot_hash,
+    "supplier_version_id": snapshot.supplier_version_id,
+    "internal_status": job.internal_status,
+}))
+runtime.close()
+`, jobId);
 }

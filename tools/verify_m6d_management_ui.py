@@ -34,7 +34,11 @@ def verify():
         for marker in (
             "M6D_BROWSER_VERSION_1",
             "M6D_BROWSER_VERSION_2",
-            "现有 queued/submitted/polling 任务继续使用创建时快照",
+            "createQueuedSnapshotJob",
+            "readQueuedSnapshotJob",
+            "m6d-implementation-desktop-1440.png",
+            "m6d-implementation-1180.png",
+            "m6d-implementation-768.png",
             "unexpectedNetwork",
             "恢复内置版本",
             "Disposable Image",

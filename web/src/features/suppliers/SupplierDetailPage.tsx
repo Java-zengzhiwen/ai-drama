@@ -136,7 +136,7 @@ export function SupplierDetailPage() {
             </section>
           ) : null}
           {section === "config" ? <SupplierConfigForm supplier={supplier} onReload={detail.refetch} /> : null}
-          {section === "secret" ? <SupplierSecretForm supplier={supplier} /> : null}
+          {section === "secret" ? <SupplierSecretForm supplier={supplier} onReload={detail.refetch} /> : null}
           {section === "code" ? (
             <Suspense fallback={<div className="management-loading">正在加载编辑器…</div>}>
               <LazySupplierCodeEditor supplier={supplier} supplierEtag={detail.data.etag} onReload={detail.refetch} />

@@ -121,6 +121,26 @@ def test_saved_supplier_version_affects_only_future_execution_snapshots(client):
         )
     )
     assert new_created is True
+    client.portal.call(
+        lambda: client.app.state.product_store.transition_generation_job(
+            new_job.job_id, "submitting"
+        )
+    )
+    client.portal.call(
+        lambda: client.app.state.product_store.attach_generation_provider_job(
+            new_job.job_id,
+            provider_job_id="provider-video-preserved",
+            response_object_id="",
+        )
+    )
+    client.portal.call(
+        lambda: client.app.state.product_store.transition_generation_job(
+            new_job.job_id, "polling"
+        )
+    )
+    new_job = client.portal.call(
+        lambda: client.app.state.product_store.get_generation_job(new_job.job_id)
+    )
     new_snapshot = client.portal.call(
         lambda: load_snapshot(client.app.state.product_store, new_job.snapshot_hash)
     )
@@ -146,9 +166,16 @@ def test_saved_supplier_version_affects_only_future_execution_snapshots(client):
         headers={"If-Match": '"credential-1"'},
     )
     assert forced.status_code == 200, forced.text
-    assert client.portal.call(
-        lambda: client.app.state.product_store.get_generation_job(old_job.job_id).internal_status
-    ) == "cancelled"
-    assert client.portal.call(
-        lambda: client.app.state.product_store.get_generation_job(new_job.job_id).internal_status
-    ) == "cancelled"
+    cancelled = client.portal.call(
+        lambda: client.app.state.product_store.get_generation_job(old_job.job_id)
+    )
+    failed = client.portal.call(
+        lambda: client.app.state.product_store.get_generation_job(new_job.job_id)
+    )
+    assert cancelled.internal_status == "cancelled"
+    assert cancelled.error_code == "credential_revoked"
+    assert cancelled.completed_at
+    assert failed.internal_status == "failed"
+    assert failed.error_code == "credential_revoked"
+    assert failed.completed_at
+    assert failed.provider_job_id == "provider-video-preserved"

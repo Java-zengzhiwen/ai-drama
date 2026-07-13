@@ -171,6 +171,15 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
     }
   }
 
+  async function reloadAfterConflict() {
+    const refreshed = await models.refetch();
+    if (!editing || !refreshed.data) return;
+    const current = refreshed.data.data.find(
+      (model) => model.supplier_model_id === editing.supplier_model_id,
+    );
+    if (current) setEditing(current);
+  }
+
   const form = (mode: "create" | "edit") => (
     <form className="management-form" onSubmit={mode === "create" ? create : saveEdit}>
       <label><span>显示名称</span><Input aria-label="显示名称" value={draft.displayName} onChange={(event) => setDraft((current) => ({ ...current, displayName: event.target.value }))} /></label>
@@ -182,7 +191,7 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
         <div className="management-error" role="alert">
           <strong>{error.message}</strong>
           {error.code === "REVISION_CONFLICT" ? (
-            <Button size="small" onClick={() => void models.refetch()}>重新加载模型</Button>
+            <Button size="small" onClick={() => void reloadAfterConflict()}>重新加载模型</Button>
           ) : null}
         </div>
       ) : null}
@@ -203,7 +212,7 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
         </div>
         {models.isPending ? <div className="management-loading">正在加载模型…</div> : null}
         {models.isError ? <div className="management-error" role="alert"><strong>{toManagementError(models.error).message}</strong></div> : null}
-        {error && !createOpen && !editing ? <div className="management-error" role="alert"><strong>{error.message}</strong>{error.code === "REVISION_CONFLICT" ? <Button size="small" onClick={() => void models.refetch()}>重新加载模型</Button> : null}</div> : null}
+        {error && !createOpen && !editing ? <div className="management-error" role="alert"><strong>{error.message}</strong>{error.code === "REVISION_CONFLICT" ? <Button size="small" onClick={() => void reloadAfterConflict()}>重新加载模型</Button> : null}</div> : null}
         {models.data && !rows.length ? <div className="management-empty">当前筛选下没有模型。</div> : null}
         {rows.length ? (
           <div className="model-table-scroll">

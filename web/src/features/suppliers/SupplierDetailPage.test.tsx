@@ -199,6 +199,9 @@ describe("supplier detail page", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存密钥" }));
 
     await waitFor(() => expect(input).toHaveValue(""));
+    await waitFor(() =>
+      expect(get.mock.calls.filter(([url]) => url === "/suppliers/supplier-1")).toHaveLength(2),
+    );
     expect(screen.getByText("已配置 ····9876")).toBeInTheDocument();
     expect(document.body.textContent).not.toContain(secret);
     expect(put).toHaveBeenCalledWith(

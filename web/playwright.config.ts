@@ -16,6 +16,7 @@ const playwrightDataRoot = join(playwrightOutputRoot, "runtime-data");
 const playwrightM6dDataRoot = join(playwrightOutputRoot, "runtime-data-m6d");
 
 export default defineConfig({
+  metadata: { m6dDataRoot: playwrightM6dDataRoot },
   testDir: "./tests",
   outputDir: join(playwrightOutputRoot, "test-results"),
   reporter: [["list"], ["html", { open: "never", outputFolder: join(playwrightOutputRoot, "report") }]],
@@ -48,6 +49,7 @@ export default defineConfig({
       env: {
         ...process.env,
         AI_DRAMA_DATA_ROOT: playwrightM6dDataRoot,
+        AI_DRAMA_AGNES_POLL_INTERVAL_SECONDS: "3600",
         AI_DRAMA_M6_SUPPLIER_EXECUTION_ENABLED: "true",
         PYTHONDONTWRITEBYTECODE: "1",
       },

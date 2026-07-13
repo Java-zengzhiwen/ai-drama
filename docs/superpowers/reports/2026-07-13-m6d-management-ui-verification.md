@@ -32,7 +32,7 @@ REAL_VIDEO_REQUEST_COUNT=0
 | Local-only management | PASS | Application guard regression plus stable `LOCAL_MANAGEMENT_ONLY` UX |
 | Accessibility | PASS | Labels, dialog focus, tab/tabpanel associations, roving focus, arrow/Home/End navigation, destructive confirmations |
 | Responsive design | PASS | Approved three-region desktop workbench; compact supplier selector at 768px |
-| Fake execution | PASS | Browser-triggered V1 then V2 text execution; Python contract proves old queued job keeps its original snapshot |
+| Fake execution | PASS | Browser-triggered V1 then V2 text execution; the same Playwright flow creates a queued video job and proves its snapshot hash and supplier version remain V1 after the V2 save |
 | Zero real network | PASS | Browser rejects non-loopback requests; Worker test transport denies external DNS/TCP/UDP |
 
 The active-credential force-delete behavior is the management operation frozen by the approved provider design: draft/queued jobs are cancelled and submitting/submitted/polling jobs fail locally with `credential_revoked`; no provider-side cancellation or resubmission is attempted. It does not alter normal M6C submission, polling, rerun, or snapshot routing behavior.
@@ -44,13 +44,13 @@ PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' python3 -m pytest
 598 passed, 1 skipped
 
 npm --prefix web run test -- --run
-92 passed, 3 skipped
+93 passed, 3 skipped
 
 npm --prefix web run build
 PASS
 
 npm --prefix web run test:e2e
-7 passed
+8 passed
 
 npm --prefix worker test
 9 passed
@@ -79,7 +79,7 @@ PASS
 
 ## Bundle and visual QA
 
-The TypeScript editor remains a lazy chunk (`2.61 kB`, `1.30 kB` gzip). The M6D build produces a main JavaScript chunk of `1,029.31 kB` (`321.19 kB` gzip) and CSS of `13.41 kB` (`3.63 kB` gzip). Relative to the M6C baseline recorded during implementation (`965.10 kB`, `302.55 kB` gzip), main JavaScript increased by `64.21 kB` raw and `18.64 kB` gzip. No eager editor dependency was added.
+The TypeScript editor remains a lazy chunk (`2.61 kB`, `1.30 kB` gzip). The M6D build produces a main JavaScript chunk of `1,029.49 kB` (`321.25 kB` gzip) and CSS of `13.41 kB` (`3.63 kB` gzip). Relative to the M6C baseline recorded during implementation (`965.10 kB`, `302.55 kB` gzip), main JavaScript increased by `64.39 kB` raw and `18.70 kB` gzip. No eager editor dependency was added.
 
 Product Design QA is archived at `docs/product-design/m6d/design-qa.md`; the approved reference remains `docs/product-design/m6d/assets/selected-direction-supplier-operations-workbench.png`.
 
@@ -88,7 +88,7 @@ Product Design QA is archived at `docs/product-design/m6d/design-qa.md`; the app
 - Supplier credentials are never returned by read APIs.
 - Browser state does not write supplier data to localStorage or sessionStorage.
 - Config URLs are projected without userinfo, query, or fragment.
-- Playwright only retains screenshots on failure and traces on first retry; the final run completed without retry, so it retained no successful secret-bearing form state.
+- Three successful visual-QA screenshots are committed for 1440/1180/768 viewports. They use the built-in OpenAI model page and contain no credential form or secret value. Failure screenshots and first-retry traces remain temporary.
 - Repository secret-pattern scan found no real API key, Bearer token, password, or signed URL. One pre-existing synthetic fixture string (`Bearer echoed-provider-token`) remains in a provider unit test.
 - Sanitized evidence and zero-network tests passed; no real smoke test was run.
 

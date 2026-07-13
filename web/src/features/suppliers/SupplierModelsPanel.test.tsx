@@ -164,4 +164,39 @@ describe("supplier models panel", () => {
     expect(screen.getByRole("button", { name: "重新加载模型" })).toBeInTheDocument();
     expect(patch).toHaveBeenCalledTimes(1);
   });
+
+  test("reloads the current model entity and succeeds after an edit conflict", async () => {
+    const refreshed = {
+      ...models[0],
+      display_name: "Text Model Remote",
+      entity_revision: 3,
+      revision: 3,
+      current_model_revision_id: "revision-base-3",
+      model_revision_id: "revision-base-3",
+    };
+    get
+      .mockResolvedValueOnce({ data: models, headers: { etag: '"model-catalog-4"' } })
+      .mockResolvedValue({ data: [refreshed, models[1]], headers: { etag: '"model-catalog-5"' } });
+    patch
+      .mockRejectedValueOnce({
+        isAxiosError: true,
+        response: { status: 409, data: { detail: { error_code: "REVISION_CONFLICT" } } },
+      })
+      .mockResolvedValueOnce({ data: refreshed, headers: {} });
+    renderPanel();
+    await screen.findByRole("cell", { name: "Text Model" });
+    fireEvent.click(screen.getByRole("button", { name: "编辑 Text Model" }));
+    fireEvent.click(screen.getByLabelText("我已确认将影响 2 处项目绑定"));
+    fireEvent.click(screen.getByRole("button", { name: "保存新版本" }));
+
+    const reload = await screen.findByRole("button", { name: "重新加载模型" });
+    fireEvent.click(reload);
+    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "保存新版本" }));
+
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
+    expect(patch.mock.calls[1][2]).toEqual({
+      headers: { "If-Match": '"model-stable-base-text-3", "model-catalog-5"' },
+    });
+  });
 });
