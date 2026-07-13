@@ -65,6 +65,9 @@ export function ProjectDashboardPage() {
             {project.name}
           </Typography.Title>
           <Typography.Text type="secondary">{project.description || "暂无项目描述"}</Typography.Text>
+          <div style={{ marginTop: 12 }}>
+            <Link to={`/projects/${project.project_id}/model-bindings`}>配置项目模型</Link>
+          </div>
         </div>
 
         <dl

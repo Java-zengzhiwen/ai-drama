@@ -5,6 +5,7 @@ import { BrowserRouter, Link, Navigate, Route, Routes, useParams } from "react-r
 import { ChapterWorkspace } from "../features/chapter/ChapterWorkspace";
 import { ProjectDashboardPage } from "../features/projects/ProjectDashboardPage";
 import { ProjectListPage } from "../features/projects/ProjectListPage";
+import { ProjectModelBindingsPage } from "../features/projects/ProjectModelBindingsPage";
 import { AgnesSettingsPage } from "../features/settings/AgnesSettingsPage";
 import { SupplierListPage } from "../features/suppliers/SupplierListPage";
 import { SupplierDetailPage } from "../features/suppliers/SupplierDetailPage";
@@ -32,6 +33,7 @@ function AppShell() {
         <Routes>
           <Route path="/projects" element={<ProjectListPage />} />
           <Route path="/projects/:projectId" element={<ProjectDashboardPage />} />
+          <Route path="/projects/:projectId/model-bindings" element={<ProjectModelBindingsPage />} />
           <Route
             path="/projects/:projectId/chapters/:chapterId"
             element={<ChapterWorkspacePage />}
