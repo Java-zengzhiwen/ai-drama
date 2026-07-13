@@ -367,8 +367,12 @@ if (runningInVitest) {
     const reloadModel = page.getByRole("dialog", { name: /编辑模型/ }).getByRole("button", { name: "重新加载模型" });
     await expect(reloadModel).toBeVisible();
     await reloadModel.click();
+    await expect(page.getByRole("dialog", { name: /编辑模型/ }).getByLabel("显示名称")).toHaveValue("CAS Text Remote");
     await page.getByRole("button", { name: "保存新版本" }).click();
     await expect(page.getByRole("dialog", { name: /编辑模型/ })).toHaveCount(0);
+    const finalModel = await request.get(`${backendURL}/api/suppliers/${supplier.supplier_id}/models`);
+    const finalModels = (await finalModel.json()) as Array<{ supplier_model_id: string; display_name: string }>;
+    expect(finalModels.find((item) => item.supplier_model_id === model.supplier_model_id)?.display_name).toBe("CAS Text Remote");
     await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 }

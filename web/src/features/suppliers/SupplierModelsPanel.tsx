@@ -179,6 +179,12 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
     );
     if (current) {
       setEditing(current);
+      setDraft({
+        displayName: current.display_name,
+        providerName: current.provider_model_name,
+        capability: current.capability,
+        definition: JSON.stringify(current.definition, null, 2),
+      });
       setAcknowledged(current.binding_count === 0);
     }
   }
