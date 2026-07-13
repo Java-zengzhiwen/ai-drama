@@ -6,6 +6,7 @@ import { getSupplier, listSuppliers } from "./api";
 import { SupplierConfigForm } from "./SupplierConfigForm";
 import { LazySupplierCodeEditor } from "./SupplierCodeEditor.lazy";
 import { SupplierSecretForm } from "./SupplierSecretForm";
+import { SupplierModelsPanel } from "./SupplierModelsPanel";
 import { toManagementError } from "./managementErrors";
 
 type Section = "overview" | "config" | "secret" | "code" | "models";
@@ -24,7 +25,7 @@ function ErrorState({ error }: { error: unknown }) {
 
 export function SupplierDetailPage() {
   const { supplierId = "" } = useParams();
-  const [section, setSection] = useState<Section>("overview");
+  const [section, setSection] = useState<Section>("models");
   const suppliers = useQuery({ queryKey: ["suppliers"], queryFn: listSuppliers });
   const detail = useQuery({
     queryKey: ["supplier", supplierId],
@@ -102,7 +103,7 @@ export function SupplierDetailPage() {
               <LazySupplierCodeEditor supplier={supplier} supplierEtag={detail.data.etag} onReload={detail.refetch} />
             </Suspense>
           ) : null}
-          {section === "models" ? <div className="management-empty">模型目录正在加载。</div> : null}
+          {section === "models" ? <SupplierModelsPanel supplier={supplier} /> : null}
         </div>
       </main>
       <aside className="supplier-inspector" aria-label="供应商检查器">

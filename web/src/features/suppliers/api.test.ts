@@ -6,6 +6,10 @@ import {
   getSupplierCode,
   getSupplier,
   listSuppliers,
+  listSupplierModels,
+  createSupplierModel,
+  patchSupplierModel,
+  deleteSupplierModel,
   restoreBuiltinSupplier,
   saveSupplierCode,
   saveSupplierConfig,
@@ -90,6 +94,52 @@ describe("supplier management API", () => {
       { source: "export const vendor = {};" },
       { headers: { "If-Match": '"supplier-1"' } },
     );
+  });
+
+  test("preserves model and catalog ETags for stable model mutations", async () => {
+    get.mockResolvedValue({
+      data: [{ supplier_model_id: "model-1" }],
+      headers: { etag: '"model-catalog-4"' },
+    });
+    post.mockResolvedValue({
+      data: { supplier_model_id: "model-2" },
+      headers: { etag: '"model-model-2-1"', "x-model-catalog-etag": '"model-catalog-5"' },
+    });
+    patch.mockResolvedValue({
+      data: { supplier_model_id: "model-1", revision: 3 },
+      headers: { etag: '"model-model-1-3"', "x-model-catalog-etag": '"model-catalog-6"' },
+    });
+    remove.mockResolvedValue({ data: undefined, headers: {} });
+
+    await listSupplierModels("supplier-1");
+    await createSupplierModel(
+      "supplier-1",
+      { provider_model_name: "image-v1", display_name: "Image V1", capability: "image", definition: {} },
+      '"model-catalog-4"',
+      "create-model-2",
+    );
+    await patchSupplierModel(
+      "model-1",
+      { display_name: "Text Renamed", acknowledged_binding_count: 2 },
+      '"model-model-1-2"',
+      '"model-catalog-5"',
+    );
+    await deleteSupplierModel("model-1", '"model-model-1-3"', '"model-catalog-6"');
+
+    expect(get).toHaveBeenCalledWith("/suppliers/supplier-1/models");
+    expect(post).toHaveBeenCalledWith(
+      "/suppliers/supplier-1/models",
+      { provider_model_name: "image-v1", display_name: "Image V1", capability: "image", definition: {} },
+      { headers: { "Idempotency-Key": "create-model-2", "If-Match": '"model-catalog-4"', "If-None-Match": "*" } },
+    );
+    expect(patch).toHaveBeenCalledWith(
+      "/models/model-1",
+      { display_name: "Text Renamed", acknowledged_binding_count: 2 },
+      { headers: { "If-Match": '"model-model-1-2", "model-catalog-5"' } },
+    );
+    expect(remove).toHaveBeenCalledWith("/models/model-1", {
+      headers: { "If-Match": '"model-model-1-3", "model-catalog-6"' },
+    });
   });
 
   test("uses relative API paths and captures supplier ETag", async () => {

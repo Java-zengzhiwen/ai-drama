@@ -57,9 +57,44 @@ export type SupplierCodeSaved = {
   compiler_name: string;
   compiler_version: string;
 };
+export type SupplierModelCapability = "text" | "image" | "video";
+export type SupplierModelRead = {
+  supplier_model_id: string;
+  supplier_id: string;
+  current_model_revision_id: string;
+  model_revision_id: string;
+  provider_model_name: string;
+  display_name: string;
+  capability: SupplierModelCapability;
+  source: "built_in" | "overlay";
+  enabled: number;
+  revision: number;
+  definition: Record<string, unknown>;
+  binding_count: number;
+  created_at: string;
+  updated_at: string;
+};
+export type SupplierModelCreate = {
+  provider_model_name: string;
+  display_name: string;
+  capability: SupplierModelCapability;
+  definition: Record<string, unknown>;
+};
+export type SupplierModelPatch = Partial<SupplierModelCreate> & {
+  enabled?: boolean;
+  acknowledged_binding_count?: number;
+};
+export type WithModelEtags<T> = WithEtag<T> & { catalogEtag: string };
 
 function withEtag<T>(response: AxiosResponse<T>): WithEtag<T> {
   return { data: response.data, etag: String(response.headers?.etag ?? "") };
+}
+
+function withModelEtags<T>(response: AxiosResponse<T>): WithModelEtags<T> {
+  return {
+    ...withEtag(response),
+    catalogEtag: String(response.headers?.["x-model-catalog-etag"] ?? ""),
+  };
 }
 
 export async function listSuppliers(): Promise<SupplierRead[]> {
@@ -154,6 +189,58 @@ export async function restoreBuiltinSupplier(
       headers: { "If-Match": etag },
     }),
   );
+}
+
+export async function listSupplierModels(
+  supplierId: string,
+): Promise<WithEtag<SupplierModelRead[]>> {
+  return withEtag(
+    await apiClient.get<SupplierModelRead[]>(`/suppliers/${supplierId}/models`),
+  );
+}
+
+export async function createSupplierModel(
+  supplierId: string,
+  payload: SupplierModelCreate,
+  catalogEtag: string,
+  idempotencyKey: string,
+): Promise<WithModelEtags<SupplierModelRead>> {
+  return withModelEtags(
+    await apiClient.post<SupplierModelRead>(`/suppliers/${supplierId}/models`, payload, {
+      headers: {
+        "Idempotency-Key": idempotencyKey,
+        "If-Match": catalogEtag,
+        "If-None-Match": "*",
+      },
+    }),
+  );
+}
+
+function combinedModelEtag(modelEtag: string, catalogEtag: string): string {
+  return `${modelEtag}, ${catalogEtag}`;
+}
+
+export async function patchSupplierModel(
+  modelId: string,
+  payload: SupplierModelPatch,
+  modelEtag: string,
+  catalogEtag: string,
+): Promise<WithModelEtags<SupplierModelRead>> {
+  return withModelEtags(
+    await apiClient.patch<SupplierModelRead>(`/models/${modelId}`, payload, {
+      headers: { "If-Match": combinedModelEtag(modelEtag, catalogEtag) },
+    }),
+  );
+}
+
+export async function deleteSupplierModel(
+  modelId: string,
+  modelEtag: string,
+  catalogEtag: string,
+): Promise<void> {
+  await apiClient.delete(`/models/${modelId}`, {
+    headers: { "If-Match": combinedModelEtag(modelEtag, catalogEtag) },
+  });
 }
 
 export function newIdempotencyKey(prefix: string): string {

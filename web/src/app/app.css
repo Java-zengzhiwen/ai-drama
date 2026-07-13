@@ -350,6 +350,115 @@ body {
   gap: 14px;
 }
 
+.models-workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  gap: 20px;
+}
+
+.models-main {
+  min-width: 0;
+  display: grid;
+  gap: 16px;
+}
+
+.models-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.model-table-scroll {
+  overflow-x: auto;
+  border: 1px solid #d9dee8;
+}
+
+.model-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+  background: #fff;
+  font-size: 13px;
+}
+
+.model-table th,
+.model-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-right: 1px solid #edf0f4;
+  border-bottom: 1px solid #e2e6ed;
+  vertical-align: middle;
+}
+
+.model-table th {
+  color: #4d586a;
+  background: #f8fafc;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.model-table tr.selected td {
+  background: #eef4ff;
+}
+
+.row-actions {
+  display: flex;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.model-inspector {
+  padding: 16px;
+  background: #fbfcfe;
+  border-left: 1px solid #d9dee8;
+}
+
+.model-inspector h3 {
+  margin: 0 0 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #d9dee8;
+}
+
+.model-inspector dl {
+  margin: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.model-inspector dt {
+  color: #6a7383;
+  font-size: 12px;
+}
+
+.model-inspector dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.model-inspector pre {
+  max-height: 220px;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  background: #f0f3f8;
+  font-size: 11px;
+}
+
+.management-form textarea,
+.management-form select {
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid #d9d9d9;
+  border-radius: 6px;
+  font: inherit;
+}
+
+.management-form textarea {
+  min-height: 120px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .overview-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -459,6 +568,15 @@ body {
 
   .supplier-inspector {
     grid-column: 2;
+    border-top: 1px solid #d9dee8;
+    border-left: 0;
+  }
+
+  .models-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .model-inspector {
     border-top: 1px solid #d9dee8;
     border-left: 0;
   }
