@@ -76,5 +76,6 @@ if (runningInVitest) {
       blocking_reason: "asset requirements are not ready",
       next_action: "analyze_assets",
     });
+    await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 }

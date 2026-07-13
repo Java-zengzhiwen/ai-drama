@@ -139,6 +139,7 @@ if (runningInVitest) {
     await expect(page.getByRole("row", { name: /Local Text Revised/ }).getByRole("button", { name: "删除 Local Text Revised" })).toBeDisabled();
 
     expect(unexpectedNetwork).toEqual([]);
+    await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 
   test("M6D primary management routes refresh without console errors", async ({ page, request }) => {
@@ -154,6 +155,7 @@ if (runningInVitest) {
     await page.reload();
     await expect(page.getByRole("heading", { name: "OpenAI" })).toBeVisible();
     expect(consoleErrors).toEqual([]);
+    await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 
   test("M6D presents stable conflict and local-only failures without leaking details", async ({ page, request }) => {
@@ -199,6 +201,7 @@ if (runningInVitest) {
     });
     await page.goto("/suppliers");
     await expect(page.getByRole("alert")).toContainText("只能在运行 AI Drama 的本机访问");
+    await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 }
 

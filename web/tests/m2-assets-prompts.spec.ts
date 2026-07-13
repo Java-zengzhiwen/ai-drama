@@ -111,6 +111,7 @@ if (runningInVitest) {
 
     await expect(page.getByRole("tab", { name: /Agnes 生成/ })).toHaveAttribute("aria-disabled", "true");
     await expect(page.getByRole("tab", { name: /结果与重跑/ })).toHaveAttribute("aria-disabled", "true");
+    await page.unrouteAll({ behavior: "ignoreErrors" });
   });
 }
 
