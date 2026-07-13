@@ -115,7 +115,6 @@ class ObjectInventory:
                 "actual_hash": item.actual_hash,
                 "referenced_by": item.referenced_by,
                 "corrupt": item.corrupt,
-                "candidate": item.candidate,
             }
             for item in entries
         ]

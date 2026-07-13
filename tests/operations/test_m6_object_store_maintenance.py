@@ -71,6 +71,16 @@ def test_inventory_protects_db_references_and_classifies_safe_candidates(tmp_pat
     assert report.inventory_hash
 
 
+def test_inventory_identity_is_independent_of_gc_grace_policy(tmp_path):
+    data_root, _runtime, store, _protected, _orphan_json, _unknown, _corrupt = _fixture(tmp_path)
+
+    immediate = ObjectInventory(store, data_root).build(grace_seconds=0)
+    deferred = ObjectInventory(store, data_root).build(grace_seconds=24 * 60 * 60)
+
+    assert immediate.candidate_count != deferred.candidate_count
+    assert immediate.inventory_hash == deferred.inventory_hash
+
+
 def test_gc_is_dry_run_by_default_and_apply_requires_all_guards(tmp_path):
     data_root, runtime, store, _protected, orphan_json, _unknown, _corrupt = _fixture(tmp_path)
     collector = ObjectGarbageCollector(store, data_root)
