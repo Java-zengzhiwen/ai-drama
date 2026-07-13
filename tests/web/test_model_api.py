@@ -68,6 +68,50 @@ def test_model_crud_uses_stable_ids_etags_and_idempotency(client):
     assert client.get(f"/api/models/{model_id}").status_code == 404
 
 
+def test_model_reads_include_project_binding_count_without_snapshot_inflation(client):
+    supplier = _supplier(client)
+    created = client.post(
+        f"/api/suppliers/{supplier['supplier_id']}/models",
+        json={
+            "provider_model_name": "binding-count-text",
+            "display_name": "Binding Count Text",
+            "capability": "text",
+            "definition": {},
+        },
+        headers={
+            "If-None-Match": "*",
+            "If-Match": '"model-catalog-0"',
+            "Idempotency-Key": "binding-count-text",
+        },
+    )
+    model_id = created.json()["supplier_model_id"]
+    project_id = client.post(
+        "/api/projects",
+        json={
+            "name": "Binding Count",
+            "description": "",
+            "series_canon": "",
+            "characters_context": "",
+            "production_brief": "",
+        },
+    ).json()["project_id"]
+    saved = client.put(
+        f"/api/projects/{project_id}/model-bindings",
+        json={
+            "defaults": {"text": model_id, "image": "", "video": ""},
+            "operation_overrides": {"storyboard_design": model_id},
+        },
+        headers={"If-Match": '"binding-set-0"'},
+    )
+    assert saved.status_code == 200
+
+    listing = client.get(f"/api/suppliers/{supplier['supplier_id']}/models")
+    detail = client.get(f"/api/models/{model_id}")
+
+    assert listing.json()[0]["binding_count"] == 2
+    assert detail.json()["binding_count"] == 2
+
+
 def test_model_create_requires_preconditions_and_conflicts_on_changed_replay(client):
     supplier = _supplier(client)
     path = f"/api/suppliers/{supplier['supplier_id']}/models"

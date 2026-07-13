@@ -127,6 +127,83 @@ def test_supplier_config_secret_and_code_mutations_require_matching_etags(tmp_pa
         assert absent.headers["etag"] == '"credential-2"'
 
 
+def test_supplier_management_projection_exposes_non_secret_manifest_and_config(tmp_path):
+    with _client(tmp_path) as client:
+        supplier = client.get("/api/suppliers").json()[0]
+        supplier_id = supplier["supplier_id"]
+        detail = client.get(f"/api/suppliers/{supplier_id}")
+
+        assert detail.status_code == 200
+        assert detail.headers["etag"] == f'"supplier-{supplier["revision"]}"'
+        payload = detail.json()
+        assert payload["author"] == "AI Drama"
+        assert payload["version"]
+        assert isinstance(payload["inputs"], list)
+        assert isinstance(payload["input_values"], dict)
+        assert isinstance(payload["config_values"], dict)
+        assert isinstance(payload["capabilities"], list)
+        assert payload["model_count"] == len(
+            client.get(f"/api/suppliers/{supplier_id}/models").json()
+        )
+        assert "source" not in payload["manifest"]
+        assert "credential" not in payload["config_values"]
+
+
+def test_supplier_management_projection_round_trips_config_without_credential(tmp_path):
+    secret_value = "m6d-never-return-this-1234"
+    with _client(tmp_path) as client:
+        created = client.post(
+            "/api/suppliers",
+            json={"slug": "m6d-local", "display_name": "M6D Local"},
+            headers={"If-None-Match": "*", "Idempotency-Key": "create-m6d-local"},
+        ).json()
+        supplier_id = created["supplier_id"]
+        config = client.put(
+            f"/api/suppliers/{supplier_id}/config",
+            json={"values": {"base_url": "https://local.example.invalid/v1", "region": "test"}},
+            headers={"If-Match": '"config-1"'},
+        )
+        assert config.status_code == 200
+        saved = client.put(
+            f"/api/suppliers/{supplier_id}/secret",
+            json={"credential": secret_value},
+            headers={"If-Match": '"credential-0"'},
+        )
+        assert saved.status_code == 200
+
+        listing = client.get("/api/suppliers")
+        detail = client.get(f"/api/suppliers/{supplier_id}")
+        payload = detail.json()
+        assert payload["config_values"] == {
+            "base_url": "https://local.example.invalid/v1",
+            "region": "test",
+        }
+        assert payload["base_url_summary"] == "https://local.example.invalid/v1"
+        assert payload["credential"] == {"configured": True, "masked_suffix": "1234"}
+        assert secret_value not in listing.text
+        assert secret_value not in detail.text
+
+
+def test_custom_empty_supplier_management_projection_is_safe(tmp_path):
+    with _client(tmp_path) as client:
+        supplier = client.post(
+            "/api/suppliers",
+            json={"slug": "empty-ui", "display_name": "Empty UI"},
+            headers={"If-None-Match": "*", "Idempotency-Key": "create-empty-ui"},
+        ).json()
+        detail = client.get(f"/api/suppliers/{supplier['supplier_id']}").json()
+
+    assert detail["author"] == ""
+    assert detail["version"] == ""
+    assert detail["manifest"] == {}
+    assert detail["inputs"] == []
+    assert detail["input_values"] == {}
+    assert detail["config_values"] == {}
+    assert detail["capabilities"] == []
+    assert detail["model_count"] == 0
+    assert detail["base_url_summary"] == ""
+
+
 def test_code_validation_is_local_and_returns_safe_diagnostic(tmp_path):
     with _client(tmp_path) as client:
         supplier = client.post(

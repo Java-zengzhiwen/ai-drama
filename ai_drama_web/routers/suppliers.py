@@ -1,5 +1,7 @@
 import hashlib
 import json
+import re
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
 
@@ -230,10 +232,138 @@ async def delete_supplier_secret(
 
 
 def _supplier_read(request, supplier):
+    manifest = _current_manifest(request, supplier)
+    config_values = _current_config_values(request, supplier)
+    models = request.app.state.product_store.list_supplier_models(supplier.supplier_id)
+    inputs = _safe_inputs(manifest.get("inputs"))
+    input_values = _safe_string_map(manifest.get("inputValues"))
+    capabilities = sorted(
+        {
+            revision.capability
+            for model in models
+            if (
+                revision := request.app.state.product_store.get_supplier_model_revision(
+                    model.current_model_revision_id
+                )
+            )
+            is not None
+        }
+    )
+    safe_manifest = {
+        key: manifest[key]
+        for key in (
+            "id",
+            "version",
+            "name",
+            "author",
+            "adapterContractVersion",
+            "helperApiVersion",
+            "rateLimitBucketKey",
+        )
+        if isinstance(manifest.get(key), str)
+    }
+    if manifest:
+        safe_manifest["inputs"] = inputs
+        safe_manifest["inputValues"] = input_values
     return {
         **supplier.__dict__,
         "credential": _stored_credential_status(request, supplier),
+        "author": str(manifest.get("author") or ""),
+        "version": str(manifest.get("version") or ""),
+        "manifest": safe_manifest,
+        "inputs": inputs,
+        "input_values": input_values,
+        "config_values": config_values,
+        "capabilities": capabilities,
+        "model_count": len(models),
+        "base_url_summary": _base_url_summary(config_values),
     }
+
+
+def _current_manifest(request, supplier):
+    if not supplier.current_supplier_version_id:
+        return {}
+    version = request.app.state.product_store.get_supplier_version(
+        supplier.current_supplier_version_id
+    )
+    if version is None or not version.manifest_object_id:
+        return {}
+    return _read_json_object(request, version.manifest_object_id)
+
+
+def _current_config_values(request, supplier):
+    if not supplier.current_config_revision_id:
+        return {}
+    revision = request.app.state.product_store.get_config_revision(
+        supplier.current_config_revision_id
+    )
+    if revision is None or not revision.config_object_id:
+        return {}
+    return _safe_string_map(_read_json_object(request, revision.config_object_id))
+
+
+def _read_json_object(request, object_id):
+    try:
+        value = json.loads(request.app.state.runtime_store.read_text(object_id))
+    except (FileNotFoundError, OSError, RuntimeError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+_SECRET_FIELD = re.compile(r"(?:api[_-]?key|credential|secret|password|bearer|token)", re.I)
+
+
+def _is_secret_field(name):
+    return bool(_SECRET_FIELD.search(str(name or "")))
+
+
+def _safe_inputs(value):
+    if not isinstance(value, list):
+        return []
+    result = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        identity = item.get("name") or item.get("key") or item.get("id") or ""
+        if _is_secret_field(identity) or item.get("secret") is True:
+            continue
+        result.append(
+            {
+                str(key): field_value
+                for key, field_value in item.items()
+                if str(key) not in {"value", "credential", "secret"}
+                and not _is_secret_field(key)
+                and isinstance(field_value, (str, int, float, bool, type(None), list, dict))
+            }
+        )
+    return result
+
+
+def _safe_string_map(value):
+    if not isinstance(value, dict):
+        return {}
+    return {
+        str(key): _strip_url_query(field_value)
+        for key, field_value in value.items()
+        if not _is_secret_field(key) and isinstance(field_value, str)
+    }
+
+
+def _strip_url_query(value):
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return value
+    if parsed.scheme not in {"http", "https"}:
+        return value
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+
+def _base_url_summary(config_values):
+    for key in ("base_url", "image_endpoint", "video_endpoint", "video_status_endpoint"):
+        if config_values.get(key):
+            return config_values[key][:240]
+    return ""
 
 
 def _stored_credential_status(request, supplier):

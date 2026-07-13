@@ -127,7 +127,14 @@ def _model_read(request, model):
         model.current_model_revision_id
     )
     definition = json.loads(request.app.state.runtime_store.read_text(revision.definition_object_id))
-    return {**model.__dict__, **revision.__dict__, "definition": definition}
+    return {
+        **model.__dict__,
+        **revision.__dict__,
+        "definition": definition,
+        "binding_count": request.app.state.product_store.count_project_binding_references(
+            model.supplier_model_id
+        ),
+    }
 
 
 def _set_model_headers(response, request, model):
