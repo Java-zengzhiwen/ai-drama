@@ -53,11 +53,12 @@ history. The M6 execution feature flag remains disabled by default.
 | Migration verifier | PASS: 81 files |
 | Focused M6C/generation/snapshot regressions | PASS |
 | Worker isolation pytest | PASS: 15 |
-| Worker Node tests | PASS: 4 |
+| Worker Node tests | PASS: 9 |
 | Web Vitest | PASS: 60, skipped: 2 |
 | Web build | PASS |
 | Playwright | PASS: 2 |
 | Phase 1 portable verifier | PASS |
+| Clean-worktree storyboard verifier | PASS: technical verdict PASS |
 | `git diff --check` | PASS |
 
 The clean-worktree storyboard verdict is recorded after the implementation
@@ -106,3 +107,7 @@ lookup plus peer-IP checks, redirect/port restrictions, VM-local request queues,
 bounded media references, legacy poll/fetch completion, and snapshot-frozen
 Worker limits. The specification review verified the latest M6C-001 through
 M6C-015 contract and M6 supplier submit-once recovery.
+
+Final delivery verification ran from clean commit `1eb1dc2`: full Python passed
+with 591 tests and one skip; storyboard technical verdict was `PASS`; Web,
+Worker, Playwright, M3, M4, M6B, M6C, migration, and diff checks all passed.
