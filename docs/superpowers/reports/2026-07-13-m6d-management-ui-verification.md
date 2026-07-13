@@ -79,7 +79,7 @@ PASS
 
 ## Bundle and visual QA
 
-The TypeScript editor remains a lazy chunk (`2.61 kB`, `1.30 kB` gzip). The M6D build produces a main JavaScript chunk of `1,029.51 kB` (`321.26 kB` gzip) and CSS of `13.41 kB` (`3.63 kB` gzip). Relative to the M6C baseline recorded during implementation (`965.10 kB`, `302.55 kB` gzip), main JavaScript increased by `64.41 kB` raw and `18.71 kB` gzip. No eager editor dependency was added.
+The TypeScript editor remains a lazy chunk (`2.61 kB`, `1.30 kB` gzip). The M6D build produces a main JavaScript chunk of `1,029.65 kB` (`321.27 kB` gzip) and CSS of `13.41 kB` (`3.63 kB` gzip). Relative to the M6C baseline recorded during implementation (`965.10 kB`, `302.55 kB` gzip), main JavaScript increased by `64.55 kB` raw and `18.72 kB` gzip. No eager editor dependency was added.
 
 Product Design QA is archived at `docs/product-design/m6d/design-qa.md`; the approved reference remains `docs/product-design/m6d/assets/selected-direction-supplier-operations-workbench.png`.
 
@@ -91,6 +91,27 @@ Product Design QA is archived at `docs/product-design/m6d/design-qa.md`; the app
 - Three successful visual-QA screenshots are committed for 1440/1180/768 viewports. They use the built-in OpenAI model page and contain no credential form or secret value. Failure screenshots and first-retry traces remain temporary.
 - Repository secret-pattern scan found no real API key, Bearer token, password, or signed URL. One pre-existing synthetic fixture string (`Bearer echoed-provider-token`) remains in a provider unit test.
 - Sanitized evidence and zero-network tests passed; no real smoke test was run.
+
+## Independent read-only reviews
+
+Mandatory reviewer roles:
+
+| Role | Final reviewed commit | Final verdict | Sanitized evidence |
+| --- | --- | --- | --- |
+| Specification compliance | `5576beb66c5941056460e3e605d3e2a808ca59e5` | PASS | Focused Vitest 6/6, M6D Playwright 6/6, clean worktree, queued snapshot and three-viewport evidence inspected |
+| Frontend / technical / security | `5576beb66c5941056460e3e605d3e2a808ca59e5` | PASS | SupplierModelsPanel 6/6, `git diff --check`, clean worktree, credential/force/ETag/loopback/zero-network paths inspected |
+
+Review findings and correction ledger:
+
+| Reviewed commit | Reviewer | Finding | Correction | Re-review |
+| --- | --- | --- | --- | --- |
+| `53f4e79` | Specification | Playwright did not prove an existing queued job retained its V1 snapshot; visual QA lacked committed 1440/1180/768 captures | `bfebbba` added production snapshot creation/read evidence and three sanitized viewport captures | PASS on `bfebbba` |
+| `53f4e79` | Technical/security | Secret mutations did not refresh parent projection; forced terminal jobs lacked `completed_at`; model reload retained stale entity ETag | `bfebbba` refreshed supplier state, preserved terminal invariants, and refreshed model entity state | Findings closed; later concurrency review continued |
+| `bfebbba` | Technical/security | Default visual test rewrote tracked screenshots; changed binding count reused old acknowledgement | `992a5f8` moved runtime captures to `testInfo.outputPath` and reset acknowledgement to the latest binding count | Findings closed |
+| `992a5f8` | Technical/security | Model reload used a new ETag with the old local draft, silently overwriting the remote semantic change | `5576beb` reloads all current remote model fields, resets acknowledgement, and verifies final API state | PASS on `5576beb` |
+| `992a5f8` | Specification | Stage report omitted reviewer roles, reviewed SHA, findings, corrections, and re-review state | This report revision records the complete sanitized review ledger | Pending report-only final confirmation before push |
+
+Both mandatory reviewers returned PASS on the final implementation candidate. No reviewer modified files or contacted a real Provider.
 
 ## Rollback
 
