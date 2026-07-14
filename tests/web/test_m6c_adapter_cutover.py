@@ -599,6 +599,37 @@ def test_builtin_comment_revision_advances_once_without_deleting_history(tmp_pat
     assert store.get_supplier(supplier.supplier_id).current_supplier_version_id == advanced
 
 
+def test_builtin_comment_install_does_not_replace_user_edited_current_version(tmp_path):
+    runtime = RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects")
+    store = ProductStore(runtime)
+    assert install_builtin_adapters(store) == 2
+    supplier = next(item for item in store.list_suppliers() if item.slug == "openai")
+    user_source = OPENAI_SOURCE.replace("m6c-2-comments", "user-edited-1")
+    user = compile_supplier(user_source, runtime_store=runtime)
+    user_version = store.replace_supplier_version(
+        supplier.supplier_id,
+        source_object_id=user.source_object_id,
+        source_hash=user.source_hash,
+        compiled_artifact_object_id=user.compiled_artifact_object_id,
+        compiled_artifact_hash=user.compiled_artifact_hash,
+        manifest_hash=user.manifest_hash,
+        manifest=user.vendor,
+        adapter_contract_version=user.adapter_contract_version,
+        worker_protocol_version="1",
+        worker_runtime_version=user.worker_runtime_version,
+        compiler_name=user.compiler_name,
+        compiler_version=user.compiler_version,
+        compiler_options_hash=user.compiler_options_hash,
+        helper_api_version=user.helper_api_version,
+        rate_limit_bucket_key=user.vendor["rateLimitBucketKey"],
+        expected_revision=supplier.revision,
+        built_in=False,
+    )
+
+    assert install_builtin_adapters(store) == 0
+    assert store.get_supplier(supplier.supplier_id).current_supplier_version_id == user_version.supplier_version_id
+
+
 def test_media_result_larger_than_protocol_output_uses_bounded_local_reference(tmp_path):
     _runtime, store, project, _supplier, _gateway, coordinator = _coordinator_fixture(tmp_path, "image")
     snapshot_record = persist_snapshot(

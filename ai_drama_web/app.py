@@ -33,6 +33,7 @@ from .services.m6_generation import M6GenerationCoordinator
 from .services.legacy_agnes_backfill import LegacyAgnesBackfill
 from .suppliers.execution import SnapshotExecutionGateway
 from .suppliers.model_tests import ModelTestRunner
+from .suppliers.rate_limits import SupplierRateLimiter
 from .suppliers.builtin_adapters import install_builtin_adapters
 from .store import ProductStore
 from .suppliers.credentials import SupplierCredentialStore
@@ -64,9 +65,16 @@ def create_app(
         app.state.supplier_credential_recovery = app.state.supplier_credential_store.recover()
         app.state.model_tests_enabled = settings.model_tests_enabled
         app.state.model_test_runner = None
+        app.state.supplier_rate_limiter = SupplierRateLimiter(
+            settings.supplier_request_rpm
+        )
         supplier_gateway = SnapshotExecutionGateway(product_store, app.state.supplier_credential_store)
         app.state.m6_generation_coordinator = M6GenerationCoordinator(
-            product_store, runtime_store, app.state.supplier_credential_store, supplier_gateway
+            product_store,
+            runtime_store,
+            app.state.supplier_credential_store,
+            supplier_gateway,
+            rate_limiter=app.state.supplier_rate_limiter,
         )
         if settings.m6_supplier_execution_enabled:
             app.state.m6_builtin_adapter_install_count = install_builtin_adapters(product_store)
@@ -105,13 +113,16 @@ def create_app(
                 rpm=settings.agnes_video_rpm,
                 poll_interval_seconds=settings.agnes_poll_interval_seconds,
                 execution_service=execution_service,
+                rate_limiter=app.state.supplier_rate_limiter,
             )
             await app.state.generation_poller.start()
         else:
             app.state.generation_poller = None
         if settings.model_tests_enabled:
             product_store.mark_interrupted_model_tests_unknown()
-            app.state.model_test_runner = ModelTestRunner(settings.data_root)
+            app.state.model_test_runner = ModelTestRunner(
+                settings.data_root, rate_limiter=app.state.supplier_rate_limiter
+            )
             await app.state.model_test_runner.start()
         try:
             yield

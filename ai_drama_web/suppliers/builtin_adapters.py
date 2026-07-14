@@ -107,6 +107,12 @@ def install_builtin_adapters(store):
         source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
         if (
             current is not None
+            and not current.built_in
+            and not current.worker_runtime_version.startswith("unavailable")
+        ):
+            continue
+        if (
+            current is not None
             and not current.worker_runtime_version.startswith("unavailable")
             and current.source_hash == source_hash
         ):

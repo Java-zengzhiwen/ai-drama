@@ -71,7 +71,27 @@ def test_supplier_api_creates_custom_empty_template_not_duplicate(tmp_path):
     assert "video_id" in source and "task_id" in source
     assert "export const vendor" in source
     assert "models: []" in source
-    assert "module.exports" not in source
+    assert "module.exports" in source
+    for required_guidance in (
+        "YOUR_API_KEY",
+        "import",
+        "require",
+        "process",
+        "fetch",
+        "Node 内建模块",
+        "socket",
+        "子进程",
+        "axios",
+        "logger",
+        "pollTask",
+        "createOpenAI",
+        "签名查询",
+        "顶层网络",
+        "测试成功后再绑定项目",
+    ):
+        assert required_guidance in source
+    assert "exports.vendor" in source
+    assert "export {}" in source
 
 
 def test_supplier_creation_replay_does_not_recompile_template(tmp_path, monkeypatch):

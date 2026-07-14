@@ -73,6 +73,7 @@ describe("supplier models panel", () => {
     post.mockReset();
     patch.mockReset();
     remove.mockReset();
+    sessionStorage.clear();
     get.mockResolvedValue({ data: models, headers: { etag: '"model-catalog-4"' } });
   });
 
@@ -113,6 +114,35 @@ describe("supplier models panel", () => {
 
     expect(screen.queryByRole("button", { name: /测试 Text Model/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /测试 Image Model/ })).not.toBeInTheDocument();
+  });
+
+  test("restores and disables a model row with a persisted active run", async () => {
+    sessionStorage.setItem(
+      "ai-drama:model-test:stable-base-text",
+      JSON.stringify({ idempotencyKey: "stored-key", testRunId: "run-active" }),
+    );
+    get.mockImplementation((url: string) => {
+      if (url === "/model-tests/status") return Promise.resolve({ data: { enabled: true }, headers: {} });
+      if (url === "/model-tests/run-active") {
+        return Promise.resolve({
+          data: {
+            test_run_id: "run-active",
+            supplier_model_id: "stable-base-text",
+            capability: "text",
+            status: "queued",
+            created_at: "2026-07-14T00:00:00Z",
+          },
+          headers: {},
+        });
+      }
+      return Promise.resolve({ data: models, headers: { etag: '"model-catalog-4"' } });
+    });
+
+    renderPanel();
+
+    expect(await screen.findByRole("dialog", { name: "测试模型连接" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "测试 Text Model" })).toBeDisabled();
+    expect(await screen.findByText(/测试编号 run-active/)).toBeInTheDocument();
   });
 
   test("renders stable identity table and selected model inspector", async () => {

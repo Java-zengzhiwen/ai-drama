@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Button, Checkbox, Input, Modal, Select, Tooltip } from "antd";
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   createSupplierModel,
   deleteSupplierModel,
@@ -13,14 +13,19 @@ import {
   type SupplierRead,
 } from "./api";
 import { ModelInspector } from "./ModelInspector";
-import { ModelTestDialog } from "./ModelTestDialog";
+import { hasStoredModelTest, ModelTestDialog } from "./ModelTestDialog";
 import { toManagementError, type ManagementError } from "./managementErrors";
 
 const CAPABILITY_LABEL = { text: "文本", image: "图片", video: "视频" } as const;
 
-function modelTestDisabledReason(supplier: SupplierRead, model: SupplierModelRead): string {
+function modelTestDisabledReason(
+  supplier: SupplierRead,
+  model: SupplierModelRead,
+  restoring: boolean,
+): string {
   if (!supplier.enabled) return "请先启用供应商";
   if (!model.enabled) return "请先启用模型";
+  if (restoring) return "该模型有正在进行或等待恢复的测试";
   return "";
 }
 
@@ -71,6 +76,14 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
     [models.data, capability],
   );
   const selected = (models.data?.data ?? []).find((model) => model.supplier_model_id === selectedId) ?? null;
+
+  useEffect(() => {
+    if (testing || !models.data) return;
+    const persisted = models.data.data.find(
+      (model) => model.capability !== "video" && hasStoredModelTest(model.supplier_model_id),
+    );
+    if (persisted) setTesting(persisted);
+  }, [models.data, testing]);
 
   function openCreate() {
     setDraft(EMPTY_DRAFT);
@@ -242,7 +255,10 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
             <table className="model-table">
               <thead><tr><th>显示名称</th><th>供应商模型名</th><th>能力</th><th>来源</th><th>版本 / 修订</th><th>启用状态</th><th>操作</th></tr></thead>
               <tbody>{rows.map((model) => {
-                const testDisabledReason = modelTestDisabledReason(supplier, model);
+                const restoring =
+                  testing?.supplier_model_id === model.supplier_model_id
+                  || hasStoredModelTest(model.supplier_model_id);
+                const testDisabledReason = modelTestDisabledReason(supplier, model, restoring);
                 return <tr key={model.supplier_model_id} className={selectedId === model.supplier_model_id ? "selected" : ""}><td>{model.display_name}</td><td><code>{model.provider_model_name}</code></td><td>{CAPABILITY_LABEL[model.capability]}</td><td>{model.source === "built_in" ? "内置" : "Overlay"}</td><td>r{model.revision}</td><td>{model.enabled ? "已启用" : "已停用"}</td><td><div className="row-actions"><Button size="small" aria-label={`查看 ${model.display_name}`} onClick={() => setSelectedId(model.supplier_model_id)}>查看</Button><Button size="small" aria-label={`编辑 ${model.display_name}`} onClick={() => openEdit(model)}>编辑</Button><Button size="small" aria-label={`${model.enabled ? "停用" : "启用"} ${model.display_name}`} disabled={saving} onClick={() => void toggle(model)}>{model.enabled ? "停用" : "启用"}</Button><Button size="small" danger aria-label={`删除 ${model.display_name}`} disabled={model.source === "built_in" || model.binding_count > 0} onClick={() => setDeleting(model)}>删除</Button>{modelTests.data?.enabled && model.capability !== "video" ? <Tooltip title={testDisabledReason}><span><Button size="small" aria-label={`测试 ${model.display_name}`} disabled={Boolean(testDisabledReason)} onClick={() => setTesting(model)}>测试</Button></span></Tooltip> : null}</div></td></tr>;
               })}</tbody>
             </table>

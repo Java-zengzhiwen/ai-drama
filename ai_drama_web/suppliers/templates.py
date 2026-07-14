@@ -9,22 +9,36 @@ def custom_supplier_template(slug, display_name):
  * AI Drama 供应商适配模板
  *
  * AI 生成适配代码步骤：
- * 1. 准备供应商官方 API 文档或脱敏 curl 示例，以及需要接入的模型名称和能力。
- * 2. 把资料与本模板交给 AI；没有足够信息时让 AI 主动追问，不得猜测端点或响应字段。
- * 3. 只提供认证字段名、请求体、示例响应；不要提供真实 API Key、Bearer 或签名链接。
- * 4. 让 AI 分析认证方式、端点、请求参数、成功/失败响应和异步任务状态，再开始写代码。
- * 5. 保留 vendor 的契约版本、helper 版本和已存在的稳定模型 ID，只实现需要的能力函数。
- * 6. 配置项放在 vendor.inputs；密钥由网页“密钥”页保存，运行时从 payload.credential 注入。
- * 7. 所有网络请求必须经过 helpers.http.request；不要读取文件、环境变量或宿主全局对象。
- * 8. 先点“校验并保存”（校验阶段禁止网络），再到“模型”页为具体文本或图片模型执行测试。
+ * 1. 收集供应商官方文本/图片/视频 API 文档、认证方式、端点、脱敏请求示例、响应示例、
+ *    状态定义、限制和结果下载规则；没有足够信息时让 AI 主动追问，不得猜测。
+ * 2. 不要提供真实 API Key。文档示例统一写 YOUR_API_KEY，真实值稍后在网页“密钥”页配置。
+ * 3. 把完整模板交给 AI，要求保留 AI Drama manifest、helper、函数签名、隔离规则和规范返回。
+ * 4. 只声明已由官方文档确认的 text、image 或 video 能力，不得让 AI 发明不支持的操作。
+ * 5. 要求供应商错误映射为稳定且脱敏的 code，证据中移除密钥、认证头和签名查询参数。
+ * 6. 视频必须拆成 submit/poll/fetch，并确认稳定查询 ID；Agnes 必须使用 video_id。
+ * 7. 点“校验并保存”修复本地编译、manifest 和导出错误；校验禁止网络和顶层网络工作。
+ * 8. 在“模型”页添加或核对模型，配置非密钥字段，再在遮罩密钥输入框保存真实凭据。
+ * 9. 点击对应模型行“测试”，确认一次真实请求并检查规范化结果或脱敏错误。
+ * 10. 仅实现已确认能力，并在模型级测试成功后再绑定项目。
+ *
+ * 安全与隔离禁用清单：
+ * - 禁止 import、require、process、原生 fetch、Node 内建模块、文件系统、环境变量、
+ *   socket、子进程，以及 Toonflow 的 axios、logger、pollTask、createOpenAI 等全局对象。
+ * - 禁止 exports.vendor、module.exports 或在 CommonJS 模板末尾追加 export {{}}；本文件只用 ESM 导出。
+ * - 不得记录、返回或持久化 payload.credential、Authorization 认证头、Bearer 或签名查询值。
+ * - 所有运行时网络只能通过 helpers.http.request；模块顶层不得发出任何 HTTP 请求。
  *
  * 可直接复制给 AI 的指令：
- * “请依据随附的官方文档，在本模板中接入【供应商名称】的【text/image/video】能力。
- * 不得编造接口；不得写入任何密钥；保留 AI Drama 契约、稳定模型 ID 和未使用能力的骨架；
- * 只能使用 helpers.http.request；把供应商响应转换为下述规范化返回，并给关键映射添加中文注释。”
+ * “请依据随附的官方文档，输出一个完整 TypeScript 文件，在本模板中接入【供应商名称】
+ * 的【已确认能力】。不得编造接口或写入密钥；密钥示例只用 YOUR_API_KEY；保留 AI Drama
+ * 契约、稳定模型 ID、隔离规则和未使用能力骨架；只能使用 helpers.http.request；把供应商
+ * 响应转换为下述规范化返回，清理签名查询与认证信息，并给关键字段映射添加中文注释。”
  *
  * 模型清单写法：
  * {{ supplierModelId: "稳定 UUID", providerModelName: "供应商模型名", displayName: "页面名称", capability: "text" }}
+ * 图片示例：{{ supplierModelId: "稳定 UUID", providerModelName: "image-model", displayName: "图片模型", capability: "image" }}
+ * 视频示例：{{ supplierModelId: "稳定 UUID", providerModelName: "video-model", displayName: "视频模型", capability: "video" }}
+ * 配置字段示例：{{ key: "base_url", label: "Base URL", type: "url", required: true }}
  * capability 可选 text、image、video。文本需实现 textRequest；图片需实现 imageRequest；
  * 视频需同时实现 videoSubmit、videoPoll、videoFetch。
  * supplierModelId 一经项目绑定就保持不变；providerModelName 是实际发给供应商的模型名；

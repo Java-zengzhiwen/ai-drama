@@ -56,6 +56,7 @@ GROUP_COMMANDS = OrderedDict(
             [
                 PYTEST
                 + [
+                    "tests/test_default_network_denial.py",
                     "tests/web/test_local_management_guard.py",
                     "tests/suppliers/test_worker_isolation.py",
                 ],
@@ -182,6 +183,7 @@ def verify(*, group_results=None, force_fail=()):
             "evidence": evidence,
         }
     passed = all(item["result"] == "PASS" for item in checks.values())
+    transport_guard_enabled = bool(results["security"] and results["browser"])
     return {
         "schema_version": "model-level-provider-tests-verification-v1",
         "verification_mode": "offline_fake_only",
@@ -191,6 +193,12 @@ def verify(*, group_results=None, force_fail=()):
         "production_model_test_flag_enabled": False,
         "real_provider_requests": False,
         "real_request_counts": {"text": 0, "image": 0, "video": 0},
+        "transport_guard_enabled": transport_guard_enabled,
+        "network_evidence": (
+            "tests/conftest.py denies non-loopback Python sockets and DNS; "
+            "worker/src/network-denial.mjs denies non-loopback Node transport; "
+            "Playwright rejects non-loopback browser requests; fake gateways assert call counts"
+        ),
     }
 
 

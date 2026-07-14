@@ -27,6 +27,8 @@ def test_verifier_has_ordered_schema_and_zero_real_request_evidence():
     assert report["production_model_test_flag_enabled"] is False
     assert report["real_provider_requests"] is False
     assert report["real_request_counts"] == {"text": 0, "image": 0, "video": 0}
+    assert report["transport_guard_enabled"] is True
+    assert "tests/conftest.py" in report["network_evidence"]
     assert all(item["result"] == "PASS" for item in report["checks"].values())
     assert all(item["command_category"] and item["evidence"] for item in report["checks"].values())
 

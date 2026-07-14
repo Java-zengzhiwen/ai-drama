@@ -25,8 +25,16 @@ type Props = {
 
 type StoredRun = { idempotencyKey: string; testRunId?: string };
 
-function storageKey(modelId: string): string {
+export function modelTestStorageKey(modelId: string): string {
   return `ai-drama:model-test:${modelId}`;
+}
+
+export function hasStoredModelTest(modelId: string): boolean {
+  try {
+    return Boolean(globalThis.sessionStorage?.getItem(modelTestStorageKey(modelId)));
+  } catch {
+    return false;
+  }
 }
 
 function modelEtag(model: SupplierModelRead): string {
@@ -39,10 +47,11 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [pollAttempt, setPollAttempt] = useState(0);
   const submitLock = useRef(false);
 
   const clearStored = useCallback(() => {
-    sessionStorage.removeItem(storageKey(model.supplier_model_id));
+    sessionStorage.removeItem(modelTestStorageKey(model.supplier_model_id));
   }, [model.supplier_model_id]);
 
   const loadImage = useCallback(async (current: ModelTestRead) => {
@@ -57,8 +66,10 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
   }, []);
 
   const acceptRun = useCallback(async (current: ModelTestRead) => {
+    setError("");
     setRun(current);
     if (!ACTIVE_STATUSES.has(current.status)) {
+      submitLock.current = false;
       clearStored();
       await loadImage(current);
     }
@@ -69,8 +80,9 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
     setPrompt(model.capability === "image" ? DEFAULT_IMAGE_PROMPT : DEFAULT_TEXT_PROMPT);
     setRun(null);
     setError("");
+    setPollAttempt(0);
     submitLock.current = false;
-    const raw = sessionStorage.getItem(storageKey(model.supplier_model_id));
+    const raw = sessionStorage.getItem(modelTestStorageKey(model.supplier_model_id));
     if (!raw) return;
     let stored: StoredRun;
     try {
@@ -90,10 +102,11 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
     const timer = window.setTimeout(() => {
       void getModelTest(run.test_run_id).then(acceptRun).catch((caught) => {
         setError(toManagementError(caught).message);
+        setPollAttempt((current) => current + 1);
       });
     }, 750);
     return () => window.clearTimeout(timer);
-  }, [acceptRun, open, run]);
+  }, [acceptRun, open, pollAttempt, run]);
 
   useEffect(() => () => {
     if (imageUrl && typeof URL.revokeObjectURL === "function") URL.revokeObjectURL(imageUrl);
@@ -105,7 +118,10 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
     setSubmitting(true);
     setError("");
     const idempotencyKey = newIdempotencyKey("model-test");
-    sessionStorage.setItem(storageKey(model.supplier_model_id), JSON.stringify({ idempotencyKey }));
+    sessionStorage.setItem(
+      modelTestStorageKey(model.supplier_model_id),
+      JSON.stringify({ idempotencyKey }),
+    );
     try {
       const created = await createModelTest(
         model.supplier_model_id,
@@ -114,28 +130,47 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
         idempotencyKey,
       );
       sessionStorage.setItem(
-        storageKey(model.supplier_model_id),
+        modelTestStorageKey(model.supplier_model_id),
         JSON.stringify({ idempotencyKey, testRunId: created.test_run_id }),
       );
       await acceptRun(created);
     } catch (caught) {
-      setError(toManagementError(caught).message);
-      submitLock.current = false;
+      try {
+        const recovered = await recoverModelTest(model.supplier_model_id, idempotencyKey);
+        sessionStorage.setItem(
+          modelTestStorageKey(model.supplier_model_id),
+          JSON.stringify({ idempotencyKey, testRunId: recovered.test_run_id }),
+        );
+        await acceptRun(recovered);
+      } catch (recoveryError) {
+        const recovery = toManagementError(recoveryError);
+        if (recovery.status === 404) {
+          clearStored();
+          submitLock.current = false;
+          setError(toManagementError(caught).message);
+        } else {
+          setError("提交结果尚未确认。为避免重复扣费，本窗口不会重试；恢复连接后请刷新页面继续查询。");
+        }
+      }
     } finally {
       setSubmitting(false);
     }
   }
 
   const terminal = run && !ACTIVE_STATUSES.has(run.status);
+  const locked = submitting || submitLock.current || Boolean(run && ACTIVE_STATUSES.has(run.status));
 
   return (
     <Modal
       title="测试模型连接"
       open={open}
-      onCancel={onClose}
+      onCancel={locked ? undefined : onClose}
       footer={null}
       destroyOnHidden
       width={620}
+      closable={!locked}
+      maskClosable={!locked}
+      keyboard={!locked}
     >
       <div className="model-test-dialog">
         <dl className="model-test-identity">
@@ -176,11 +211,11 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
         ) : null}
         {error ? <Alert type="error" message={error} /> : null}
         <div className="management-form-actions">
-          <Button onClick={onClose}>取消</Button>
+          <Button onClick={onClose} disabled={locked}>取消</Button>
           <Button
             type="primary"
             loading={submitting}
-            disabled={!prompt.trim() || Boolean(run && ACTIVE_STATUSES.has(run.status))}
+            disabled={!prompt.trim() || locked}
             onClick={() => void submit()}
           >确认并测试</Button>
         </div>

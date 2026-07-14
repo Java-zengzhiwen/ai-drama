@@ -209,10 +209,13 @@ class ModelTestService:
 
 
 class ModelTestExecutor:
-    def __init__(self, store, gateway, *, lease_owner="model-test-executor"):
+    def __init__(
+        self, store, gateway, *, lease_owner="model-test-executor", rate_limiter=None
+    ):
         self.store = store
         self.gateway = gateway
         self.lease_owner = lease_owner
+        self.rate_limiter = rate_limiter
 
     def execute(self, test_run_id):
         run = self.store.get_supplier_model_test_run(test_run_id)
@@ -220,6 +223,26 @@ class ModelTestExecutor:
             raise ModelTestError("MODEL_TEST_NOT_FOUND")
         if run["status"] != "queued" or run["attempt_count"] != 0:
             return run
+        if self.rate_limiter is not None:
+            try:
+                bucket = load_snapshot(
+                    self.store, run["snapshot_hash"]
+                ).rate_limit_bucket_key
+            except SupplierRuntimeUnavailable:
+                claimed = self.store.claim_supplier_model_test_run(
+                    test_run_id,
+                    lease_owner=self.lease_owner,
+                    lease_expires_at="",
+                )
+                if claimed is None:
+                    return self.store.get_supplier_model_test_run(test_run_id)
+                return self.store.fail_supplier_model_test_run(
+                    test_run_id,
+                    error_code="SUPPLIER_RUNTIME_UNAVAILABLE",
+                    error_message="SUPPLIER_RUNTIME_UNAVAILABLE",
+                )
+            if not self.rate_limiter.acquire(bucket):
+                return run
         claimed = self.store.claim_supplier_model_test_run(
             test_run_id,
             lease_owner=self.lease_owner,
@@ -239,13 +262,16 @@ class ModelTestExecutor:
             evidence_id = self.store.runtime.write_text_object(
                 _canonical({"error_code": final_code})
             )
-            return self.store.fail_supplier_model_test_run(
-                test_run_id,
-                error_code=final_code,
-                error_message=final_code,
-                sanitized_evidence_object_id=evidence_id,
-                unknown=unknown,
-            )
+            try:
+                return self.store.fail_supplier_model_test_run(
+                    test_run_id,
+                    error_code=final_code,
+                    error_message=final_code,
+                    sanitized_evidence_object_id=evidence_id,
+                    unknown=unknown,
+                )
+            except RevisionConflict:
+                return self.store.get_supplier_model_test_run(test_run_id)
 
     def recover_startup(self):
         return {
@@ -274,11 +300,15 @@ class ModelTestExecutor:
                         error_message="SUPPLIER_RUNTIME_UNAVAILABLE",
                     )
                 continue
-            if bucket in selected_buckets:
+            if self.rate_limiter is None and bucket in selected_buckets:
                 continue
             selected_buckets.add(bucket)
-            self.execute(run["test_run_id"])
-            executed += 1
+            try:
+                result = self.execute(run["test_run_id"])
+            except Exception:
+                continue
+            if result is not None and result["status"] != "queued":
+                executed += 1
         return executed
 
     def _complete(self, run, response):
@@ -354,9 +384,10 @@ def _elapsed_ms(started_at, finished_at):
 
 
 class ModelTestRunner:
-    def __init__(self, data_root, *, poll_interval_seconds=0.25):
+    def __init__(self, data_root, *, poll_interval_seconds=0.25, rate_limiter=None):
         self.data_root = Path(data_root)
         self.poll_interval_seconds = poll_interval_seconds
+        self.rate_limiter = rate_limiter
         self._task = None
         self._stop_event = asyncio.Event()
         self._wake_event = asyncio.Event()
@@ -390,7 +421,10 @@ class ModelTestRunner:
                 pass
             self._wake_event.clear()
             if not self._stop_event.is_set():
-                await asyncio.to_thread(self._drain_once)
+                try:
+                    await asyncio.to_thread(self._drain_once)
+                except Exception:
+                    continue
 
     def _drain_once(self):
         from ai_drama_runtime.store import RuntimeStore
@@ -406,6 +440,8 @@ class ModelTestRunner:
             store = ProductStore(runtime)
             credentials = SupplierCredentialStore(store, self.data_root)
             gateway = SnapshotExecutionGateway(store, credentials)
-            return ModelTestExecutor(store, gateway).drain_queued()
+            return ModelTestExecutor(
+                store, gateway, rate_limiter=self.rate_limiter
+            ).drain_queued()
         finally:
             runtime.close()

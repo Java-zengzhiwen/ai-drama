@@ -16,11 +16,15 @@ class M6GenerationError(RuntimeError):
 
 
 class M6GenerationCoordinator:
-    def __init__(self, store, runtime_store, credential_store, gateway, checkpoint=None):
+    def __init__(
+        self, store, runtime_store, credential_store, gateway,
+        checkpoint=None, rate_limiter=None,
+    ):
         self.store = store
         self.runtime = runtime_store
         self.credentials = credential_store
         self.gateway = gateway
+        self.rate_limiter = rate_limiter
         self._checkpoint = checkpoint or (lambda _name: None)
 
     def _resolve_snapshot(self, project_id, operation_key, constraints=None):
@@ -108,6 +112,7 @@ class M6GenerationCoordinator:
 
     def execute_text(self, *, project_id, operation_key, idempotency_key, request):
         snapshot = self._resolve_snapshot(project_id, operation_key)
+        self._acquire_rate_limit(snapshot)
         run, created = self.store.enqueue_text_run_with_snapshot(
             project_id=project_id,
             operation_key=operation_key,
@@ -145,6 +150,7 @@ class M6GenerationCoordinator:
 
     def generate_image(self, *, project_id, chapter_id, idempotency_key, request):
         snapshot = self._resolve_snapshot(project_id, "storyboard_keyframe_image")
+        self._acquire_rate_limit(snapshot)
         job, created = self.store.enqueue_generation_job_with_snapshot(
             supplier_id=snapshot.supplier_id,
             capability="image",
@@ -199,6 +205,12 @@ class M6GenerationCoordinator:
         self._checkpoint("image_accepted_persisted")
         self.store.commit_accepted_submission(job.job_id)
         return self._finalize_image(job.job_id)
+
+    def _acquire_rate_limit(self, snapshot):
+        if self.rate_limiter is not None and not self.rate_limiter.acquire(
+            snapshot.rate_limit_bucket_key
+        ):
+            raise M6GenerationError("RATE_LIMITED")
 
     def recover_image_jobs(self):
         rows = self.store.conn.execute(

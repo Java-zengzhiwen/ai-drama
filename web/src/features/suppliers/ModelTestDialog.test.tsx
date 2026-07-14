@@ -118,6 +118,38 @@ describe("model test dialog", () => {
     expect(sessionStorage.getItem(`ai-drama:model-test:${model.supplier_model_id}`)).toBeNull();
   });
 
+  test("continues polling after one transient local status failure", async () => {
+    sessionStorage.setItem(
+      `ai-drama:model-test:${model.supplier_model_id}`,
+      JSON.stringify({ idempotencyKey: "stored-key", testRunId: "run-transient" }),
+    );
+    api.getModelTest
+      .mockResolvedValueOnce({
+        test_run_id: "run-transient",
+        supplier_model_id: model.supplier_model_id,
+        capability: "image",
+        status: "queued",
+        created_at: "2026-07-14T00:00:00Z",
+      })
+      .mockRejectedValueOnce(new Error("local connection reset"))
+      .mockResolvedValueOnce({
+        test_run_id: "run-transient",
+        supplier_model_id: model.supplier_model_id,
+        capability: "image",
+        status: "completed",
+        media_type: "image/png",
+        byte_size: 128,
+        elapsed_ms: 900,
+        created_at: "2026-07-14T00:00:00Z",
+      });
+    api.getModelTestContent.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
+
+    renderDialog();
+
+    expect(await screen.findByText("image/png", {}, { timeout: 3_000 })).toBeInTheDocument();
+    expect(api.getModelTest).toHaveBeenCalledTimes(3);
+  });
+
   test("renders a stable failed state without retrying", async () => {
     api.createModelTest.mockResolvedValue({
       test_run_id: "run-failed",
@@ -136,5 +168,43 @@ describe("model test dialog", () => {
     expect(screen.getByText("PROVIDER_HTTP_ERROR")).toBeInTheDocument();
     expect(api.createModelTest).toHaveBeenCalledTimes(1);
     expect(api.getModelTest).not.toHaveBeenCalled();
+  });
+
+  test("recovers a lost create response with the original idempotency key", async () => {
+    api.createModelTest.mockRejectedValue(new Error("response lost"));
+    api.recoverModelTest.mockResolvedValue({
+      test_run_id: "run-recovered",
+      supplier_model_id: model.supplier_model_id,
+      capability: "image",
+      status: "completed",
+      media_type: "image/png",
+      byte_size: 256,
+      elapsed_ms: 500,
+      created_at: "2026-07-14T00:00:00Z",
+    });
+    api.getModelTestContent.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
+    renderDialog();
+
+    fireEvent.click(screen.getByRole("button", { name: "确认并测试" }));
+
+    expect(await screen.findByText("image/png")).toBeInTheDocument();
+    expect(api.createModelTest).toHaveBeenCalledTimes(1);
+    expect(api.recoverModelTest).toHaveBeenCalledWith(model.supplier_model_id, "model-test-key-1");
+    expect(sessionStorage.getItem(`ai-drama:model-test:${model.supplier_model_id}`)).toBeNull();
+  });
+
+  test("keeps submission locked when create and recovery outcomes are both unknown", async () => {
+    api.createModelTest.mockRejectedValue(new Error("response lost"));
+    api.recoverModelTest.mockRejectedValue(new Error("connection unavailable"));
+    renderDialog();
+
+    const confirm = screen.getByRole("button", { name: "确认并测试" });
+    fireEvent.click(confirm);
+
+    expect(await screen.findByText(/提交结果尚未确认/)).toBeInTheDocument();
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(api.createModelTest).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem(`ai-drama:model-test:${model.supplier_model_id}`)).toContain("model-test-key-1");
   });
 });

@@ -9,6 +9,7 @@ from ai_drama_web.suppliers.credentials import CredentialInUse, SupplierCredenti
 from ai_drama_web.suppliers.compiler import compile_supplier
 from ai_drama_web.suppliers.models import RevisionConflict
 from ai_drama_web.suppliers.model_tests import ModelTestError, ModelTestExecutor, ModelTestService
+from ai_drama_web.suppliers.rate_limits import SupplierRateLimiter
 from ai_drama_web.suppliers.resolution import ResolvedModel
 from ai_drama_web.suppliers.snapshots import SnapshotBuilder
 from tests.web.model_test_support import create_model, install_test_supplier_runtime
@@ -480,6 +481,79 @@ def test_executor_marks_ambiguous_gateway_failure_unknown_without_retry(tmp_path
     runtime.close()
 
 
+def test_model_test_uses_shared_snapshot_bucket_limiter(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
+    run, _created = ModelTestService(store).create_model_test(
+        supplier_model_id=snapshot.supplier_model_id,
+        prompt="hello",
+        idempotency_key="shared-limit",
+        expected_model_revision=1,
+    )
+    now = [100.0]
+    limiter = SupplierRateLimiter(rpm=1, clock=lambda: now[0])
+    assert limiter.acquire(snapshot.rate_limit_bucket_key) is True
+    gateway = FakeModelTestGateway()
+    executor = ModelTestExecutor(store, gateway, rate_limiter=limiter)
+
+    assert executor.execute(run["test_run_id"])["status"] == "queued"
+    assert gateway.calls == []
+    now[0] += 60.1
+    assert executor.execute(run["test_run_id"])["status"] == "completed"
+    assert len(gateway.calls) == 1
+    runtime.close()
+
+
+def test_force_delete_during_worker_return_is_idempotent_and_does_not_raise(tmp_path):
+    runtime, store, snapshot, credentials = _store_and_snapshot(tmp_path)
+    run, _created = ModelTestService(store).create_model_test(
+        supplier_model_id=snapshot.supplier_model_id,
+        prompt="hello",
+        idempotency_key="delete-during-return",
+        expected_model_revision=1,
+    )
+
+    class DeletingGateway(FakeModelTestGateway):
+        def invoke(self, snapshot_hash, operation, request):
+            value = super().invoke(snapshot_hash, operation, request)
+            credentials.delete(snapshot.supplier_id, expected_revision=1, force=True)
+            return value
+
+    result = ModelTestExecutor(store, DeletingGateway()).execute(run["test_run_id"])
+
+    assert result["status"] == "submission_outcome_unknown"
+    assert result["error_code"] == "SUBMISSION_OUTCOME_UNKNOWN"
+    runtime.close()
+
+
+def test_drain_queued_isolates_one_run_failure_and_continues(monkeypatch):
+    class Store:
+        def list_queued_supplier_model_tests(self, limit=20):
+            return [
+                {"test_run_id": "broken", "snapshot_hash": "snapshot-broken"},
+                {"test_run_id": "healthy", "snapshot_hash": "snapshot-healthy"},
+            ]
+
+    class Executor(ModelTestExecutor):
+        def __init__(self):
+            super().__init__(Store(), FakeModelTestGateway())
+            self.calls = []
+
+        def execute(self, test_run_id):
+            self.calls.append(test_run_id)
+            if test_run_id == "broken":
+                raise RuntimeError("unexpected per-run failure")
+            return {"status": "completed"}
+
+    monkeypatch.setattr(
+        "ai_drama_web.suppliers.model_tests.load_snapshot",
+        lambda _store, digest: type("Snapshot", (), {"rate_limit_bucket_key": digest})(),
+    )
+    executor = Executor()
+
+    assert executor.drain_queued() == 1
+    assert executor.calls == ["broken", "healthy"]
+
+
 def _install_api_model(app, tmp_path, capability):
     store = app.state.product_store
     supplier = store.create_supplier(
@@ -529,6 +603,17 @@ def test_model_test_feature_status_is_default_off_and_create_is_blocked(tmp_path
     assert status.json() == {"enabled": False}
     assert blocked.status_code == 409
     assert blocked.json()["detail"]["error_code"] == "MODEL_TESTS_DISABLED"
+
+
+def test_app_shares_one_rate_limiter_between_generation_and_model_tests(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_DRAMA_MODEL_TESTS_ENABLED", "true")
+    monkeypatch.setenv("AI_DRAMA_M6_SUPPLIER_EXECUTION_ENABLED", "true")
+    app = create_app(data_root=tmp_path / "runtime-data", skills_root="skills")
+
+    with TestClient(app, client=("127.0.0.1", 50000)):
+        assert app.state.generation_poller.rate_limiter is app.state.supplier_rate_limiter
+        assert app.state.model_test_runner.rate_limiter is app.state.supplier_rate_limiter
+        assert app.state.m6_generation_coordinator.rate_limiter is app.state.supplier_rate_limiter
 
 
 def test_text_model_test_api_queues_recovers_and_completes_locally(tmp_path, monkeypatch):
