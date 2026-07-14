@@ -66,7 +66,7 @@ Playwright saves and executes a local TypeScript adapter through the real isolat
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' python3 -m pytest -q
-629 passed, 1 skipped
+630 passed, 1 skipped
 
 npm --prefix web run test -- --run
 93 passed, 4 skipped
@@ -137,10 +137,11 @@ Mandatory roles are specification/acceptance and architecture/technical/security
 | HIGH | Backup/restore allowed overlapping paths, unsafe credential mode, mixed payload evidence, and incomplete durability checks | Added overlap/symlink rejection, ready regular-file `0600` and content-hash gates, copied-snapshot DB/object/credential validation, payload inventory, and file/directory fsync |
 | HIGH | Playwright used reload/sidecar evidence without an actual app restart or public-client rejection | Added a real uvicorn stop/start on the same temporary data root, browser-visible resumed result, and a browser navigation through simulated public ingress returning `LOCAL_MANAGEMENT_ONLY` |
 | HIGH | Rollback acceptance did not execute flag-on model resolution | Flag-on now resolves built-in text/video models, credentials, bindings, a local fake text invocation, and queued/polling snapshots before flag-off restart |
+| BLOCKER | Backup manifest verification opened the copied database through writable stores, so verification could mutate backup evidence and break repeated verify/restore | `74b80f72f1bf9808bb7d460d3931135deb0ffbed` validates the copied database through SQLite read-only mode; regressions verify stable hashes, repeated verification, repeated restore, and restore after GC apply |
 
-Post-correction verification on `e95d88936ce191edd10e5222562134fdc9759d06`:
+Post-correction verification on `74b80f72f1bf9808bb7d460d3931135deb0ffbed`:
 
-- Full Python: `629 passed, 1 skipped`.
+- Full Python: `630 passed, 1 skipped`.
 - Vitest: `93 passed, 4 skipped`.
 - Playwright: `10 passed`, including two M6E tests.
 - Worker: `9 passed`.
