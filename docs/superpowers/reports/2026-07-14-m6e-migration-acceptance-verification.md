@@ -66,7 +66,7 @@ Playwright saves and executes a local TypeScript adapter through the real isolat
 
 ```text
 PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' python3 -m pytest -q
-618 passed, 1 skipped
+629 passed, 1 skipped
 
 npm --prefix web run test -- --run
 93 passed, 4 skipped
@@ -75,7 +75,7 @@ npm --prefix web run build
 PASS
 
 npm --prefix web run test:e2e
-9 passed
+10 passed
 
 npm --prefix worker test
 9 passed
@@ -125,4 +125,26 @@ Set `AI_DRAMA_M6_SUPPLIER_EXECUTION_ENABLED=false` and restart. Legacy execution
 
 ## Independent Read-Only Reviews
 
-Mandatory roles are specification/acceptance and architecture/technical/security/release. Both reviewers must inspect the exact committed candidate, return PASS with no blocker/high, and then confirm the final report-only descendant. Review SHA, findings, corrections, and re-review status will be recorded here before handoff.
+Mandatory roles are specification/acceptance and architecture/technical/security/release. Both initial reviews inspected `f0ebcb2386712b187f358e044907b563ae57f08f` and returned `REQUEST_CHANGES` without modifying files or contacting a real Provider.
+
+| Severity | Initial finding | Correction in `e95d88936ce191edd10e5222562134fdc9759d06` |
+| --- | --- | --- |
+| BLOCKER | Legacy queued/submitting rows without provider IDs remained non-terminal and could be submitted by the poller | Backfill now terminalizes them before runtime/credential resolution; poller submit-count regression is zero |
+| BLOCKER | Flag-off rollback allowed snapshot-bearing jobs to fall through legacy submit/poll | Execution and poller freeze all active snapshot jobs while disabled; off/on/off counting backend stays at zero |
+| BLOCKER | GC accepted a self-declared three-field backup JSON | GC now uses shared manifest verification for exact payload member set, size, SHA-256, mode, inventory, and credential safety |
+| HIGH | M6E-002 had no real M5 or M6A-D stage-shaped upgrade fixtures | Added pre-M6 product schema/history plus M6A, M6B, M6C, and M6D ledger/data boundary upgrades with replay and pointer checks |
+| HIGH | Backup/restore fixture was not a complete M6 store | Fixture now includes supplier runtime, credential, model, binding, snapshot, active/completed jobs, result, asset, media, orphan, restored app, and resumed fake poll/fetch |
+| HIGH | Backup/restore allowed overlapping paths, unsafe credential mode, mixed payload evidence, and incomplete durability checks | Added overlap/symlink rejection, ready regular-file `0600` and content-hash gates, copied-snapshot DB/object/credential validation, payload inventory, and file/directory fsync |
+| HIGH | Playwright used reload/sidecar evidence without an actual app restart or public-client rejection | Added a real uvicorn stop/start on the same temporary data root, browser-visible resumed result, and a browser navigation through simulated public ingress returning `LOCAL_MANAGEMENT_ONLY` |
+| HIGH | Rollback acceptance did not execute flag-on model resolution | Flag-on now resolves built-in text/video models, credentials, bindings, a local fake text invocation, and queued/polling snapshots before flag-off restart |
+
+Post-correction verification on `e95d88936ce191edd10e5222562134fdc9759d06`:
+
+- Full Python: `629 passed, 1 skipped`.
+- Vitest: `93 passed, 4 skipped`.
+- Playwright: `10 passed`, including two M6E tests.
+- Worker: `9 passed`.
+- M3, M4, M6B, M6C, M6D, migration, storyboard, and M6E semantic verifiers: PASS.
+- `M6_SUPPLIER_MODEL_MANAGEMENT_PASS`; production flag false; real request counts zero.
+
+Both reviewers must re-inspect the exact report-bearing descendant and return PASS with no blocker/high before handoff.
