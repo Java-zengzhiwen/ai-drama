@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS supplier_model_test_runs (
   test_run_id TEXT PRIMARY KEY,
   supplier_id TEXT NOT NULL,
   supplier_model_id TEXT NOT NULL,
+  credential_version_id TEXT NOT NULL,
   snapshot_hash TEXT NOT NULL,
   snapshot_object_id TEXT NOT NULL,
   capability TEXT NOT NULL CHECK(capability IN ('text','image')),
@@ -268,7 +269,7 @@ assert response.status_code == 202
 assert response.json()["status"] == "queued"
 ```
 
-Cover missing headers, stale ETag, validation, flag off, recovery-by-key header, status, image content headers, text content 404, non-loopback/FRP/spoofed forwarding, and safe errors.
+Cover missing headers, stale ETag, validation, flag off, feature-status read, recovery-by-key header, run status, image content headers, text content 404, non-loopback/FRP/spoofed forwarding, and safe errors.
 
 - [ ] **Step 2: Run API tests and confirm red**
 
@@ -285,6 +286,7 @@ Define `ModelTestCreate(prompt: str)` and safe read models. Implement:
 
 ```text
 POST /api/models/{supplier_model_id}/tests
+GET  /api/model-tests/status
 GET  /api/models/{supplier_model_id}/tests/by-idempotency-key
 GET  /api/model-tests/{test_run_id}
 GET  /api/model-tests/{test_run_id}/content
@@ -294,7 +296,7 @@ Create returns after durable queueing. Content sends `nosniff`, `private, no-sto
 
 - [ ] **Step 4: Wire flag and lifecycle**
 
-Read `AI_DRAMA_MODEL_TESTS_ENABLED`, default false. When true, startup marks interrupted submitting rows unknown, starts one bounded drain loop, and processes queued work. Shutdown cancels/awaits it. When false, create returns `MODEL_TESTS_DISABLED`; local reads remain available.
+Read `AI_DRAMA_MODEL_TESTS_ENABLED`, default false. The status route returns only this boolean. When true, startup marks interrupted submitting rows unknown, starts one bounded drain loop, and processes queued work. Shutdown cancels/awaits it. When false, create returns `MODEL_TESTS_DISABLED`; local status and existing-run reads remain available.
 
 - [ ] **Step 5: Extend loopback classification and AGENTS governance**
 
@@ -326,7 +328,7 @@ git commit -m "feat: expose loopback-only model test API"
 
 - [ ] **Step 1: Write failing API-client and component tests**
 
-Assert create headers, header-based recovery, blob content, text/image eligibility, action order, no video action, modal defaults/warning, cancel-zero-call, double-click lock, session recovery, all states, text usage, image preview, and sanitized errors.
+Assert feature-status loading, create headers, header-based recovery, blob content, text/image eligibility, action order, hidden actions while disabled, no video action, modal defaults/warning, cancel-zero-call, double-click lock, session recovery, all states, text usage, image preview, and sanitized errors.
 
 - [ ] **Step 2: Run Vitest and confirm red**
 
@@ -345,6 +347,7 @@ Expected: FAIL because APIs/dialog are absent.
 export type ModelTestStatus = "queued" | "submitting" | "completed" | "failed" | "submission_outcome_unknown";
 export type ModelTestRead = { test_run_id: string; supplier_model_id: string; capability: "text" | "image"; status: ModelTestStatus; output?: string; usage?: Record<string, number>; media_type?: string; byte_size?: number; elapsed_ms?: number; error_code?: string; error_message?: string };
 export function createModelTest(modelId: string, prompt: string, modelEtag: string, key: string): Promise<ModelTestRead>;
+export function getModelTestFeatureStatus(): Promise<{ enabled: boolean }>;
 export function recoverModelTest(modelId: string, key: string): Promise<ModelTestRead>;
 export function getModelTest(runId: string): Promise<ModelTestRead>;
 export function getModelTestContent(runId: string): Promise<Blob>;
@@ -352,7 +355,7 @@ export function getModelTestContent(runId: string): Promise<Blob>;
 
 - [ ] **Step 4: Implement `ModelTestDialog` and final row action**
 
-Use Ant Design Modal/TextArea/Alert/Spin/Image. Store only key/run ID in session storage, recover lost create responses, poll terminally, revoke blob URLs, and render `测试` after `删除` for text/image only. Use an icon and tooltip for disabled reasons.
+Use Ant Design Modal/TextArea/Alert/Spin/Image. Store only key/run ID in session storage, recover lost create responses, poll terminally, revoke blob URLs, and render `测试` after `删除` for text/image only when the feature-status endpoint is enabled. Use an icon and tooltip for disabled reasons.
 
 - [ ] **Step 5: Add responsive styles and fake Playwright flow**
 

@@ -185,7 +185,15 @@ Response fields are safe metadata only:
 }
 ```
 
-### 6.2 Recover An Accepted Run
+### 6.2 Read Feature Status
+
+```http
+GET /api/model-tests/status
+```
+
+This loopback-only, non-mutating endpoint returns `{ "enabled": true | false }`. The model catalog uses it to hide all model-test actions while the rollout flag is disabled. It contains no supplier, model, configuration, credential, or runtime data.
+
+### 6.3 Recover An Accepted Run
 
 ```http
 GET /api/models/{supplier_model_id}/tests/by-idempotency-key
@@ -194,7 +202,7 @@ Idempotency-Key: <previous key>
 
 This loopback-only lookup returns the safe run representation when the create response was lost after commit. It never creates, executes, or retries a run. An unknown key returns 404. The idempotency key is supplied as a header so it is not placed in URL, proxy, or browser-history logs.
 
-### 6.3 Read A Test Run
+### 6.4 Read A Test Run
 
 ```http
 GET /api/model-tests/{test_run_id}
@@ -202,7 +210,7 @@ GET /api/model-tests/{test_run_id}
 
 The response contains status, safe model identity, normalized text/usage or image metadata, elapsed time, sanitized error/evidence metadata, and timestamps. It does not contain a credential, provider Authorization header, raw signed URL, config secret, or raw provider body.
 
-### 6.4 Read Image Content
+### 6.5 Read Image Content
 
 ```http
 GET /api/model-tests/{test_run_id}/content
@@ -256,6 +264,7 @@ supplier_model_id
 snapshot_hash
 snapshot_object_id
 capability
+credential_version_id
 idempotency_key
 request_hash
 request_object_id
@@ -299,7 +308,7 @@ Rules:
 - test records are not rows in project generation job/result/asset tables;
 - Phase 1 has no history screen or automatic retention cleanup; the stored audit trail remains local and is excluded from Git and exports.
 
-Queued and submitting model tests count as active references to the resolved credential version. Normal credential deletion returns the existing active-reference conflict. Force deletion fails queued tests with `CREDENTIAL_REVOKED` before network; an already submitting test becomes `submission_outcome_unknown` because local deletion cannot prove provider-side cancellation. Supplier/model disable blocks new tests but lets already persisted tests drain through their frozen snapshots, consistent with existing M6 work-drain semantics.
+`credential_version_id` duplicates the snapshot reference solely for indexed lifecycle enforcement; it never contains secret material. Queued and submitting model tests count as active references to that resolved credential version. Normal credential deletion returns the existing active-reference conflict. Force deletion fails queued tests with `CREDENTIAL_REVOKED` before network; an already submitting test becomes `submission_outcome_unknown` because local deletion cannot prove provider-side cancellation. Supplier/model disable blocks new tests but lets already persisted tests drain through their frozen snapshots, consistent with existing M6 work-drain semantics.
 
 ## 9. Idempotency And Rate Limiting
 
@@ -551,7 +560,7 @@ Rollback consists of:
 
 1. set the flag false;
 2. hide the model-row actions;
-3. return `MODEL_TESTS_DISABLED` from create/read/content routes;
+3. return `MODEL_TESTS_DISABLED` from the create route while keeping loopback-only status/read/content available for existing local audit records;
 4. stop claiming queued test runs;
 5. leave existing local audit rows and object bytes intact;
 6. keep all normal supplier, project binding, and generation paths unchanged.
