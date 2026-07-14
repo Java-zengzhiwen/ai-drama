@@ -3,10 +3,25 @@ import pytest
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_web.store import ProductStore
 from ai_drama_web.suppliers.credentials import CredentialInUse, SupplierCredentialStore
+from ai_drama_web.suppliers.compiler import compile_supplier
 from ai_drama_web.suppliers.models import RevisionConflict
+from ai_drama_web.suppliers.model_tests import ModelTestError, ModelTestExecutor, ModelTestService
 from ai_drama_web.suppliers.resolution import ResolvedModel
 from ai_drama_web.suppliers.snapshots import SnapshotBuilder
 from tests.web.model_test_support import create_model, install_test_supplier_runtime
+
+
+class FakeModelTestGateway:
+    def __init__(self, response=None, error=None):
+        self.response = response or {"output": "connection ok", "usage": {"total_tokens": 2}}
+        self.error = error
+        self.calls = []
+
+    def invoke(self, snapshot_hash, operation, request):
+        self.calls.append((snapshot_hash, operation, request))
+        if self.error:
+            raise self.error
+        return self.response
 
 
 def _store_and_snapshot(tmp_path, capability="text"):
@@ -189,4 +204,274 @@ def test_force_delete_marks_submitting_model_test_unknown(tmp_path):
     assert run["status"] == "submission_outcome_unknown"
     assert run["attempt_count"] == 1
     assert run["error_code"] == "SUBMISSION_OUTCOME_UNKNOWN"
+    runtime.close()
+
+
+def test_service_creates_text_run_from_direct_model_snapshot(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
+    service = ModelTestService(store)
+
+    run, created = service.create_model_test(
+        supplier_model_id=snapshot.supplier_model_id,
+        prompt="hello",
+        idempotency_key="service-key",
+        expected_model_revision=1,
+    )
+
+    assert created is True
+    assert run["status"] == "queued"
+    assert run["capability"] == "text"
+    persisted_snapshot = runtime.read_text(run["snapshot_object_id"])
+    assert '"operation_key":"supplier_model_test"' in persisted_snapshot
+    assert '"binding_source":"direct_model_test"' in persisted_snapshot
+    assert '"rate_limit_bucket_key":"test-bucket"' in persisted_snapshot
+    request = runtime.read_text(run["request_object_id"])
+    assert request == '{"prompt":"hello","test_contract_version":"model-test-v1"}'
+    runtime.close()
+
+
+def test_service_replays_same_key_and_input_but_conflicts_on_changed_prompt(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
+    service = ModelTestService(store)
+    first, created = service.create_model_test(
+        supplier_model_id=snapshot.supplier_model_id,
+        prompt="hello",
+        idempotency_key="service-replay",
+        expected_model_revision=1,
+    )
+
+    replay, replay_created = service.create_model_test(
+        supplier_model_id=snapshot.supplier_model_id,
+        prompt="hello",
+        idempotency_key="service-replay",
+        expected_model_revision=1,
+    )
+
+    assert created is True
+    assert replay_created is False
+    assert replay["test_run_id"] == first["test_run_id"]
+    with pytest.raises(RevisionConflict, match="IDEMPOTENCY_CONFLICT"):
+        service.create_model_test(
+            supplier_model_id=snapshot.supplier_model_id,
+            prompt="changed",
+            idempotency_key="service-replay",
+            expected_model_revision=1,
+        )
+    runtime.close()
+
+
+def test_image_service_uses_provider_neutral_default_size(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path, capability="image")
+
+    run, _created = ModelTestService(store).create_model_test(
+        supplier_model_id=snapshot.supplier_model_id,
+        prompt="a cup",
+        idempotency_key="image-size",
+        expected_model_revision=1,
+    )
+
+    assert runtime.read_text(run["request_object_id"]) == (
+        '{"prompt":"a cup","size":"1024x768","test_contract_version":"model-test-v1"}'
+    )
+    runtime.close()
+
+
+def test_service_rejects_missing_capability_export_before_run(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
+    supplier = store.get_supplier(snapshot.supplier_id)
+    source = """
+export const vendor = {
+  id: "missing-export", version: "1", name: "Missing", author: "Test",
+  adapterContractVersion: "ai-drama-supplier-v1", helperApiVersion: "ai-drama-helper-v1",
+  rateLimitBucketKey: "test-bucket", inputs: [], inputValues: {}, models: []
+};
+"""
+    artifact = compile_supplier(source, runtime_store=runtime)
+    store.replace_supplier_version(
+        supplier.supplier_id,
+        source_object_id=artifact.source_object_id,
+        source_hash=artifact.source_hash,
+        compiled_artifact_object_id=artifact.compiled_artifact_object_id,
+        compiled_artifact_hash=artifact.compiled_artifact_hash,
+        manifest_hash=artifact.manifest_hash,
+        manifest=artifact.vendor,
+        adapter_contract_version=artifact.adapter_contract_version,
+        worker_protocol_version="1",
+        worker_runtime_version=artifact.worker_runtime_version,
+        compiler_name=artifact.compiler_name,
+        compiler_version=artifact.compiler_version,
+        compiler_options_hash=artifact.compiler_options_hash,
+        helper_api_version=artifact.helper_api_version,
+        rate_limit_bucket_key=artifact.vendor["rateLimitBucketKey"],
+        expected_revision=supplier.revision,
+    )
+
+    with pytest.raises(ModelTestError, match="SUPPLIER_OPERATION_UNAVAILABLE"):
+        ModelTestService(store).create_model_test(
+            supplier_model_id=snapshot.supplier_model_id,
+            prompt="hello",
+            idempotency_key="missing-export",
+            expected_model_revision=1,
+        )
+
+    assert store.conn.execute("SELECT count(*) FROM supplier_model_test_runs").fetchone()[0] == 0
+    runtime.close()
+
+
+@pytest.mark.parametrize("prompt", ["", "x" * 4001])
+def test_service_rejects_invalid_text_prompt_before_run(tmp_path, prompt):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
+
+    with pytest.raises(ModelTestError, match="MODEL_TEST_PROMPT_INVALID"):
+        ModelTestService(store).create_model_test(
+            supplier_model_id=snapshot.supplier_model_id,
+            prompt=prompt,
+            idempotency_key="invalid-prompt",
+            expected_model_revision=1,
+        )
+
+    assert store.conn.execute("SELECT count(*) FROM supplier_model_test_runs").fetchone()[0] == 0
+    runtime.close()
+
+
+def test_service_rejects_video_model_before_run(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path, capability="video")
+
+    with pytest.raises(ModelTestError, match="MODEL_TEST_CAPABILITY_UNSUPPORTED"):
+        ModelTestService(store).create_model_test(
+            supplier_model_id=snapshot.supplier_model_id,
+            prompt="hello",
+            idempotency_key="video-test",
+            expected_model_revision=1,
+        )
+
+    assert store.conn.execute("SELECT count(*) FROM supplier_model_test_runs").fetchone()[0] == 0
+    runtime.close()
+
+
+def test_service_rejects_disabled_supplier_and_model_before_run(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
+    supplier = store.get_supplier(snapshot.supplier_id)
+    store.update_supplier(snapshot.supplier_id, enabled=False, expected_revision=supplier.revision)
+
+    with pytest.raises(ModelTestError, match="SUPPLIER_DISABLED"):
+        ModelTestService(store).create_model_test(
+            supplier_model_id=snapshot.supplier_model_id,
+            prompt="hello",
+            idempotency_key="disabled-supplier",
+            expected_model_revision=1,
+        )
+
+    store.update_supplier(
+        snapshot.supplier_id,
+        enabled=True,
+        expected_revision=store.get_supplier(snapshot.supplier_id).revision,
+    )
+    current = store.get_supplier(snapshot.supplier_id)
+    store.set_supplier_model_enabled(
+        snapshot.supplier_model_id,
+        enabled=False,
+        expected_catalog_revision=current.model_catalog_revision,
+        expected_model_revision=1,
+    )
+    with pytest.raises(ModelTestError, match="MODEL_DISABLED"):
+        ModelTestService(store).create_model_test(
+            supplier_model_id=snapshot.supplier_model_id,
+            prompt="hello",
+            idempotency_key="disabled-model",
+            expected_model_revision=2,
+        )
+    runtime.close()
+
+
+def test_service_requires_current_ready_credential_before_run(tmp_path):
+    runtime, store, snapshot, credentials = _store_and_snapshot(tmp_path)
+    credentials.delete(snapshot.supplier_id, expected_revision=1)
+
+    with pytest.raises(ModelTestError, match="CREDENTIAL_MISSING"):
+        ModelTestService(store).create_model_test(
+            supplier_model_id=snapshot.supplier_model_id,
+            prompt="hello",
+            idempotency_key="missing-credential",
+            expected_model_revision=1,
+        )
+
+    assert store.conn.execute("SELECT count(*) FROM supplier_model_test_runs").fetchone()[0] == 0
+    runtime.close()
+
+
+def test_executor_claims_and_invokes_text_once(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
+    service = ModelTestService(store)
+    run, _created = service.create_model_test(
+        supplier_model_id=snapshot.supplier_model_id,
+        prompt="hello",
+        idempotency_key="execute-text",
+        expected_model_revision=1,
+    )
+    gateway = FakeModelTestGateway()
+    executor = ModelTestExecutor(store, gateway)
+
+    executor.execute(run["test_run_id"])
+    executor.execute(run["test_run_id"])
+    result = service.safe_read(run["test_run_id"])
+
+    assert [call[1] for call in gateway.calls] == ["textRequest"]
+    assert result["status"] == "completed"
+    assert result["output"] == "connection ok"
+    assert result["usage"] == {"total_tokens": 2}
+    runtime.close()
+
+
+def test_executor_persists_image_bytes_and_sanitizes_provider_url(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path, capability="image")
+    service = ModelTestService(store)
+    run, _created = service.create_model_test(
+        supplier_model_id=snapshot.supplier_model_id,
+        prompt="a cup",
+        idempotency_key="execute-image",
+        expected_model_revision=1,
+    )
+    gateway = FakeModelTestGateway(
+        response={
+            "media_type": "image/png",
+            "bytes": b"\x89PNG\r\n\x1a\nimage",
+            "url": "https://fake.invalid/result.png?token=secret-value",
+        }
+    )
+
+    ModelTestExecutor(store, gateway).execute(run["test_run_id"])
+    result = service.safe_read(run["test_run_id"])
+    stored = store.get_supplier_model_test_run(run["test_run_id"])
+
+    assert result["status"] == "completed"
+    assert result["media_type"] == "image/png"
+    assert result["byte_size"] == 13
+    assert runtime.read_bytes_object(stored["content_object_id"]).startswith(b"\x89PNG")
+    evidence = runtime.read_text(stored["sanitized_evidence_object_id"])
+    assert "token=" not in evidence
+    assert "secret-value" not in evidence
+    assert '"bytes"' not in evidence
+    runtime.close()
+
+
+def test_executor_marks_ambiguous_gateway_failure_unknown_without_retry(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
+    service = ModelTestService(store)
+    run, _created = service.create_model_test(
+        supplier_model_id=snapshot.supplier_model_id,
+        prompt="hello",
+        idempotency_key="execute-failure",
+        expected_model_revision=1,
+    )
+    gateway = FakeModelTestGateway(error=RuntimeError("SUPPLIER_WORKER_TIMEOUT"))
+    executor = ModelTestExecutor(store, gateway)
+
+    executor.execute(run["test_run_id"])
+    executor.execute(run["test_run_id"])
+    result = service.safe_read(run["test_run_id"])
+
+    assert len(gateway.calls) == 1
+    assert result["status"] == "submission_outcome_unknown"
+    assert result["error_code"] == "SUBMISSION_OUTCOME_UNKNOWN"
     runtime.close()

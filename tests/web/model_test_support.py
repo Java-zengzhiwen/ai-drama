@@ -23,6 +23,8 @@ export const vendor = {{
   helperApiVersion: "ai-drama-helper-v1",
   rateLimitBucketKey: "{rate_bucket}", inputs: [], inputValues: {{}}, models: []
 }};
+export async function textRequest(payload) {{ return {{ output: String(payload.request?.prompt || ""), usage: {{ total_tokens: 1 }} }}; }}
+export async function imageRequest() {{ return {{ media_type: "image/png", bytes: "fake-png" }}; }}
 """
     artifact = compile_supplier(source, runtime_store=store.runtime)
     store.replace_supplier_version(
