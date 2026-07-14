@@ -22,7 +22,7 @@ from ai_drama_web.services.m6_generation import M6GenerationCoordinator, M6Gener
 from ai_drama_web.services.legacy_agnes_backfill import LegacyAgnesBackfill, _legacy_source
 from ai_drama_web.suppliers.compiler import compile_supplier
 from ai_drama_web.secrets import LocalSecretStore
-from ai_drama_web.suppliers.builtin_adapters import install_builtin_adapters
+from ai_drama_web.suppliers.builtin_adapters import OPENAI_SOURCE, install_builtin_adapters
 from ai_drama_web.suppliers.execution import SnapshotExecutionGateway
 from ai_drama_web.suppliers.worker import SupplierInvocationResult, WorkerLimits
 from ai_drama_web.suppliers.snapshots import SupplierRuntimeUnavailable
@@ -537,12 +537,66 @@ def test_builtin_openai_and_agnes_adapters_install_as_immutable_worker_artifacts
         version = store.get_supplier_version(supplier.current_supplier_version_id)
         assert version.worker_runtime_version.startswith("v")
         assert runtime.read_text(version.compiled_artifact_object_id)
+        source = runtime.read_text(version.source_object_id)
+        assert "AI 生成适配代码步骤" in source
+        assert "不要提供真实 API Key" in source
+        assert "helpers.http.request" in source
+        if slug == "agnes":
+            assert "必须使用 video_id 查询" in source
+            assert "不得使用 task_id" in source
         actual = {
             store.get_supplier_model_revision(model.current_model_revision_id).capability
             for model in store.list_supplier_models(supplier.supplier_id) if model.enabled
         }
         assert actual == capabilities
+    version_count = runtime.conn.execute(
+        "SELECT COUNT(*) FROM supplier_versions"
+    ).fetchone()[0]
     assert install_builtin_adapters(store) == 0
+    assert runtime.conn.execute(
+        "SELECT COUNT(*) FROM supplier_versions"
+    ).fetchone()[0] == version_count
+
+
+def test_builtin_comment_revision_advances_once_without_deleting_history(tmp_path):
+    runtime = RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects")
+    store = ProductStore(runtime)
+    assert install_builtin_adapters(store) == 2
+    supplier = next(item for item in store.list_suppliers() if item.slug == "openai")
+    documented_version = store.get_supplier_version(supplier.current_supplier_version_id)
+    old_source = OPENAI_SOURCE.replace("m6c-2-comments", "m6c-1")
+    old = compile_supplier(old_source, runtime_store=runtime)
+    legacy_version = store.replace_supplier_version(
+        supplier.supplier_id,
+        source_object_id=old.source_object_id,
+        source_hash=old.source_hash,
+        compiled_artifact_object_id=old.compiled_artifact_object_id,
+        compiled_artifact_hash=old.compiled_artifact_hash,
+        manifest_hash=old.manifest_hash,
+        manifest=old.vendor,
+        adapter_contract_version=old.adapter_contract_version,
+        worker_protocol_version="1",
+        worker_runtime_version=old.worker_runtime_version,
+        compiler_name=old.compiler_name,
+        compiler_version=old.compiler_version,
+        compiler_options_hash=old.compiler_options_hash,
+        helper_api_version=old.helper_api_version,
+        rate_limit_bucket_key=old.vendor["rateLimitBucketKey"],
+        expected_revision=supplier.revision,
+        built_in=True,
+    )
+
+    assert install_builtin_adapters(store) == 1
+    advanced = store.get_supplier(
+        supplier.supplier_id
+    ).current_supplier_version_id
+    assert advanced not in {
+        documented_version.supplier_version_id,
+        legacy_version.supplier_version_id,
+    }
+    assert store.get_supplier_version(legacy_version.supplier_version_id)
+    assert install_builtin_adapters(store) == 0
+    assert store.get_supplier(supplier.supplier_id).current_supplier_version_id == advanced
 
 
 def test_media_result_larger_than_protocol_output_uses_bounded_local_reference(tmp_path):

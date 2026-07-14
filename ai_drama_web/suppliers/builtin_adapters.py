@@ -10,8 +10,17 @@ def _model_id(slug, capability):
 
 
 OPENAI_SOURCE = f'''
+/**
+ * OpenAI Compatible 内置适配器
+ *
+ * AI 生成适配代码步骤：把本文件与供应商官方文档交给 AI，说明只修改接口映射，
+ * 不改变 adapterContractVersion、helperApiVersion、稳定模型 ID 或规范化返回结构。
+ * 不要提供真实 API Key；密钥由网页保存并通过 payload.credential 注入。
+ * 网络只能经过 helpers.http.request，配置只能读取 payload.config。
+ * textRequest 将平台中立的提示词转换为 Chat Completions 请求，并统一 token 字段。
+ */
 export const vendor = {{
-  id:"openai", version:"m6c-1", name:"OpenAI Compatible", author:"AI Drama",
+  id:"openai", version:"m6c-2-comments", name:"OpenAI Compatible", author:"AI Drama",
   adapterContractVersion:"ai-drama-supplier-v1", helperApiVersion:"ai-drama-helper-v1",
   rateLimitBucketKey:"openai-text", inputs:[], inputValues:{{}},
   models:[{{supplierModelId:"{_model_id('openai','text')}",providerModelName:"gpt-4.1",displayName:"OpenAI Text",capability:"text"}}]
@@ -28,8 +37,19 @@ export async function textRequest(payload, helpers) {{
 
 
 AGNES_SOURCE = f'''
+/**
+ * Agnes 内置图片与视频适配器
+ *
+ * AI 生成适配代码步骤：把本文件、Agnes 官方文档和需要的能力交给 AI，只调整已确认字段。
+ * 不要提供真实 API Key、Bearer 或签名链接；密钥仅从 payload.credential 读取且不得记录。
+ * 所有提交、状态查询和结果下载都必须经过 helpers.http.request。
+ * 图片生成先取得结果 URL，再由受控 helper 下载为本地媒体引用。
+ * 普通视频模式严格 0–1 张输入图；keyframes 模式严格 2–3 张有序关键帧。
+ * 视频创建后必须使用 video_id 查询，不得使用 task_id；完成后再下载视频结果。
+ * 保持 providerModelName、错误码和规范化状态不变，未知状态必须失败关闭。
+ */
 export const vendor = {{
-  id:"agnes", version:"m6c-1", name:"Agnes", author:"AI Drama",
+  id:"agnes", version:"m6c-2-comments", name:"Agnes", author:"AI Drama",
   adapterContractVersion:"ai-drama-supplier-v1", helperApiVersion:"ai-drama-helper-v1",
   rateLimitBucketKey:"agnes-generation", inputs:[], inputValues:{{}},
   models:[
@@ -84,7 +104,12 @@ def install_builtin_adapters(store):
     for slug, source in (("openai", OPENAI_SOURCE), ("agnes", AGNES_SOURCE)):
         supplier = next(item for item in store.list_suppliers() if item.slug == slug)
         current = store.get_supplier_version(supplier.current_supplier_version_id)
-        if current is not None and not current.worker_runtime_version.startswith("unavailable"):
+        source_hash = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        if (
+            current is not None
+            and not current.worker_runtime_version.startswith("unavailable")
+            and current.source_hash == source_hash
+        ):
             continue
         artifact = compile_supplier(source, runtime_store=store.runtime)
         store.replace_supplier_version(

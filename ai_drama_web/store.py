@@ -1536,7 +1536,7 @@ class ProductStore:
         self.conn.commit()
 
     def create_supplier_idempotent(
-        self, *, slug, display_name, idempotency_key, request_hash
+        self, *, slug, display_name, idempotency_key, request_hash, initial_version=None
     ):
         self.conn.execute("BEGIN IMMEDIATE")
         try:
@@ -1572,6 +1572,55 @@ class ProductStore:
                 """,
                 (config_revision_id, supplier_id, created_at),
             )
+            if initial_version:
+                supplier_version_id = uuid.uuid4().hex
+                manifest = initial_version["manifest"]
+                manifest_text = json.dumps(
+                    manifest,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                )
+                manifest_object_id = self.runtime.write_text_object(manifest_text)
+                self.conn.execute(
+                    """
+                    INSERT INTO supplier_versions
+                    (supplier_version_id, supplier_id, revision, source_object_id,
+                     source_hash, compiled_artifact_object_id, compiled_artifact_hash,
+                     manifest_hash, manifest_object_id, rate_limit_bucket_key,
+                     adapter_contract_version, worker_protocol_version,
+                     worker_runtime_version, compiler_name, compiler_version,
+                     compiler_options_hash, helper_api_version, built_in, created_at)
+                    VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                    """,
+                    (
+                        supplier_version_id,
+                        supplier_id,
+                        initial_version["source_object_id"],
+                        initial_version["source_hash"],
+                        initial_version["compiled_artifact_object_id"],
+                        initial_version["compiled_artifact_hash"],
+                        initial_version["manifest_hash"],
+                        manifest_object_id,
+                        initial_version["rate_limit_bucket_key"],
+                        initial_version["adapter_contract_version"],
+                        initial_version["worker_protocol_version"],
+                        initial_version["worker_runtime_version"],
+                        initial_version["compiler_name"],
+                        initial_version["compiler_version"],
+                        initial_version["compiler_options_hash"],
+                        initial_version["helper_api_version"],
+                        created_at,
+                    ),
+                )
+                self.conn.execute(
+                    """
+                    UPDATE suppliers SET current_supplier_version_id = ?
+                    WHERE supplier_id = ?
+                    """,
+                    (supplier_version_id, supplier_id),
+                )
             self.conn.execute(
                 """
                 INSERT INTO supplier_creation_requests

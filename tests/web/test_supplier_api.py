@@ -2,6 +2,7 @@ import json
 
 from fastapi.testclient import TestClient
 
+from ai_drama_web.routers import suppliers as supplier_router
 from ai_drama_web.app import create_app
 from ai_drama_web.suppliers.builtin_adapters import install_builtin_adapters
 
@@ -58,7 +59,42 @@ def test_supplier_api_creates_custom_empty_template_not_duplicate(tmp_path):
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["error_code"] == "IDEMPOTENCY_CONFLICT"
     assert response.json()["source"] == "custom"
-    assert response.json()["current_supplier_version_id"] == ""
+    assert response.json()["current_supplier_version_id"]
+
+    with _client(tmp_path) as client:
+        source = client.get(
+            f"/api/suppliers/{response.json()['supplier_id']}/code"
+        ).json()["source"]
+    assert "AI 生成适配代码步骤" in source
+    assert "不要提供真实 API Key" in source
+    assert "helpers.http.request" in source
+    assert "video_id" in source and "task_id" in source
+    assert "export const vendor" in source
+    assert "models: []" in source
+    assert "module.exports" not in source
+
+
+def test_supplier_creation_replay_does_not_recompile_template(tmp_path, monkeypatch):
+    with _client(tmp_path) as client:
+        first = client.post(
+            "/api/suppliers",
+            json={"slug": "replay", "display_name": "Replay"},
+            headers={"If-None-Match": "*", "Idempotency-Key": "create-replay"},
+        )
+        monkeypatch.setattr(
+            supplier_router,
+            "compile_supplier",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("recompiled")),
+        )
+        replay = client.post(
+            "/api/suppliers",
+            json={"slug": "replay", "display_name": "Replay"},
+            headers={"If-None-Match": "*", "Idempotency-Key": "create-replay"},
+        )
+
+    assert first.status_code == 201
+    assert replay.status_code == 200
+    assert replay.json()["supplier_id"] == first.json()["supplier_id"]
 
 
 def test_supplier_config_secret_and_code_mutations_require_matching_etags(tmp_path):
@@ -250,11 +286,11 @@ def test_custom_empty_supplier_management_projection_is_safe(tmp_path):
         ).json()
         detail = client.get(f"/api/suppliers/{supplier['supplier_id']}").json()
 
-    assert detail["author"] == ""
-    assert detail["version"] == ""
-    assert detail["manifest"] == {}
-    assert detail["inputs"] == []
-    assert detail["input_values"] == {}
+    assert detail["author"] == "AI Drama"
+    assert detail["version"] == "template-1"
+    assert detail["manifest"]["id"] == "empty-ui"
+    assert detail["inputs"][0]["key"] == "base_url"
+    assert detail["input_values"] == {"base_url": ""}
     assert detail["config_values"] == {}
     assert detail["capabilities"] == []
     assert detail["model_count"] == 0
