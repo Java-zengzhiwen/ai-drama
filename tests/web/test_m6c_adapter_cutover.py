@@ -3,6 +3,7 @@ import pytest
 import hashlib
 import tempfile
 import subprocess
+import threading
 from pathlib import Path
 
 from ai_drama_runtime.store import RuntimeStore
@@ -422,6 +423,49 @@ def test_m6_image_idempotent_replay_does_not_consume_or_require_rate_limit(tmp_p
 
     assert replay == first
     assert [call[1] for call in gateway.calls] == ["imageRequest"]
+
+
+def test_image_submission_claim_allows_one_concurrent_gateway_call(tmp_path):
+    _runtime, store, project, snapshot = _snapshot_fixture(tmp_path, "image")
+    request = {"prompt": "frame"}
+    job, _ = store.enqueue_generation_job_with_snapshot(
+        supplier_id=snapshot.supplier_id,
+        capability="image",
+        provider=f"m6:{snapshot.supplier_id}:image",
+        job_type="image",
+        project_id=project.project_id,
+        chapter_id="chapter",
+        shot_id="shot",
+        prompt_revision_id="",
+        idempotency_key="concurrent-image",
+        request=request,
+        snapshot=snapshot,
+    )
+    barrier = threading.Barrier(2)
+    gateway = _SnapshotGateway()
+    errors = []
+
+    def claim_and_call():
+        try:
+            local_runtime = RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects")
+            local_store = ProductStore(local_runtime)
+            barrier.wait(timeout=5)
+            claimed = local_store.claim_generation_submission(job.job_id)
+            if claimed is not None:
+                gateway.invoke(job.snapshot_hash, "imageRequest", request)
+        except Exception as exc:  # pragma: no cover - reported by the assertion below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=claim_and_call) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert [call[1] for call in gateway.calls] == ["imageRequest"]
+    assert store.get_generation_job(job.job_id).internal_status == "submitting"
+    assert store.get_submission_attempt(job.job_id)["state"] == "submitting"
 
 
 def test_active_legacy_agnes_backfill_is_idempotent_and_preserves_video_id(tmp_path):

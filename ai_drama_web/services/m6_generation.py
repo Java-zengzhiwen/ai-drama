@@ -188,18 +188,28 @@ class M6GenerationCoordinator:
                 self._release_rate_limit(snapshot, reserved)
                 raise
         if not created:
-            self._release_rate_limit(snapshot, reserved)
             row = self.store.conn.execute(
                 "SELECT asset_id FROM assets WHERE source_job_id = ? ORDER BY created_at, asset_id LIMIT 1",
                 (job.job_id,),
             ).fetchone()
             if row is not None:
+                self._release_rate_limit(snapshot, reserved)
                 return self._asset(row["asset_id"], job.job_id)
+            attempt = self.store.get_submission_attempt(job.job_id)
+            if attempt is None or attempt["state"] != "prepared":
+                self._release_rate_limit(snapshot, reserved)
+                raise M6GenerationError("IDEMPOTENT_RUN_NOT_COMPLETED")
+            if not reserved:
+                reserved = self._acquire_rate_limit(snapshot)
         attempt = self.store.get_submission_attempt(job.job_id)
         if attempt["state"] != "prepared":
+            self._release_rate_limit(snapshot, reserved)
             raise M6GenerationError("SUBMISSION_OUTCOME_UNKNOWN")
-        self.store.transition_generation_job(job.job_id, "submitting")
-        self.store.record_submission_attempt(job.job_id, state="submitting")
+        claimed = self.store.claim_generation_submission(job.job_id)
+        if claimed is None:
+            self._release_rate_limit(snapshot, reserved)
+            raise M6GenerationError("IDEMPOTENT_RUN_NOT_COMPLETED")
+        job = claimed
         try:
             response = self.gateway.invoke(job.snapshot_hash, "imageRequest", request)
         except Exception as exc:
@@ -266,6 +276,13 @@ class M6GenerationCoordinator:
             )
             if existing is not None:
                 return False
+            raise M6GenerationError("RATE_LIMITED")
+        return True
+
+    def _acquire_rate_limit(self, snapshot):
+        if self.rate_limiter is None:
+            return False
+        if not self.rate_limiter.acquire(snapshot.rate_limit_bucket_key):
             raise M6GenerationError("RATE_LIMITED")
         return True
 

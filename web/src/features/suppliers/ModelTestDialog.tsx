@@ -160,7 +160,15 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
         JSON.stringify({ idempotencyKey, testRunId: created.test_run_id }),
       );
       await acceptRun(created);
-    } catch {
+    } catch (caught) {
+      const failure = toManagementError(caught);
+      if (failure.status !== undefined && failure.status >= 400 && failure.status < 500) {
+        clearStored();
+        submitLock.current = false;
+        setRecovering(false);
+        setError(failure.message);
+        return;
+      }
       try {
         const recovered = await recoverModelTest(model.supplier_model_id, idempotencyKey);
         sessionStorage.setItem(

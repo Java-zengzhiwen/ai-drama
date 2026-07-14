@@ -2658,6 +2658,51 @@ class ProductStore:
         row = self.conn.execute("SELECT * FROM generation_submission_attempts WHERE job_id = ?", (job_id,)).fetchone()
         return None if row is None else dict(row)
 
+    def claim_generation_submission(self, job_id):
+        """Atomically claim a prepared job before any external submission occurs."""
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            job = self.conn.execute(
+                "SELECT * FROM generation_jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            attempt = self.conn.execute(
+                "SELECT * FROM generation_submission_attempts WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if (
+                job is None
+                or attempt is None
+                or job["internal_status"] != "queued"
+                or attempt["state"] != "prepared"
+            ):
+                self.conn.commit()
+                return None
+            updated_at = now_iso()
+            job_update = self.conn.execute(
+                """
+                UPDATE generation_jobs
+                SET internal_status = 'submitting', submitted_at = ?, updated_at = ?
+                WHERE job_id = ? AND internal_status = 'queued'
+                """,
+                (updated_at, updated_at, job_id),
+            )
+            attempt_update = self.conn.execute(
+                """
+                UPDATE generation_submission_attempts
+                SET state = 'submitting', updated_at = ?
+                WHERE job_id = ? AND state = 'prepared'
+                """,
+                (updated_at, job_id),
+            )
+            if job_update.rowcount != 1 or attempt_update.rowcount != 1:
+                self.conn.rollback()
+                return None
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return self.get_generation_job(job_id)
+
     def commit_accepted_submission(self, job_id):
         self.conn.execute("BEGIN IMMEDIATE")
         try:

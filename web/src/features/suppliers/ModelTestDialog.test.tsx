@@ -274,4 +274,28 @@ describe("model test dialog", () => {
     expect(sessionStorage.getItem(`ai-drama:model-test:${model.supplier_model_id}`)).toContain("model-test-key-1");
     expect(api.createModelTest).toHaveBeenCalledTimes(1);
   });
+
+  test("shows a deterministic preflight error and unlocks without recovery", async () => {
+    api.createModelTest.mockRejectedValue({
+      isAxiosError: true,
+      response: {
+        status: 409,
+        data: {
+          detail: {
+            error_code: "CREDENTIAL_MISSING",
+            error_message: "请先配置供应商密钥。",
+          },
+        },
+      },
+    });
+    renderDialog();
+
+    const confirm = screen.getByRole("button", { name: "确认并测试" });
+    fireEvent.click(confirm);
+
+    expect(await screen.findByText("请先配置供应商密钥。")).toBeInTheDocument();
+    expect(confirm).toBeEnabled();
+    expect(api.recoverModelTest).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(`ai-drama:model-test:${model.supplier_model_id}`)).toBeNull();
+  });
 });
