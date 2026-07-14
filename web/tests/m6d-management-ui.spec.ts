@@ -1,4 +1,10 @@
-import { expect, type APIRequestContext, type Page, test } from "@playwright/test";
+import {
+  expect,
+  NETWORK_GUARD_PROBE_URL,
+  type APIRequestContext,
+  type Page,
+  test,
+} from "./network-test";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,6 +45,19 @@ if (runningInVitest) {
   const { test: vitestTest } = await import("vitest");
   vitestTest.skip("M6D Playwright management UI runs through npm run test:e2e", () => undefined);
 } else {
+  test("blocks non-loopback browser transport before a request leaves the context", async ({ page }) => {
+    const result = await page.evaluate(async (url) => {
+      try {
+        await fetch(url);
+        return "sent";
+      } catch {
+        return "blocked";
+      }
+    }, NETWORK_GUARD_PROBE_URL);
+
+    expect(result).toBe("blocked");
+  });
+
   test("M6D manages supplier code, config, write-only secret, models, and project bindings", async ({
     page,
     request,

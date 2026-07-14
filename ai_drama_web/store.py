@@ -2247,6 +2247,16 @@ class ProductStore:
             raise
         return self.get_generation_job(job_id), True
 
+    def get_supplier_idempotency_record(self, supplier_id, capability, idempotency_key):
+        row = self.conn.execute(
+            """
+            SELECT * FROM supplier_idempotency_records
+            WHERE supplier_id = ? AND capability = ? AND idempotency_key = ?
+            """,
+            (supplier_id, capability, idempotency_key),
+        ).fetchone()
+        return None if row is None else dict(row)
+
     def create_supplier_model_test_run(
         self, *, test_run_id, supplier_id, supplier_model_id, credential_version_id,
         snapshot, capability, idempotency_key, request_hash, request_object_id,

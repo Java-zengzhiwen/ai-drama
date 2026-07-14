@@ -47,7 +47,7 @@ GROUP_COMMANDS = OrderedDict(
                     "--",
                     "tests/m6d-management-ui.spec.ts",
                     "--grep",
-                    "manages supplier code",
+                    "manages supplier code|blocks non-loopback browser transport",
                 ]
             ],
         ),
@@ -61,6 +61,10 @@ GROUP_COMMANDS = OrderedDict(
                     "tests/suppliers/test_worker_isolation.py",
                 ],
                 ["npm", "--prefix", "worker", "test"],
+                [
+                    "npm", "--prefix", "web", "run", "test", "--", "--run",
+                    "vitest/default-network-denial.test.ts",
+                ],
             ],
         ),
         (
@@ -197,7 +201,8 @@ def verify(*, group_results=None, force_fail=()):
         "network_evidence": (
             "tests/conftest.py denies non-loopback Python sockets and DNS; "
             "worker/src/network-denial.mjs denies non-loopback Node transport; "
-            "Playwright rejects non-loopback browser requests; fake gateways assert call counts"
+            "Playwright context routes abort non-loopback browser requests before transport; "
+            "fake gateways assert call counts"
         ),
     }
 

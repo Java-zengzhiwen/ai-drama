@@ -150,6 +150,56 @@ describe("model test dialog", () => {
     expect(api.getModelTest).toHaveBeenCalledTimes(3);
   });
 
+  test("locks confirmation before a persisted run recovery resolves", async () => {
+    sessionStorage.setItem(
+      `ai-drama:model-test:${model.supplier_model_id}`,
+      JSON.stringify({ idempotencyKey: "stored-key", testRunId: "run-pending" }),
+    );
+    let resolveRecovery!: (value: unknown) => void;
+    api.getModelTest.mockReturnValue(new Promise((resolve) => { resolveRecovery = resolve; }));
+
+    renderDialog();
+
+    const confirm = screen.getByRole("button", { name: "确认并测试" });
+    expect(confirm).toBeDisabled();
+    fireEvent.click(confirm);
+    expect(api.createModelTest).not.toHaveBeenCalled();
+    resolveRecovery({
+      test_run_id: "run-pending",
+      supplier_model_id: model.supplier_model_id,
+      capability: "image",
+      status: "queued",
+      created_at: "2026-07-14T00:00:00Z",
+    });
+    expect(await screen.findByText(/测试编号 run-pending/)).toBeInTheDocument();
+  });
+
+  test("keeps the stored key and retries after a transient recovery failure", async () => {
+    sessionStorage.setItem(
+      `ai-drama:model-test:${model.supplier_model_id}`,
+      JSON.stringify({ idempotencyKey: "stored-key", testRunId: "run-retry" }),
+    );
+    api.getModelTest
+      .mockRejectedValueOnce(new Error("temporary local failure"))
+      .mockResolvedValueOnce({
+        test_run_id: "run-retry",
+        supplier_model_id: model.supplier_model_id,
+        capability: "image",
+        status: "completed",
+        media_type: "image/png",
+        byte_size: 64,
+        elapsed_ms: 400,
+        created_at: "2026-07-14T00:00:00Z",
+      });
+    api.getModelTestContent.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
+
+    renderDialog();
+
+    expect(await screen.findByText("image/png", {}, { timeout: 2_000 })).toBeInTheDocument();
+    expect(api.getModelTest).toHaveBeenCalledTimes(2);
+    expect(api.createModelTest).not.toHaveBeenCalled();
+  });
+
   test("renders a stable failed state without retrying", async () => {
     api.createModelTest.mockResolvedValue({
       test_run_id: "run-failed",
@@ -206,5 +256,22 @@ describe("model test dialog", () => {
     fireEvent.click(confirm);
     expect(api.createModelTest).toHaveBeenCalledTimes(1);
     expect(sessionStorage.getItem(`ai-drama:model-test:${model.supplier_model_id}`)).toContain("model-test-key-1");
+  });
+
+  test("treats an immediate recovery 404 as uncertain and preserves the original key", async () => {
+    api.createModelTest.mockRejectedValue(new Error("response lost"));
+    api.recoverModelTest.mockRejectedValue({
+      isAxiosError: true,
+      response: { status: 404, data: { detail: { error_code: "MODEL_TEST_NOT_FOUND" } } },
+    });
+    renderDialog();
+
+    const confirm = screen.getByRole("button", { name: "确认并测试" });
+    fireEvent.click(confirm);
+
+    expect(await screen.findByText(/提交结果尚未确认/)).toBeInTheDocument();
+    expect(confirm).toBeDisabled();
+    expect(sessionStorage.getItem(`ai-drama:model-test:${model.supplier_model_id}`)).toContain("model-test-key-1");
+    expect(api.createModelTest).toHaveBeenCalledTimes(1);
   });
 });

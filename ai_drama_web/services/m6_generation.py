@@ -3,9 +3,13 @@ from dataclasses import replace
 
 from ai_drama_web.services.generation_execution import _persisted_source_url
 from ai_drama_web.suppliers.adapters import sanitize_evidence
+from ai_drama_web.suppliers.idempotency import (
+    SupplierIdempotencyConflict,
+    canonical_request_hash,
+)
 from ai_drama_web.suppliers.resolution import ModelResolver, ModelResolutionError
 from ai_drama_web.suppliers.snapshots import SnapshotBuilder
-from ai_drama_web.suppliers.snapshots import load_snapshot
+from ai_drama_web.suppliers.snapshots import load_snapshot, snapshot_hash
 from ai_drama_runtime.store import now_iso
 
 
@@ -112,16 +116,27 @@ class M6GenerationCoordinator:
 
     def execute_text(self, *, project_id, operation_key, idempotency_key, request):
         snapshot = self._resolve_snapshot(project_id, operation_key)
-        self._acquire_rate_limit(snapshot)
-        run, created = self.store.enqueue_text_run_with_snapshot(
-            project_id=project_id,
-            operation_key=operation_key,
-            supplier_id=snapshot.supplier_id,
-            idempotency_key=idempotency_key,
-            request=request,
-            snapshot=snapshot,
-        )
+        replay = self._matching_replay(snapshot, "text", idempotency_key, request)
+        if replay is not None:
+            if replay["status"] == "completed":
+                payload = json.loads(self.runtime.read_text(replay["result_object_id"]))
+                return {"run_id": replay["run_id"], **payload}
+            raise M6GenerationError("IDEMPOTENT_RUN_NOT_COMPLETED")
+        reserved = self._reserve_rate_limit(snapshot, "text", idempotency_key)
+        try:
+            run, created = self.store.enqueue_text_run_with_snapshot(
+                project_id=project_id,
+                operation_key=operation_key,
+                supplier_id=snapshot.supplier_id,
+                idempotency_key=idempotency_key,
+                request=request,
+                snapshot=snapshot,
+            )
+        except Exception:
+            self._release_rate_limit(snapshot, reserved)
+            raise
         if not created:
+            self._release_rate_limit(snapshot, reserved)
             if run["status"] == "completed":
                 payload = json.loads(self.runtime.read_text(run["result_object_id"]))
                 return {"run_id": run["run_id"], **payload}
@@ -150,21 +165,30 @@ class M6GenerationCoordinator:
 
     def generate_image(self, *, project_id, chapter_id, idempotency_key, request):
         snapshot = self._resolve_snapshot(project_id, "storyboard_keyframe_image")
-        self._acquire_rate_limit(snapshot)
-        job, created = self.store.enqueue_generation_job_with_snapshot(
-            supplier_id=snapshot.supplier_id,
-            capability="image",
-            provider=f"m6:{snapshot.supplier_id}:image",
-            job_type="image",
-            project_id=project_id,
-            chapter_id=chapter_id,
-            shot_id=str(request.get("shot_id") or ""),
-            prompt_revision_id="",
-            idempotency_key=idempotency_key,
-            request=request,
-            snapshot=snapshot,
-        )
+        job = self._matching_replay(snapshot, "image", idempotency_key, request)
+        created = job is None
+        reserved = False
+        if created:
+            reserved = self._reserve_rate_limit(snapshot, "image", idempotency_key)
+            try:
+                job, created = self.store.enqueue_generation_job_with_snapshot(
+                    supplier_id=snapshot.supplier_id,
+                    capability="image",
+                    provider=f"m6:{snapshot.supplier_id}:image",
+                    job_type="image",
+                    project_id=project_id,
+                    chapter_id=chapter_id,
+                    shot_id=str(request.get("shot_id") or ""),
+                    prompt_revision_id="",
+                    idempotency_key=idempotency_key,
+                    request=request,
+                    snapshot=snapshot,
+                )
+            except Exception:
+                self._release_rate_limit(snapshot, reserved)
+                raise
         if not created:
+            self._release_rate_limit(snapshot, reserved)
             row = self.store.conn.execute(
                 "SELECT asset_id FROM assets WHERE source_job_id = ? ORDER BY created_at, asset_id LIMIT 1",
                 (job.job_id,),
@@ -206,11 +230,48 @@ class M6GenerationCoordinator:
         self.store.commit_accepted_submission(job.job_id)
         return self._finalize_image(job.job_id)
 
-    def _acquire_rate_limit(self, snapshot):
-        if self.rate_limiter is not None and not self.rate_limiter.acquire(
-            snapshot.rate_limit_bucket_key
-        ):
+    def _matching_replay(self, snapshot, capability, idempotency_key, request):
+        record = self.store.get_supplier_idempotency_record(
+            snapshot.supplier_id, capability, idempotency_key
+        )
+        if record is None:
+            return None
+        if capability == "text":
+            entity = self.store.get_supplier_text_run(record["existing_id"])
+            stored_hash = entity["snapshot_hash"] if entity is not None else ""
+        else:
+            entity = self.store.get_generation_job(record["existing_id"])
+            stored_hash = entity.snapshot_hash if entity is not None else ""
+        if entity is None or not stored_hash:
+            raise SupplierIdempotencyConflict("IDEMPOTENCY_CONFLICT")
+        stored_snapshot = load_snapshot(self.store, stored_hash)
+        current_with_original_time = replace(snapshot, created_at=stored_snapshot.created_at)
+        if snapshot_hash(current_with_original_time) != stored_hash:
+            raise SupplierIdempotencyConflict("IDEMPOTENCY_CONFLICT")
+        if canonical_request_hash(request, stored_hash) != record["request_hash"]:
+            raise SupplierIdempotencyConflict("IDEMPOTENCY_CONFLICT")
+        return entity
+
+    def _reserve_rate_limit(self, snapshot, capability, idempotency_key):
+        if self.rate_limiter is None:
+            return False
+        existing = self.store.get_supplier_idempotency_record(
+            snapshot.supplier_id, capability, idempotency_key
+        )
+        if existing is not None:
+            return False
+        if not self.rate_limiter.acquire(snapshot.rate_limit_bucket_key):
+            existing = self.store.get_supplier_idempotency_record(
+                snapshot.supplier_id, capability, idempotency_key
+            )
+            if existing is not None:
+                return False
             raise M6GenerationError("RATE_LIMITED")
+        return True
+
+    def _release_rate_limit(self, snapshot, reserved):
+        if reserved and self.rate_limiter is not None:
+            self.rate_limiter.release(snapshot.rate_limit_bucket_key)
 
     def recover_image_jobs(self):
         rows = self.store.conn.execute(

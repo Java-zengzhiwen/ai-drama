@@ -42,13 +42,15 @@ function modelEtag(model: SupplierModelRead): string {
 }
 
 export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
+  const storedRunPresent = open && hasStoredModelTest(model.supplier_model_id);
   const [prompt, setPrompt] = useState(model.capability === "image" ? DEFAULT_IMAGE_PROMPT : DEFAULT_TEXT_PROMPT);
   const [run, setRun] = useState<ModelTestRead | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [recovering, setRecovering] = useState(storedRunPresent);
   const [error, setError] = useState("");
   const [imageUrl, setImageUrl] = useState("");
   const [pollAttempt, setPollAttempt] = useState(0);
-  const submitLock = useRef(false);
+  const submitLock = useRef(storedRunPresent);
 
   const clearStored = useCallback(() => {
     sessionStorage.removeItem(modelTestStorageKey(model.supplier_model_id));
@@ -81,20 +83,44 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
     setRun(null);
     setError("");
     setPollAttempt(0);
-    submitLock.current = false;
     const raw = sessionStorage.getItem(modelTestStorageKey(model.supplier_model_id));
-    if (!raw) return;
+    if (!raw) {
+      submitLock.current = false;
+      setRecovering(false);
+      return;
+    }
+    submitLock.current = true;
+    setRecovering(true);
     let stored: StoredRun;
     try {
       stored = JSON.parse(raw) as StoredRun;
     } catch {
       clearStored();
+      submitLock.current = false;
+      setRecovering(false);
       return;
     }
-    const resume = stored.testRunId
-      ? getModelTest(stored.testRunId)
-      : recoverModelTest(model.supplier_model_id, stored.idempotencyKey);
-    void resume.then(acceptRun).catch(() => clearStored());
+    let cancelled = false;
+    let retryTimer: number | undefined;
+    const recover = async () => {
+      try {
+        const current = stored.testRunId
+          ? await getModelTest(stored.testRunId)
+          : await recoverModelTest(model.supplier_model_id, stored.idempotencyKey);
+        if (cancelled) return;
+        setRecovering(false);
+        await acceptRun(current);
+      } catch {
+        if (cancelled) return;
+        setError("恢复查询暂时不可用。已保留原请求标识，将继续查询以避免重复扣费。");
+        retryTimer = window.setTimeout(() => void recover(), 750);
+      }
+    };
+    void recover();
+    return () => {
+      cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
   }, [acceptRun, clearStored, model.capability, model.supplier_model_id, open]);
 
   useEffect(() => {
@@ -134,7 +160,7 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
         JSON.stringify({ idempotencyKey, testRunId: created.test_run_id }),
       );
       await acceptRun(created);
-    } catch (caught) {
+    } catch {
       try {
         const recovered = await recoverModelTest(model.supplier_model_id, idempotencyKey);
         sessionStorage.setItem(
@@ -142,15 +168,9 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
           JSON.stringify({ idempotencyKey, testRunId: recovered.test_run_id }),
         );
         await acceptRun(recovered);
-      } catch (recoveryError) {
-        const recovery = toManagementError(recoveryError);
-        if (recovery.status === 404) {
-          clearStored();
-          submitLock.current = false;
-          setError(toManagementError(caught).message);
-        } else {
-          setError("提交结果尚未确认。为避免重复扣费，本窗口不会重试；恢复连接后请刷新页面继续查询。");
-        }
+      } catch {
+        setRecovering(true);
+        setError("提交结果尚未确认。已保留原请求标识；为避免重复扣费，请刷新页面继续查询。");
       }
     } finally {
       setSubmitting(false);
@@ -158,7 +178,8 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
   }
 
   const terminal = run && !ACTIVE_STATUSES.has(run.status);
-  const locked = submitting || submitLock.current || Boolean(run && ACTIVE_STATUSES.has(run.status));
+  const locked = storedRunPresent || recovering || submitting || submitLock.current
+    || Boolean(run && ACTIVE_STATUSES.has(run.status));
 
   return (
     <Modal
@@ -187,7 +208,7 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
             maxLength={model.capability === "text" ? 4000 : 2000}
             autoSize={{ minRows: 3, maxRows: 6 }}
             onChange={(event) => setPrompt(event.target.value)}
-            disabled={submitting || Boolean(run && ACTIVE_STATUSES.has(run.status))}
+            disabled={recovering || submitting || Boolean(run && ACTIVE_STATUSES.has(run.status))}
           />
         </label>
         <Alert type="warning" showIcon message="将向真实供应商提交 1 次生成请求，可能产生费用。" />

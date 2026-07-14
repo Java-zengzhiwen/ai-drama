@@ -26,6 +26,7 @@ from ai_drama_web.suppliers.builtin_adapters import OPENAI_SOURCE, install_built
 from ai_drama_web.suppliers.execution import SnapshotExecutionGateway
 from ai_drama_web.suppliers.worker import SupplierInvocationResult, WorkerLimits
 from ai_drama_web.suppliers.snapshots import SupplierRuntimeUnavailable
+from ai_drama_web.suppliers.rate_limits import SupplierRateLimiter
 
 
 def test_feature_flag_defaults_off():
@@ -368,6 +369,59 @@ def test_m6_text_execution_persists_snapshot_before_invocation_and_sanitizes_evi
     assert "sensitive-marker" not in evidence
     assert result["output"] == "deterministic text"
     assert result["usage"] == {"input_tokens": 2, "output_tokens": 3}
+
+
+def test_m6_text_idempotent_replay_does_not_consume_or_require_rate_limit(tmp_path):
+    _runtime, _store, project, _supplier, gateway, coordinator = _coordinator_fixture(
+        tmp_path, "text"
+    )
+    coordinator.rate_limiter = SupplierRateLimiter(rpm=1)
+    first = coordinator.execute_text(
+        project_id=project.project_id,
+        operation_key="script_adaptation",
+        idempotency_key="rate-replay",
+        request={"prompt": "adapt"},
+    )
+
+    replay = coordinator.execute_text(
+        project_id=project.project_id,
+        operation_key="script_adaptation",
+        idempotency_key="rate-replay",
+        request={"prompt": "adapt"},
+    )
+
+    assert replay == first
+    assert [call[1] for call in gateway.calls] == ["textRequest"]
+
+
+def test_m6_image_idempotent_replay_does_not_consume_or_require_rate_limit(tmp_path):
+    _runtime, _store, project, _supplier, gateway, coordinator = _coordinator_fixture(
+        tmp_path, "image"
+    )
+    coordinator.rate_limiter = SupplierRateLimiter(rpm=1)
+    chapter = _store.create_chapter(project.project_id, title="Chapter", position=1)
+    request = {
+        "prompt": "frame",
+        "size": "1024x768",
+        "asset_type": "shot_keyframe",
+        "name": "Frame",
+    }
+    first = coordinator.generate_image(
+        project_id=project.project_id,
+        chapter_id=chapter.chapter_id,
+        idempotency_key="image-rate-replay",
+        request=request,
+    )
+
+    replay = coordinator.generate_image(
+        project_id=project.project_id,
+        chapter_id=chapter.chapter_id,
+        idempotency_key="image-rate-replay",
+        request=request,
+    )
+
+    assert replay == first
+    assert [call[1] for call in gateway.calls] == ["imageRequest"]
 
 
 def test_active_legacy_agnes_backfill_is_idempotent_and_preserves_video_id(tmp_path):

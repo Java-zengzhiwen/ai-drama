@@ -33,3 +33,14 @@ class SupplierRateLimiter:
                 return False
             events.append(now)
             return True
+
+    def release(self, bucket):
+        """Return the latest reservation when enqueue resolves to an idempotent replay."""
+        with self._lock:
+            events = self._events.get(bucket)
+            if not events:
+                return False
+            events.pop()
+            if not events:
+                self._events.pop(bucket, None)
+            return True
