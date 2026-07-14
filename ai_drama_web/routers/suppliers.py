@@ -412,6 +412,10 @@ def _credential_active_job_count(request, supplier):
         request.app.state.supplier_credential_store.active_job_references(
             supplier.current_credential_version_id
         )
+    ) + len(
+        request.app.state.supplier_credential_store.active_model_test_references(
+            supplier.current_credential_version_id
+        )
     )
 
 

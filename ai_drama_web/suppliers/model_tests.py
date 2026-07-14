@@ -1,7 +1,9 @@
+import asyncio
 import json
 import re
 import uuid
 from datetime import datetime
+from pathlib import Path
 
 from .adapters import sanitize_evidence
 from .idempotency import canonical_request_hash
@@ -349,3 +351,61 @@ def _elapsed_ms(started_at, finished_at):
     except ValueError:
         return 0
     return max(0, int((finish - start).total_seconds() * 1000))
+
+
+class ModelTestRunner:
+    def __init__(self, data_root, *, poll_interval_seconds=0.25):
+        self.data_root = Path(data_root)
+        self.poll_interval_seconds = poll_interval_seconds
+        self._task = None
+        self._stop_event = asyncio.Event()
+        self._wake_event = asyncio.Event()
+
+    async def start(self):
+        if self._task is None or self._task.done():
+            self._stop_event.clear()
+            self._wake_event.set()
+            self._task = asyncio.create_task(self._run())
+
+    async def stop(self):
+        self._stop_event.set()
+        self._wake_event.set()
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+
+    def wake(self):
+        self._wake_event.set()
+
+    async def _run(self):
+        while not self._stop_event.is_set():
+            try:
+                await asyncio.wait_for(
+                    self._wake_event.wait(), timeout=self.poll_interval_seconds
+                )
+            except TimeoutError:
+                pass
+            self._wake_event.clear()
+            if not self._stop_event.is_set():
+                await asyncio.to_thread(self._drain_once)
+
+    def _drain_once(self):
+        from ai_drama_runtime.store import RuntimeStore
+        from ai_drama_web.store import ProductStore
+
+        from .credentials import SupplierCredentialStore
+        from .execution import SnapshotExecutionGateway
+
+        runtime = RuntimeStore(
+            self.data_root / "runtime.db", self.data_root / "objects"
+        )
+        try:
+            store = ProductStore(runtime)
+            credentials = SupplierCredentialStore(store, self.data_root)
+            gateway = SnapshotExecutionGateway(store, credentials)
+            return ModelTestExecutor(store, gateway).drain_queued()
+        finally:
+            runtime.close()

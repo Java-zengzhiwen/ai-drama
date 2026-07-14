@@ -1,6 +1,9 @@
 import pytest
+import time
+from fastapi.testclient import TestClient
 
 from ai_drama_runtime.store import RuntimeStore
+from ai_drama_web.app import create_app
 from ai_drama_web.store import ProductStore
 from ai_drama_web.suppliers.credentials import CredentialInUse, SupplierCredentialStore
 from ai_drama_web.suppliers.compiler import compile_supplier
@@ -475,3 +478,113 @@ def test_executor_marks_ambiguous_gateway_failure_unknown_without_retry(tmp_path
     assert result["status"] == "submission_outcome_unknown"
     assert result["error_code"] == "SUBMISSION_OUTCOME_UNKNOWN"
     runtime.close()
+
+
+def _install_api_model(app, tmp_path, capability):
+    store = app.state.product_store
+    supplier = store.create_supplier(
+        slug=f"api-model-test-{capability}", display_name="API Model Test"
+    )
+    install_test_supplier_runtime(store, supplier)
+    supplier = store.get_supplier(supplier.supplier_id)
+    model = create_model(
+        store,
+        supplier,
+        capability=capability,
+        name=f"api-{capability}",
+        catalog_revision=supplier.model_catalog_revision,
+        key=f"api-create-{capability}",
+    )
+    app.state.supplier_credential_store.replace(
+        supplier.supplier_id, "api-test-credential", expected_revision=0
+    )
+    return model
+
+
+def _wait_for_terminal(client, test_run_id):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        response = client.get(f"/api/model-tests/{test_run_id}")
+        assert response.status_code == 200
+        payload = response.json()
+        if payload["status"] not in {"queued", "submitting"}:
+            return payload
+        time.sleep(0.05)
+    raise AssertionError("model test did not reach a terminal state")
+
+
+def test_model_test_feature_status_is_default_off_and_create_is_blocked(tmp_path, monkeypatch):
+    monkeypatch.delenv("AI_DRAMA_MODEL_TESTS_ENABLED", raising=False)
+    app = create_app(data_root=tmp_path / "runtime-data", skills_root="skills")
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        status = client.get("/api/model-tests/status")
+        blocked = client.post(
+            "/api/models/not-used/tests",
+            headers={"Idempotency-Key": "blocked", "If-Match": '"model-not-used-1"'},
+            json={"prompt": "hello"},
+        )
+
+    assert status.status_code == 200
+    assert status.json() == {"enabled": False}
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"]["error_code"] == "MODEL_TESTS_DISABLED"
+
+
+def test_text_model_test_api_queues_recovers_and_completes_locally(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_DRAMA_MODEL_TESTS_ENABLED", "true")
+    app = create_app(data_root=tmp_path / "runtime-data", skills_root="skills")
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        model = client.portal.call(lambda: _install_api_model(app, tmp_path, "text"))
+        response = client.post(
+            f"/api/models/{model.supplier_model_id}/tests",
+            headers={
+                "Idempotency-Key": "api-text-key",
+                "If-Match": f'"model-{model.supplier_model_id}-1"',
+            },
+            json={"prompt": "hello"},
+        )
+        assert response.status_code == 202
+        created = response.json()
+        assert "prompt" not in created
+        recovered = client.get(
+            f"/api/models/{model.supplier_model_id}/tests/by-idempotency-key",
+            headers={"Idempotency-Key": "api-text-key"},
+        )
+        assert recovered.status_code == 200
+        assert recovered.json()["test_run_id"] == created["test_run_id"]
+        terminal = _wait_for_terminal(client, created["test_run_id"])
+
+    assert terminal["status"] == "completed"
+    assert terminal["output"] == "hello"
+    assert terminal["usage"] == {"total_tokens": 1}
+    assert "credential" not in terminal
+
+
+def test_image_model_test_content_is_local_and_private(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_DRAMA_MODEL_TESTS_ENABLED", "true")
+    app = create_app(data_root=tmp_path / "runtime-data", skills_root="skills")
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        model = client.portal.call(lambda: _install_api_model(app, tmp_path, "image"))
+        response = client.post(
+            f"/api/models/{model.supplier_model_id}/tests",
+            headers={
+                "Idempotency-Key": "api-image-key",
+                "If-Match": f'"model-{model.supplier_model_id}-1"',
+            },
+            json={"prompt": "a cup"},
+        )
+        terminal = _wait_for_terminal(client, response.json()["test_run_id"])
+        content = client.get(
+            f"/api/model-tests/{response.json()['test_run_id']}/content"
+        )
+
+    assert terminal["status"] == "completed"
+    assert terminal["media_type"] == "image/png"
+    assert content.status_code == 200
+    assert content.content == b"fake-png"
+    assert content.headers["content-type"] == "image/png"
+    assert content.headers["cache-control"] == "private, no-store"
+    assert content.headers["x-content-type-options"] == "nosniff"

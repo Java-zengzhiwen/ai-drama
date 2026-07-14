@@ -16,6 +16,7 @@ from .routers.asset_requirements import router as asset_requirements_router
 from .routers.assets import router as assets_router
 from .routers.generation import router as generation_router
 from .routers.model_bindings import router as model_bindings_router
+from .routers.model_tests import router as model_tests_router
 from .routers.models import router as models_router
 from .routers.profiles import router as profiles_router
 from .routers.projects import router as projects_router
@@ -31,6 +32,7 @@ from .services.generation_poller import GenerationPoller
 from .services.m6_generation import M6GenerationCoordinator
 from .services.legacy_agnes_backfill import LegacyAgnesBackfill
 from .suppliers.execution import SnapshotExecutionGateway
+from .suppliers.model_tests import ModelTestRunner
 from .suppliers.builtin_adapters import install_builtin_adapters
 from .store import ProductStore
 from .suppliers.credentials import SupplierCredentialStore
@@ -60,6 +62,8 @@ def create_app(
             product_store, settings.data_root
         )
         app.state.supplier_credential_recovery = app.state.supplier_credential_store.recover()
+        app.state.model_tests_enabled = settings.model_tests_enabled
+        app.state.model_test_runner = None
         supplier_gateway = SnapshotExecutionGateway(product_store, app.state.supplier_credential_store)
         app.state.m6_generation_coordinator = M6GenerationCoordinator(
             product_store, runtime_store, app.state.supplier_credential_store, supplier_gateway
@@ -105,9 +109,15 @@ def create_app(
             await app.state.generation_poller.start()
         else:
             app.state.generation_poller = None
+        if settings.model_tests_enabled:
+            product_store.mark_interrupted_model_tests_unknown()
+            app.state.model_test_runner = ModelTestRunner(settings.data_root)
+            await app.state.model_test_runner.start()
         try:
             yield
         finally:
+            if app.state.model_test_runner is not None:
+                await app.state.model_test_runner.stop()
             if app.state.generation_poller is not None:
                 await app.state.generation_poller.stop()
             runtime_store.close()
@@ -117,6 +127,7 @@ def create_app(
     app.state.repo_root = repo_root
     app.state.max_asset_upload_bytes = _max_asset_upload_bytes_from_env()
     app.state.secret_store = LocalSecretStore(settings.data_root)
+    app.state.model_tests_enabled = settings.model_tests_enabled
 
     @app.middleware("http")
     async def local_management_guard(request, call_next):
@@ -139,6 +150,7 @@ def create_app(
     app.include_router(generation_router)
     app.include_router(models_router)
     app.include_router(model_bindings_router)
+    app.include_router(model_tests_router)
     app.include_router(profiles_router)
     app.include_router(scripts_router)
     app.include_router(shot_prompts_router)
