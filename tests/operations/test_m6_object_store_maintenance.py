@@ -8,7 +8,7 @@ import time
 import pytest
 
 from ai_drama_runtime.store import RuntimeStore
-from ai_drama_web.operations.backup_restore import M6BackupService
+from ai_drama_web.operations.backup_restore import M6BackupService, M6RestoreService
 from ai_drama_web.operations.object_store_maintenance import (
     GCGuardError,
     ObjectGarbageCollector,
@@ -104,6 +104,8 @@ def test_gc_apply_deletes_only_planned_objects_in_marked_temp_root(tmp_path):
     assert not runtime.object_path(orphan_json).exists()
     for object_id in (protected, unknown, corrupt):
         assert runtime.object_path(object_id).exists()
+    restored = data_root.parent / "restored-after-gc"
+    assert M6RestoreService().restore(manifest, restored).status == "verified"
 
 
 def test_gc_apply_rejects_unmarked_root(tmp_path):

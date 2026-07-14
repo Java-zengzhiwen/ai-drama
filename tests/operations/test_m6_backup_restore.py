@@ -1,4 +1,5 @@
 import json
+import hashlib
 from pathlib import Path
 import subprocess
 import sys
@@ -15,6 +16,7 @@ from ai_drama_web.operations.backup_restore import (
     M6BackupService,
     M6RestoreService,
     semantic_store_summary,
+    verify_backup_manifest,
 )
 from ai_drama_web.store import ProductStore
 from ai_drama_web.suppliers.credentials import SupplierCredentialStore
@@ -248,6 +250,22 @@ def test_backup_manifest_is_deterministic_and_contains_no_file_content(tmp_path)
 
     assert first_payload == second_payload
     assert "content" not in first.path.read_text(encoding="utf-8").lower()
+
+
+def test_manifest_verification_and_repeated_restore_never_mutate_backup(tmp_path):
+    source = tmp_path / "source"
+    _runtime, store, _supplier, _credential, _evidence = _seed(source)
+    manifest = M6BackupService(store, source).create(tmp_path / "backup")
+    database = manifest.path.parent / "payload" / "runtime.db"
+    before = hashlib.sha256(database.read_bytes()).hexdigest()
+
+    verify_backup_manifest(manifest.path)
+    verify_backup_manifest(manifest.path)
+    first = M6RestoreService().restore(manifest.path, tmp_path / "restored-one")
+    second = M6RestoreService().restore(manifest.path, tmp_path / "restored-two")
+
+    assert first.status == second.status == "verified"
+    assert hashlib.sha256(database.read_bytes()).hexdigest() == before
 
 
 def test_backup_and_restore_cli_emit_sanitized_json(tmp_path):

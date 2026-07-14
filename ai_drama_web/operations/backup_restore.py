@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import sqlite3
+from types import SimpleNamespace
 
 from ai_drama_runtime.store import now_iso
 
@@ -335,13 +336,15 @@ def _validate_ready_credentials(store, data_root, source_paths_root=None):
 
 
 def _validate_payload_consistency(payload, source_data_root):
-    from ai_drama_runtime.store import RuntimeStore
-    from ai_drama_web.store import ProductStore
-
     payload = Path(payload).resolve()
-    runtime = RuntimeStore(payload / "runtime.db", payload / "objects")
+    database_path = (payload / "runtime.db").resolve()
+    database = sqlite3.connect(database_path.as_uri() + "?mode=ro", uri=True)
+    database.row_factory = sqlite3.Row
     try:
-        store = ProductStore(runtime)
+        store = SimpleNamespace(
+            conn=database,
+            runtime=SimpleNamespace(objects_root=payload / "objects"),
+        )
         inventory = ObjectInventory(store, payload).build(grace_seconds=0)
         if inventory.missing_references:
             raise BackupIntegrityError("BACKUP_OBJECT_REFERENCE_MISSING")
@@ -350,7 +353,7 @@ def _validate_payload_consistency(payload, source_data_root):
         _validate_ready_credentials(store, payload, source_data_root)
         return inventory.inventory_hash
     finally:
-        runtime.close()
+        database.close()
 
 
 def _fsync_file(path):
