@@ -56,6 +56,7 @@ export default defineConfig({
         AI_DRAMA_DATA_ROOT: playwrightM6dDataRoot,
         AI_DRAMA_AGNES_POLL_INTERVAL_SECONDS: "3600",
         AI_DRAMA_M6_SUPPLIER_EXECUTION_ENABLED: "true",
+        AI_DRAMA_MODEL_TESTS_ENABLED: "true",
         PYTHONDONTWRITEBYTECODE: "1",
       },
       reuseExistingServer: false,

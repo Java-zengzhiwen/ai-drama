@@ -76,6 +76,45 @@ describe("supplier models panel", () => {
     get.mockResolvedValue({ data: models, headers: { etag: '"model-catalog-4"' } });
   });
 
+  test("shows final model-level test actions only for enabled text and image models", async () => {
+    const video = {
+      ...models[1],
+      supplier_model_id: "stable-video",
+      current_model_revision_id: "revision-video-1",
+      model_revision_id: "revision-video-1",
+      display_name: "Video Model",
+      provider_model_name: "video-provider-v1",
+      capability: "video",
+    };
+    get.mockImplementation((url: string) => Promise.resolve(
+      url === "/model-tests/status"
+        ? { data: { enabled: true }, headers: {} }
+        : { data: [...models, video], headers: { etag: '"model-catalog-4"' } },
+    ));
+
+    renderPanel();
+
+    expect(await screen.findByRole("button", { name: "测试 Text Model" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "测试 Image Model" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "测试 Video Model" })).not.toBeInTheDocument();
+    const imageRow = screen.getByRole("cell", { name: "Image Model" }).closest("tr");
+    expect(imageRow?.querySelector(".row-actions")?.querySelector("button:last-child")).toHaveAccessibleName("测试 Image Model");
+  });
+
+  test("hides all model test actions while the feature flag is off", async () => {
+    get.mockImplementation((url: string) => Promise.resolve(
+      url === "/model-tests/status"
+        ? { data: { enabled: false }, headers: {} }
+        : { data: models, headers: { etag: '"model-catalog-4"' } },
+    ));
+
+    renderPanel();
+    await screen.findByRole("cell", { name: "Text Model" });
+
+    expect(screen.queryByRole("button", { name: /测试 Text Model/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /测试 Image Model/ })).not.toBeInTheDocument();
+  });
+
   test("renders stable identity table and selected model inspector", async () => {
     renderPanel();
 
@@ -192,7 +231,10 @@ describe("supplier models panel", () => {
 
     const reload = await screen.findByRole("button", { name: "重新加载模型" });
     fireEvent.click(reload);
-    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    await waitFor(() => {
+      const modelCatalogCalls = get.mock.calls.filter(([path]) => path === `/suppliers/${supplier.supplier_id}/models`);
+      expect(modelCatalogCalls).toHaveLength(2);
+    });
     expect(screen.getByLabelText("显示名称")).toHaveValue("Text Model Remote");
     expect(screen.getByRole("button", { name: "保存新版本" })).toBeDisabled();
     fireEvent.click(screen.getByLabelText("我已确认将影响 3 处项目绑定"));

@@ -87,6 +87,28 @@ export type SupplierModelPatch = Partial<SupplierModelCreate> & {
   acknowledged_binding_count?: number;
 };
 export type WithModelEtags<T> = WithEtag<T> & { catalogEtag: string };
+export type ModelTestStatus =
+  | "queued"
+  | "submitting"
+  | "completed"
+  | "failed"
+  | "submission_outcome_unknown";
+export type ModelTestRead = {
+  test_run_id: string;
+  supplier_model_id: string;
+  capability: "text" | "image";
+  status: ModelTestStatus;
+  created_at: string;
+  started_at?: string;
+  finished_at?: string;
+  output?: string;
+  usage?: Record<string, number>;
+  media_type?: string;
+  byte_size?: number;
+  elapsed_ms?: number;
+  error_code?: string;
+  error_message?: string;
+};
 
 function withEtag<T>(response: AxiosResponse<T>): WithEtag<T> {
   return { data: response.data, etag: String(response.headers?.etag ?? "") };
@@ -245,6 +267,48 @@ export async function deleteSupplierModel(
   await apiClient.delete(`/models/${modelId}`, {
     headers: { "If-Match": combinedModelEtag(modelEtag, catalogEtag) },
   });
+}
+
+export async function getModelTestFeatureStatus(): Promise<{ enabled: boolean }> {
+  const response = await apiClient.get<{ enabled: boolean }>("/model-tests/status");
+  return response.data;
+}
+
+export async function createModelTest(
+  modelId: string,
+  prompt: string,
+  modelEtag: string,
+  idempotencyKey: string,
+): Promise<ModelTestRead> {
+  const response = await apiClient.post<ModelTestRead>(
+    `/models/${modelId}/tests`,
+    { prompt },
+    { headers: { "Idempotency-Key": idempotencyKey, "If-Match": modelEtag } },
+  );
+  return response.data;
+}
+
+export async function recoverModelTest(
+  modelId: string,
+  idempotencyKey: string,
+): Promise<ModelTestRead> {
+  const response = await apiClient.get<ModelTestRead>(
+    `/models/${modelId}/tests/by-idempotency-key`,
+    { headers: { "Idempotency-Key": idempotencyKey } },
+  );
+  return response.data;
+}
+
+export async function getModelTest(testRunId: string): Promise<ModelTestRead> {
+  const response = await apiClient.get<ModelTestRead>(`/model-tests/${testRunId}`);
+  return response.data;
+}
+
+export async function getModelTestContent(testRunId: string): Promise<Blob> {
+  const response = await apiClient.get<Blob>(`/model-tests/${testRunId}/content`, {
+    responseType: "blob",
+  });
+  return response.data;
 }
 
 export function newIdempotencyKey(prefix: string): string {

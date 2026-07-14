@@ -10,6 +10,11 @@ import {
   createSupplierModel,
   patchSupplierModel,
   deleteSupplierModel,
+  createModelTest,
+  getModelTest,
+  getModelTestContent,
+  getModelTestFeatureStatus,
+  recoverModelTest,
   restoreBuiltinSupplier,
   saveSupplierCode,
   saveSupplierConfig,
@@ -141,6 +146,33 @@ describe("supplier management API", () => {
     expect(remove).toHaveBeenCalledWith("/models/model-1", {
       headers: { "If-Match": '"model-model-1-3", "model-catalog-6"' },
     });
+  });
+
+  test("uses model ETag and header-only idempotency for model tests", async () => {
+    get
+      .mockResolvedValueOnce({ data: { enabled: true }, headers: {} })
+      .mockResolvedValueOnce({ data: { test_run_id: "run-1", status: "queued" }, headers: {} })
+      .mockResolvedValueOnce({ data: { test_run_id: "run-1", status: "completed" }, headers: {} })
+      .mockResolvedValueOnce({ data: new Blob(["png"], { type: "image/png" }), headers: {} });
+    post.mockResolvedValue({ data: { test_run_id: "run-1", status: "queued" }, headers: {} });
+
+    await getModelTestFeatureStatus();
+    await createModelTest("model-1", "hello", '"model-model-1-2"', "test-key-1");
+    await recoverModelTest("model-1", "test-key-1");
+    await getModelTest("run-1");
+    await getModelTestContent("run-1");
+
+    expect(get).toHaveBeenNthCalledWith(1, "/model-tests/status");
+    expect(post).toHaveBeenCalledWith(
+      "/models/model-1/tests",
+      { prompt: "hello" },
+      { headers: { "Idempotency-Key": "test-key-1", "If-Match": '"model-model-1-2"' } },
+    );
+    expect(get).toHaveBeenNthCalledWith(2, "/models/model-1/tests/by-idempotency-key", {
+      headers: { "Idempotency-Key": "test-key-1" },
+    });
+    expect(get).toHaveBeenNthCalledWith(3, "/model-tests/run-1");
+    expect(get).toHaveBeenNthCalledWith(4, "/model-tests/run-1/content", { responseType: "blob" });
   });
 
   test("uses relative API paths and captures supplier ETag", async () => {

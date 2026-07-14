@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { Button, Checkbox, Input, Modal, Select } from "antd";
+import { Button, Checkbox, Input, Modal, Select, Tooltip } from "antd";
 import { FormEvent, useMemo, useState } from "react";
 import {
   createSupplierModel,
   deleteSupplierModel,
+  getModelTestFeatureStatus,
   listSupplierModels,
   newIdempotencyKey,
   patchSupplierModel,
@@ -12,9 +13,16 @@ import {
   type SupplierRead,
 } from "./api";
 import { ModelInspector } from "./ModelInspector";
+import { ModelTestDialog } from "./ModelTestDialog";
 import { toManagementError, type ManagementError } from "./managementErrors";
 
 const CAPABILITY_LABEL = { text: "文本", image: "图片", video: "视频" } as const;
+
+function modelTestDisabledReason(supplier: SupplierRead, model: SupplierModelRead): string {
+  if (!supplier.enabled) return "请先启用供应商";
+  if (!model.enabled) return "请先启用模型";
+  return "";
+}
 
 type ModelDraft = {
   displayName: string;
@@ -40,6 +48,7 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<SupplierModelRead | null>(null);
   const [deleting, setDeleting] = useState<SupplierModelRead | null>(null);
+  const [testing, setTesting] = useState<SupplierModelRead | null>(null);
   const [draft, setDraft] = useState<ModelDraft>(EMPTY_DRAFT);
   const [acknowledged, setAcknowledged] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -47,6 +56,11 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
   const models = useQuery({
     queryKey: ["supplier-models", supplier.supplier_id],
     queryFn: () => listSupplierModels(supplier.supplier_id),
+  });
+  const modelTests = useQuery({
+    queryKey: ["model-test-feature-status"],
+    queryFn: getModelTestFeatureStatus,
+    staleTime: 30_000,
   });
   const catalogEtag = models.data?.etag || `"model-catalog-${supplier.model_catalog_revision}"`;
   const rows = useMemo(
@@ -227,7 +241,10 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
           <div className="model-table-scroll">
             <table className="model-table">
               <thead><tr><th>显示名称</th><th>供应商模型名</th><th>能力</th><th>来源</th><th>版本 / 修订</th><th>启用状态</th><th>操作</th></tr></thead>
-              <tbody>{rows.map((model) => <tr key={model.supplier_model_id} className={selectedId === model.supplier_model_id ? "selected" : ""}><td>{model.display_name}</td><td><code>{model.provider_model_name}</code></td><td>{CAPABILITY_LABEL[model.capability]}</td><td>{model.source === "built_in" ? "内置" : "Overlay"}</td><td>r{model.revision}</td><td>{model.enabled ? "已启用" : "已停用"}</td><td><div className="row-actions"><Button size="small" aria-label={`查看 ${model.display_name}`} onClick={() => setSelectedId(model.supplier_model_id)}>查看</Button><Button size="small" aria-label={`编辑 ${model.display_name}`} onClick={() => openEdit(model)}>编辑</Button><Button size="small" aria-label={`${model.enabled ? "停用" : "启用"} ${model.display_name}`} disabled={saving} onClick={() => void toggle(model)}>{model.enabled ? "停用" : "启用"}</Button><Button size="small" danger aria-label={`删除 ${model.display_name}`} disabled={model.source === "built_in" || model.binding_count > 0} onClick={() => setDeleting(model)}>删除</Button></div></td></tr>)}</tbody>
+              <tbody>{rows.map((model) => {
+                const testDisabledReason = modelTestDisabledReason(supplier, model);
+                return <tr key={model.supplier_model_id} className={selectedId === model.supplier_model_id ? "selected" : ""}><td>{model.display_name}</td><td><code>{model.provider_model_name}</code></td><td>{CAPABILITY_LABEL[model.capability]}</td><td>{model.source === "built_in" ? "内置" : "Overlay"}</td><td>r{model.revision}</td><td>{model.enabled ? "已启用" : "已停用"}</td><td><div className="row-actions"><Button size="small" aria-label={`查看 ${model.display_name}`} onClick={() => setSelectedId(model.supplier_model_id)}>查看</Button><Button size="small" aria-label={`编辑 ${model.display_name}`} onClick={() => openEdit(model)}>编辑</Button><Button size="small" aria-label={`${model.enabled ? "停用" : "启用"} ${model.display_name}`} disabled={saving} onClick={() => void toggle(model)}>{model.enabled ? "停用" : "启用"}</Button><Button size="small" danger aria-label={`删除 ${model.display_name}`} disabled={model.source === "built_in" || model.binding_count > 0} onClick={() => setDeleting(model)}>删除</Button>{modelTests.data?.enabled && model.capability !== "video" ? <Tooltip title={testDisabledReason}><span><Button size="small" aria-label={`测试 ${model.display_name}`} disabled={Boolean(testDisabledReason)} onClick={() => setTesting(model)}>测试</Button></span></Tooltip> : null}</div></td></tr>;
+              })}</tbody>
             </table>
           </div>
         ) : null}
@@ -236,6 +253,7 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
       <Modal title="新增模型" open={createOpen} footer={null} onCancel={() => setCreateOpen(false)} destroyOnHidden>{form("create")}</Modal>
       <Modal title="编辑模型并保存新版本" open={Boolean(editing)} footer={null} onCancel={() => setEditing(null)} destroyOnHidden>{editing ? form("edit") : null}</Modal>
       <Modal title="确认删除模型" open={Boolean(deleting)} onCancel={() => setDeleting(null)} onOk={() => void remove()} okText="确认删除模型" cancelText="取消" okButtonProps={{ danger: true }} confirmLoading={saving} destroyOnHidden><p>仅未绑定且没有快照引用的 Overlay 模型可以物理删除。此操作不可撤销。</p></Modal>
+      {testing ? <ModelTestDialog supplier={supplier} model={testing} open onClose={() => setTesting(null)} /> : null}
     </section>
   );
 }
