@@ -164,6 +164,18 @@ class SupplierCredentialStore:
                 references.append((row["job_id"], row["internal_status"]))
         return references
 
+    def active_model_test_references(self, credential_version_id):
+        rows = self.conn.execute(
+            """
+            SELECT test_run_id, status
+            FROM supplier_model_test_runs
+            WHERE credential_version_id = ? AND status IN ('queued','submitting')
+            ORDER BY created_at, test_run_id
+            """,
+            (credential_version_id,),
+        ).fetchall()
+        return [(row["test_run_id"], row["status"]) for row in rows]
+
     def delete(self, supplier_id, expected_revision, *, force=False):
         supplier = self.product_store.get_supplier(supplier_id)
         if supplier is None:
@@ -175,8 +187,9 @@ class SupplierCredentialStore:
             return False
         record = self.get(credential_version_id)
         active_references = self.active_job_references(credential_version_id)
-        if active_references and not force:
-            raise CredentialInUse(len(active_references))
+        active_model_tests = self.active_model_test_references(credential_version_id)
+        if (active_references or active_model_tests) and not force:
+            raise CredentialInUse(len(active_references) + len(active_model_tests))
         operation_id = uuid.uuid4().hex
         updated_at = now_iso()
         with self.conn:
@@ -209,6 +222,38 @@ class SupplierCredentialStore:
                     WHERE job_id=?
                     """,
                     [(updated_at, updated_at, job_id) for job_id in fail_ids],
+                )
+            queued_test_ids = [
+                test_run_id
+                for test_run_id, status in active_model_tests
+                if status == "queued"
+            ]
+            submitting_test_ids = [
+                test_run_id
+                for test_run_id, status in active_model_tests
+                if status == "submitting"
+            ]
+            if queued_test_ids:
+                self.conn.executemany(
+                    """
+                    UPDATE supplier_model_test_runs
+                    SET status='failed', error_code='CREDENTIAL_REVOKED',
+                        error_message='credential was force deleted', finished_at=?
+                    WHERE test_run_id=? AND status='queued' AND attempt_count=0
+                    """,
+                    [(updated_at, test_run_id) for test_run_id in queued_test_ids],
+                )
+            if submitting_test_ids:
+                self.conn.executemany(
+                    """
+                    UPDATE supplier_model_test_runs
+                    SET status='submission_outcome_unknown',
+                        error_code='SUBMISSION_OUTCOME_UNKNOWN',
+                        error_message='credential was force deleted during submission',
+                        lease_owner='', lease_expires_at='', finished_at=?
+                    WHERE test_run_id=? AND status='submitting' AND attempt_count=1
+                    """,
+                    [(updated_at, test_run_id) for test_run_id in submitting_test_ids],
                 )
             self.conn.execute(
                 """
