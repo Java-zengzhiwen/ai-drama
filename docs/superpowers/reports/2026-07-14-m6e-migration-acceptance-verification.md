@@ -152,4 +152,9 @@ Final independent review of `f08dbcac6df3b401dc99f17f3329826b6933bb03`:
 
 - Specification/acceptance: `PASS`; blockers `NONE`; high findings `NONE`.
 - Architecture/technical/security/release: `PASS`; blockers `NONE`; high findings `NONE`.
-- The final report-only descendant must be confirmed by both reviewers before handoff.
+
+### Final Report-Bearing Descendant Confirmation
+
+- Specification/acceptance reviewer confirmed commit `d167b36344268716958f149444252c4a597666c9`: `PASS`; blockers `NONE`; high findings `NONE`.
+- Architecture/technical/security/release reviewer confirmed commit `d167b36344268716958f149444252c4a597666c9`: `PASS`; blockers `NONE`; high findings `NONE`.
+- This report-only descendant is approved for handoff and merge review.
