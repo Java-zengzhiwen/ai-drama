@@ -107,6 +107,7 @@ class GenerationPoller:
         return eligible, len(jobs) - len(eligible)
 
     def _rate_limited_jobs(self, jobs, *, mutate_unavailable=True):
+        legacy_counts = {}
         selected = []
         for job in jobs:
             bucket = "legacy:%s" % job.provider
@@ -121,8 +122,13 @@ class GenerationPoller:
                         )
                         continue
                     bucket = "unavailable:%s" % job.snapshot_hash
-            if not self.rate_limiter.acquire(bucket, rpm=self.rpm):
-                continue
+            if job.snapshot_hash:
+                if not self.rate_limiter.acquire(bucket, rpm=self.rpm):
+                    continue
+            else:
+                if legacy_counts.get(bucket, 0) >= self.rpm:
+                    continue
+                legacy_counts[bucket] = legacy_counts.get(bucket, 0) + 1
             selected.append(job)
         return selected
 
