@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { createPinnedLookup } from "./pinned-lookup.mjs";
 
 
 function invoke(compiledCode, mode = "execution", payload = {}) {
@@ -25,6 +26,38 @@ function invoke(compiledCode, mode = "execution", payload = {}) {
   });
   return JSON.parse(result.stdout);
 }
+
+
+test("pinned lookup returns all resolved addresses when Node requests all", async () => {
+  const records = [
+    { address: "203.0.113.10", family: 4 },
+    { address: "2001:db8::10", family: 6 },
+  ];
+  const lookup = createPinnedLookup(records);
+
+  const result = await new Promise((resolve, reject) => {
+    lookup("api.example.test", { all: true }, (error, addresses) => {
+      if (error) reject(error);
+      else resolve(addresses);
+    });
+  });
+
+  assert.deepEqual(result, records);
+});
+
+
+test("pinned lookup returns one address for the legacy callback contract", async () => {
+  const lookup = createPinnedLookup([{ address: "203.0.113.10", family: 4 }]);
+
+  const result = await new Promise((resolve, reject) => {
+    lookup("api.example.test", {}, (error, address, family) => {
+      if (error) reject(error);
+      else resolve({ address, family });
+    });
+  });
+
+  assert.deepEqual(result, { address: "203.0.113.10", family: 4 });
+});
 
 
 test("supplier context cannot read process", () => {

@@ -6,6 +6,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import https from "node:https";
 import net from "node:net";
+import { createPinnedLookup } from "./pinned-lookup.mjs";
 
 
 function respond(payload) {
@@ -117,12 +118,13 @@ async function resolvePublic(hostname) {
 function httpsRequest(url, options, records) {
   return new Promise((resolve, reject) => {
     const allowedAddresses = new Set(records.map(record => record.address));
+    const lookup = createPinnedLookup(records);
     const requestHandle = https.request(url, {
       method: String(options?.method || "GET"),
       headers: options?.headers || {},
       timeout: Math.max(1, Number(request.timeoutMs)),
       servername: url.hostname,
-      lookup: (_host, _options, callback) => callback(null, records[0].address, records[0].family),
+      lookup,
     }, response => {
       if (response.statusCode >= 300 && response.statusCode < 400) {
         response.resume();

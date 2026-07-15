@@ -4,6 +4,7 @@ import json
 import os
 import signal
 import subprocess
+import tempfile
 
 
 WORKER_PROTOCOL_VERSION = "1"
@@ -81,6 +82,9 @@ class SupplierWorker:
                 "PATH": os.environ.get("PATH", ""),
                 "LANG": "C.UTF-8",
                 "TZ": "UTC",
+                # Keep downloaded media inside the exact root validated by the
+                # Python gateway without forwarding any supplier secrets.
+                "TMPDIR": tempfile.gettempdir(),
             },
             start_new_session=True,
         )
