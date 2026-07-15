@@ -156,4 +156,4 @@ ARCHITECTURE_HIGH_FINDINGS=NONE
 REAL_PROVIDER_REQUESTS_DURING_REVIEW=false
 ```
 
-Both reviewers approved the implementation for handoff. The report-bearing descendant will be confirmed read-only after this review result is committed; that confirmation does not change the reviewed implementation.
+Both reviewers approved the implementation for handoff. They subsequently confirmed exact report-bearing descendant `348d5e22b136b07c6bcea16570e0ac5574acea96` as PASS, with blockers NONE, high findings NONE, and `REPORT_ONLY_DESCENDANT=true`. That descendant changes no reviewed implementation or runtime behavior.
