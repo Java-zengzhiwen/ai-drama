@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import https from "node:https";
 import net from "node:net";
 import { createPinnedLookup } from "./pinned-lookup.mjs";
+import { buildMultipartBody, decodeBase64 } from "./media-helpers.mjs";
 
 
 function respond(payload) {
@@ -115,7 +116,7 @@ async function resolvePublic(hostname) {
   return records;
 }
 
-function httpsRequest(url, options, records) {
+function httpsRequest(url, options, records, requestBody = undefined) {
   return new Promise((resolve, reject) => {
     const allowedAddresses = new Set(records.map(record => record.address));
     const lookup = createPinnedLookup(records);
@@ -155,9 +156,62 @@ function httpsRequest(url, options, records) {
     });
     requestHandle.on("timeout", () => requestHandle.destroy(Object.assign(new Error("SUPPLIER_WORKER_TIMEOUT"), { code: "SUPPLIER_WORKER_TIMEOUT" })));
     requestHandle.on("error", reject);
-    if (options?.body !== undefined) requestHandle.write(JSON.stringify(options.body));
+    if (requestBody !== undefined) requestHandle.write(requestBody);
+    else if (options?.body !== undefined) requestHandle.write(JSON.stringify(options.body));
     requestHandle.end();
   });
+}
+
+async function writeMediaReference(buffer, mediaType) {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "ai-drama-worker-media-"));
+  const localFile = path.join(directory, "result.bin");
+  await fs.writeFile(localFile, buffer, { mode: 0o600 });
+  return {
+    local_file: localFile,
+    sha256: crypto.createHash("sha256").update(buffer).digest("hex"),
+    size: buffer.length,
+    media_type: mediaType,
+  };
+}
+
+const declaredInputUrls = new Set(
+  (Array.isArray(request.payload?.request?.input_images)
+    ? request.payload.request.input_images
+    : [])
+    .filter(value => typeof value === "string" && value.startsWith("https://")),
+);
+
+async function downloadDeclaredInput(value) {
+  const raw = String(value || "");
+  if (!declaredInputUrls.has(raw)) {
+    const error = new Error("HTTP_DESTINATION_NOT_ALLOWED");
+    error.code = "HTTP_DESTINATION_NOT_ALLOWED";
+    throw error;
+  }
+  const url = new URL(raw);
+  if (url.protocol !== "https:" || url.port && url.port !== "443") {
+    const error = new Error("HTTP_DESTINATION_NOT_ALLOWED");
+    error.code = "HTTP_DESTINATION_NOT_ALLOWED";
+    throw error;
+  }
+  const records = await resolvePublic(url.hostname);
+  const { response, buffer } = await httpsRequest(
+    url,
+    { method: "GET", responseType: "bytes" },
+    records,
+  );
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    const error = new Error("PROVIDER_HTTP_ERROR");
+    error.code = "PROVIDER_HTTP_ERROR";
+    throw error;
+  }
+  const mediaType = String(response.headers["content-type"] || "").split(";", 1)[0].toLowerCase();
+  if (!/^image\/(?:png|jpeg|webp)$/.test(mediaType)) {
+    const error = new Error("SUPPLIER_INPUT_MEDIA_INVALID");
+    error.code = "SUPPLIER_INPUT_MEDIA_INVALID";
+    throw error;
+  }
+  return { buffer, mediaType };
 }
 
 const hostHttpRequest = async options => {
@@ -180,23 +234,53 @@ const hostHttpRequest = async options => {
   for (const [key, value] of Object.entries(options?.query || {})) {
     url.searchParams.set(key, String(value));
   }
+  let requestBody;
+  let requestOptions = options;
+  if (options?.multipart) {
+    const files = Array.isArray(options.multipart.files) ? options.multipart.files : [];
+    if (files.length === 0 || files.length > 16) {
+      const error = new Error("SUPPLIER_MULTIPART_INVALID");
+      error.code = "SUPPLIER_MULTIPART_INVALID";
+      throw error;
+    }
+    const resolvedFiles = [];
+    for (const [index, file] of files.entries()) {
+      const downloaded = await downloadDeclaredInput(file?.url);
+      resolvedFiles.push({
+        fieldName: String(file?.fieldName || "image[]"),
+        filename: `image-${index + 1}.${downloaded.mediaType === "image/jpeg" ? "jpg" : downloaded.mediaType.slice(6)}`,
+        mediaType: downloaded.mediaType,
+        data: downloaded.buffer,
+      });
+    }
+    const boundary = `ai-drama-${crypto.randomBytes(18).toString("hex")}`;
+    requestBody = buildMultipartBody(
+      { fields: options.multipart.fields || {}, files: resolvedFiles },
+      boundary,
+      Number(request.maxMediaBytes || 512 * 1024 * 1024),
+    );
+    requestOptions = {
+      ...options,
+      body: undefined,
+      headers: {
+        ...(options.headers || {}),
+        "Content-Type": `multipart/form-data; boundary=${boundary}`,
+        "Content-Length": String(requestBody.length),
+      },
+    };
+  }
   const records = await resolvePublic(url.hostname);
-  const { response, buffer } = await httpsRequest(url, options, records);
+  const { response, buffer } = await httpsRequest(url, requestOptions, records, requestBody);
   if (response.statusCode < 200 || response.statusCode >= 300) {
     const error = new Error("PROVIDER_HTTP_ERROR");
     error.code = "PROVIDER_HTTP_ERROR";
     throw error;
   }
   if (options?.responseType === "bytes") {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "ai-drama-worker-media-"));
-    const localFile = path.join(directory, "result.bin");
-    await fs.writeFile(localFile, buffer, { mode: 0o600 });
-    return {
-      local_file: localFile,
-      sha256: crypto.createHash("sha256").update(buffer).digest("hex"),
-      size: buffer.length,
-      media_type: response.headers["content-type"] || "application/octet-stream",
-    };
+    return writeMediaReference(
+      buffer,
+      response.headers["content-type"] || "application/octet-stream",
+    );
   }
   try { return JSON.parse(buffer.toString("utf8")); }
   catch {
@@ -204,6 +288,24 @@ const hostHttpRequest = async options => {
     error.code = "PROVIDER_RESPONSE_MALFORMED";
     throw error;
   }
+};
+const hostMediaRequest = async options => {
+  if (options?.operation !== "decodeBase64") {
+    const error = new Error("SUPPLIER_MEDIA_OPERATION_INVALID");
+    error.code = "SUPPLIER_MEDIA_OPERATION_INVALID";
+    throw error;
+  }
+  const mediaType = String(options.mediaType || "").toLowerCase();
+  if (!/^image\/(?:png|jpeg|webp)$/.test(mediaType)) {
+    const error = new Error("SUPPLIER_INPUT_MEDIA_INVALID");
+    error.code = "SUPPLIER_INPUT_MEDIA_INVALID";
+    throw error;
+  }
+  const buffer = decodeBase64(
+    options.value,
+    Number(request.maxMediaBytes || 512 * 1024 * 1024),
+  );
+  return writeMediaReference(buffer, mediaType);
 };
 const context = vm.createContext(
   {
@@ -222,6 +324,7 @@ try {
     globalThis.payload = JSON.parse(payloadJson);
     globalThis.operation = operationName;
     globalThis.__httpQueue = [];
+    globalThis.__mediaQueue = [];
     const denyNetwork = async () => {
       const error = new Error(networkErrorCode);
       error.code = networkErrorCode;
@@ -230,8 +333,16 @@ try {
     const queueNetwork = options => new Promise((resolve, reject) => {
       globalThis.__httpQueue.push({ options, resolve, reject });
     });
+    const queueMedia = options => new Promise((resolve, reject) => {
+      globalThis.__mediaQueue.push({ options, resolve, reject });
+    });
     globalThis.helpers = Object.freeze({
       http: Object.freeze({ request: executionMode ? queueNetwork : denyNetwork }),
+      media: Object.freeze({
+        decodeBase64: executionMode
+          ? (value, mediaType) => queueMedia({ operation: "decodeBase64", value, mediaType })
+          : denyNetwork,
+      }),
       log: Object.freeze({ info: () => undefined, warning: () => undefined }),
     });
   `, { filename: "supplier-bootstrap.cjs" }).runInContext(
@@ -260,6 +371,12 @@ try {
       try { pending.resolve(await hostHttpRequest(pending.options)); }
       catch (error) { pending.reject({ code: error?.code || "SUPPLIER_EXECUTION_FAILED" }); }
     } else {
+      const pendingMedia = context.__mediaQueue.shift();
+      if (pendingMedia) {
+        try { pendingMedia.resolve(await hostMediaRequest(pendingMedia.options)); }
+        catch (error) { pendingMedia.reject({ code: error?.code || "SUPPLIER_EXECUTION_FAILED" }); }
+        continue;
+      }
       if (Date.now() >= deadline) {
         const error = new Error("SUPPLIER_WORKER_TIMEOUT");
         error.code = "SUPPLIER_WORKER_TIMEOUT";
