@@ -18,6 +18,7 @@ import {
   decodeDeclaredImageReference,
   providerHttpErrorCode,
   validateImageBuffer,
+  validateOperationMediaBuffer,
 } from "./media-helpers.mjs";
 
 
@@ -220,12 +221,12 @@ const hostHttpRequest = async options => {
   }
   const rawUrl = String(options?.url || "");
   const url = new URL(rawUrl);
-  const exactProviderResult = providerResultUrls.has(rawUrl) && !allowedOrigins.has(url.origin);
-  if (exactProviderResult) authorizeProviderResultDownload(options, providerResultUrls);
+  const providerResultDownload = providerResultUrls.has(rawUrl);
+  if (providerResultDownload) authorizeProviderResultDownload(options, providerResultUrls);
   if (
     url.protocol !== "https:"
     || url.port && url.port !== "443"
-    || (!allowedOrigins.has(url.origin) && !exactProviderResult)
+    || (!allowedOrigins.has(url.origin) && !providerResultDownload)
   ) {
     const error = new Error("HTTP_DESTINATION_NOT_ALLOWED");
     error.code = "HTTP_DESTINATION_NOT_ALLOWED";
@@ -294,7 +295,7 @@ const hostHttpRequest = async options => {
   }
   if (options?.responseType === "bytes") {
     const mediaType = String(response.headers["content-type"] || "").split(";", 1)[0].toLowerCase();
-    if (exactProviderResult) validateImageBuffer(buffer, mediaType);
+    validateOperationMediaBuffer(buffer, mediaType, String(request.operation));
     return writeMediaReference(
       buffer,
       mediaType || "application/octet-stream",

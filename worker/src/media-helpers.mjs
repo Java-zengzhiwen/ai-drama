@@ -19,6 +19,15 @@ export function validateImageBuffer(buffer, mediaType) {
   return buffer;
 }
 
+export function validateOperationMediaBuffer(buffer, mediaType, operation) {
+  if (operation !== "imageRequest") return buffer;
+  const normalized = String(mediaType || "").split(";", 1)[0].toLowerCase();
+  if (!/^image\/(?:png|jpeg|webp)$/.test(normalized)) {
+    throw codedError("PROVIDER_RESPONSE_MALFORMED");
+  }
+  return validateImageBuffer(buffer, normalized);
+}
+
 export function decodeBase64(value, mediaType, maxBytes) {
   if (
     typeof value !== "string"

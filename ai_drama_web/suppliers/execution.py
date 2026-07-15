@@ -86,7 +86,7 @@ class SnapshotExecutionGateway:
                     if len(data) != int(value.get("size", -1)) or hashlib.sha256(data).hexdigest() != value.get("sha256"):
                         raise SupplierExecutionError("SUPPLIER_MEDIA_REFERENCE_INVALID")
                     media_type = str(value.get("media_type") or "")
-                    if media_type.startswith("image/") and not image_bytes_match_media_type(
+                    if operation == "imageRequest" and not image_bytes_match_media_type(
                         data, media_type
                     ):
                         raise SupplierExecutionError("PROVIDER_RESPONSE_MALFORMED")

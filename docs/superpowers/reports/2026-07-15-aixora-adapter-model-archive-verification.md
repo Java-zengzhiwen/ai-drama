@@ -45,11 +45,11 @@ All automated verification ran with real Provider requests disabled and network 
 
 | Verification | Result |
 | --- | --- |
-| Python pytest | 690 passed, 1 skipped |
+| Python pytest | 691 passed, 1 skipped |
 | Web Vitest | 109 passed, 4 skipped |
 | Web production build | PASS |
 | Playwright E2E | 11 passed |
-| Supplier Worker tests | 24 passed |
+| Supplier Worker tests | 26 passed |
 | AIXORA semantic verifier | 10/10 PASS — `AIXORA_MODEL_ARCHIVE_PASS` |
 | Model-level provider-test verifier | 15/15 PASS — `MODEL_LEVEL_PROVIDER_TESTS_PASS` |
 | Migration verifier | valid, 81 tracked files |
@@ -112,9 +112,9 @@ The configured supplier is immediately available to current project workflows af
 
 - Supplier code is explicitly trusted local user-edited code. Its VM context exposes no import, `require`, `process`, native fetch, filesystem, environment, socket, or subprocess API. This is an API-isolation boundary, not a security claim that `node:vm` safely executes hostile code.
 - The Worker uses Node's permission model as defense in depth: read access is limited to Worker sources, write access to the process temporary root, and child processes and Worker threads are not granted.
-- Credentials enter only the selected immutable execution snapshot and the request Authorization header.
+- The immutable snapshot stores only the selected credential version ID. Plaintext is read from the credential store at execution time, injected into that Worker invocation, and used only to build the request Authorization header.
 - The Worker process receives a cleaned environment and the supplier VM cannot read host media globals.
-- Provider result URLs are exact, one-shot, GET-only byte downloads without supplier-controlled request metadata; image bytes must match the declared PNG/JPEG/WebP magic before persistence.
+- Same-origin and cross-origin Provider result URLs are exact, one-shot, GET-only byte downloads without supplier-controlled request metadata. Every `imageRequest` byte response must declare PNG/JPEG/WebP and match its magic before Worker return and Python persistence; frozen `videoFetch` continues to accept its non-image media response.
 - Validation, pytest, Vitest, Playwright, Worker tests, and both verifiers make zero real provider requests.
 - Tracked bearer/API-key hits were classified as variable interpolation, redaction logic, documentation placeholders, or test fixtures; no live credential value was found.
 - `runtime-data`, databases, real results, and credential files remain outside Git.
@@ -139,7 +139,9 @@ The correction set addresses every blocker/high finding:
 - enforces per-file and aggregate input limits before multipart concatenation;
 - moves model archive/delete reference checking and mutation into one immediate database transaction;
 - validates image magic in both Worker and Python persistence paths;
+- preserves frozen helper v1 video-result downloads while enforcing image media type and magic for every helper v2 `imageRequest`, including same-origin result URLs;
 - narrows verifier and report claims to the offline paths actually exercised;
 - updates the browser fixture to return a valid bounded PNG through helper v2.
+- proves the shared 1x1 PNG fixture has valid chunk CRCs and a decodable zlib image stream.
 
 Final specification/acceptance and architecture/technical/security re-review of the correction commit is pending.

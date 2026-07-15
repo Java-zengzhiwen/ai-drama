@@ -157,7 +157,7 @@ def test_text_to_image_accepts_base64_and_url_results(artifact):
         artifact,
         "imageRequest",
         payload("gpt-image-2", request={"prompt": "a cup", "size": "1024x1024", "input_images": []}),
-        [{"data": [{"b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WlS8AAAAASUVORK5CYII="}]}],
+        [{"data": [{"b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII="}]}],
     )
     url_result = invoke(
         artifact,
@@ -189,7 +189,7 @@ def test_image_edit_uses_ordered_declared_inputs_and_safe_multipart(artifact):
             "gpt-image-2",
             request={"prompt": "edit", "size": "1024x1024", "quality": "high", "input_images": images},
         ),
-        [{"data": [{"b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WlS8AAAAASUVORK5CYII="}]}],
+        [{"data": [{"b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII="}]}],
     )
 
     assert result["ok"] is True

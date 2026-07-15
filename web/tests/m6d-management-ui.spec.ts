@@ -36,7 +36,7 @@ export async function textRequest(request: { prompt: string }) {
 }
 export async function imageRequest(_request: unknown, helpers: any) {
   return helpers.media.decodeBase64(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WlS8AAAAASUVORK5CYII=",
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=",
     "image/png"
   );
 }`;
