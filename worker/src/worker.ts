@@ -7,7 +7,12 @@ import crypto from "node:crypto";
 import https from "node:https";
 import net from "node:net";
 import { createPinnedLookup } from "./pinned-lookup.mjs";
-import { buildMultipartBody, decodeBase64 } from "./media-helpers.mjs";
+import {
+  buildMultipartBody,
+  collectHttpsUrls,
+  decodeBase64,
+  decodeDeclaredImageReference,
+} from "./media-helpers.mjs";
 
 
 function respond(payload) {
@@ -174,19 +179,26 @@ async function writeMediaReference(buffer, mediaType) {
   };
 }
 
-const declaredInputUrls = new Set(
+const declaredInputReferences = new Set(
   (Array.isArray(request.payload?.request?.input_images)
     ? request.payload.request.input_images
     : [])
-    .filter(value => typeof value === "string" && value.startsWith("https://")),
+    .filter(value => typeof value === "string"),
 );
+const providerResultUrls = new Set();
 
 async function downloadDeclaredInput(value) {
   const raw = String(value || "");
-  if (!declaredInputUrls.has(raw)) {
+  if (!declaredInputReferences.has(raw)) {
     const error = new Error("HTTP_DESTINATION_NOT_ALLOWED");
     error.code = "HTTP_DESTINATION_NOT_ALLOWED";
     throw error;
+  }
+  if (raw.startsWith("data:")) {
+    return decodeDeclaredImageReference(
+      raw,
+      Number(request.maxMediaBytes || 512 * 1024 * 1024),
+    );
   }
   const url = new URL(raw);
   if (url.protocol !== "https:" || url.port && url.port !== "443") {
@@ -226,7 +238,12 @@ const hostHttpRequest = async options => {
     throw error;
   }
   const url = new URL(String(options?.url || ""));
-  if (url.protocol !== "https:" || url.port && url.port !== "443" || !allowedOrigins.has(url.origin)) {
+  const exactProviderResult = providerResultUrls.has(url.toString());
+  if (
+    url.protocol !== "https:"
+    || url.port && url.port !== "443"
+    || (!allowedOrigins.has(url.origin) && !exactProviderResult)
+  ) {
     const error = new Error("HTTP_DESTINATION_NOT_ALLOWED");
     error.code = "HTTP_DESTINATION_NOT_ALLOWED";
     throw error;
@@ -282,7 +299,11 @@ const hostHttpRequest = async options => {
       response.headers["content-type"] || "application/octet-stream",
     );
   }
-  try { return JSON.parse(buffer.toString("utf8")); }
+  try {
+    const parsed = JSON.parse(buffer.toString("utf8"));
+    for (const value of collectHttpsUrls(parsed)) providerResultUrls.add(value);
+    return parsed;
+  }
   catch {
     const error = new Error("PROVIDER_RESPONSE_MALFORMED");
     error.code = "PROVIDER_RESPONSE_MALFORMED";

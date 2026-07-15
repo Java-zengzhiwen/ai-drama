@@ -4,7 +4,12 @@ import { readFileSync, rmSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createPinnedLookup } from "./pinned-lookup.mjs";
-import { buildMultipartBody, decodeBase64 } from "./media-helpers.mjs";
+import {
+  buildMultipartBody,
+  collectHttpsUrls,
+  decodeBase64,
+  decodeDeclaredImageReference,
+} from "./media-helpers.mjs";
 
 
 function invoke(compiledCode, mode = "execution", payload = {}) {
@@ -80,6 +85,28 @@ test("multipart builder accepts only fixed safe scalar fields", () => {
   assert.throws(
     () => buildMultipartBody({ fields: { authorization: "secret" }, files: [] }, "boundary", 1024),
     error => error.code === "SUPPLIER_MULTIPART_INVALID",
+  );
+});
+
+
+test("declared data image is decoded without exposing Buffer to supplier code", () => {
+  const decoded = decodeDeclaredImageReference(
+    "data:image/png;base64,ZmFrZS1wbmc=",
+    32,
+  );
+  assert.equal(decoded.mediaType, "image/png");
+  assert.deepEqual(decoded.buffer, Buffer.from("fake-png"));
+  assert.throws(
+    () => decodeDeclaredImageReference("data:text/plain;base64,ZmFrZQ==", 32),
+    error => error.code === "SUPPLIER_INPUT_MEDIA_INVALID",
+  );
+});
+
+
+test("provider result URL collection returns only exact HTTPS values", () => {
+  assert.deepEqual(
+    collectHttpsUrls({ data: [{ url: "https://cdn.example.test/result.png?sig=x" }], ignored: "http://bad.test" }),
+    ["https://cdn.example.test/result.png?sig=x"],
   );
 });
 

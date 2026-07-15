@@ -49,11 +49,13 @@ def custom_supplier_template(slug, display_name):
  * - payload.request：平台中立的本次请求
  * - payload.config：网页“配置”页保存的当前不可变配置
  * - payload.credential：网页“密钥”页选中的凭据，只能用于认证头，不得返回或记录
- * - helpers.http.request：唯一网络出口，负责目的地址、重定向、大小和超时限制
+ * - helpers.http.request：唯一网络出口，负责目的地址、重定向、大小和超时限制；图生图可用
+ *   multipart.fields 和 multipart.files，但 files.url 必须原样来自 payload.request.input_images
+ * - helpers.media.decodeBase64：受限图片 base64 解码入口，返回本地媒体引用；不得自行使用 Buffer
  *
  * 返回值约定：
  * - textRequest: {{ output: "规范化文本", usage: {{ input_tokens, output_tokens, total_tokens }} }}
- * - imageRequest: 返回 helpers.http.request 下载得到的本地媒体引用和 media_type
+ * - imageRequest: 返回 helpers.http.request 下载或 helpers.media.decodeBase64 得到的本地媒体引用
  * - videoSubmit: {{ video_id, status: "queued" }}；videoPoll 必须用 video_id，不能用 task_id
  * 供应商失败应抛出带稳定大写 code 的错误；不得吞掉错误，也不得返回原始认证头或签名 URL。
  */

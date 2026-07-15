@@ -20,6 +20,28 @@ export function decodeBase64(value, maxBytes) {
   return decoded;
 }
 
+export function decodeDeclaredImageReference(value, maxBytes) {
+  const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)$/i.exec(
+    String(value || ""),
+  );
+  if (!match) throw codedError("SUPPLIER_INPUT_MEDIA_INVALID");
+  return {
+    mediaType: match[1].toLowerCase(),
+    buffer: decodeBase64(match[2], maxBytes),
+  };
+}
+
+export function collectHttpsUrls(value, output = []) {
+  if (typeof value === "string") {
+    if (value.startsWith("https://")) output.push(value);
+  } else if (Array.isArray(value)) {
+    for (const item of value) collectHttpsUrls(item, output);
+  } else if (value && typeof value === "object") {
+    for (const item of Object.values(value)) collectHttpsUrls(item, output);
+  }
+  return output;
+}
+
 function safeToken(value, code = "SUPPLIER_MULTIPART_INVALID") {
   const token = String(value || "");
   if (!token || /[\r\n"\\]/.test(token)) throw codedError(code);
