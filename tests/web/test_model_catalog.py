@@ -214,6 +214,43 @@ def test_unreferenced_overlay_can_be_deleted_with_history(tmp_path):
     assert store.get_supplier_model_revision(model.current_model_revision_id) is None
 
 
+def test_archived_overlay_is_hidden_but_retained_and_replay_is_idempotent(tmp_path):
+    _, store, catalog = _catalog(tmp_path)
+    supplier = store.list_suppliers()[0]
+    model, _ = catalog.create_overlay(
+        supplier.supplier_id,
+        provider_model_name="historical",
+        display_name="Historical",
+        capability="text",
+        definition={},
+        expected_catalog_revision=0,
+        idempotency_key="historical",
+    )
+
+    archived = store.archive_supplier_model(
+        model.supplier_model_id,
+        expected_catalog_revision=1,
+        expected_model_revision=1,
+        archive_reason="historical_snapshot",
+    )
+    replayed = store.archive_supplier_model(
+        model.supplier_model_id,
+        expected_catalog_revision=2,
+        expected_model_revision=2,
+        archive_reason="historical_snapshot",
+    )
+
+    assert archived.archived_at
+    assert archived.archive_reason == "historical_snapshot"
+    assert archived.enabled == 0
+    assert archived.revision == 2
+    assert replayed == archived
+    assert store.list_supplier_models(supplier.supplier_id) == []
+    assert store.list_supplier_models(supplier.supplier_id, include_archived=True) == [archived]
+    assert store.get_supplier_model_revision(model.current_model_revision_id) is not None
+    assert store.get_supplier(supplier.supplier_id).model_catalog_revision == 2
+
+
 def test_model_and_idempotency_record_commit_atomically(tmp_path):
     _, store, catalog = _catalog(tmp_path)
     supplier = store.list_suppliers()[0]

@@ -321,6 +321,8 @@ class ProductStore:
               source TEXT NOT NULL CHECK (source IN ('built_in','overlay')),
               enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
               revision INTEGER NOT NULL DEFAULT 1,
+              archived_at TEXT NOT NULL DEFAULT '',
+              archive_reason TEXT NOT NULL DEFAULT '',
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
             );
@@ -425,6 +427,8 @@ class ProductStore:
         self._ensure_column("supplier_versions", "manifest_object_id", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("supplier_versions", "rate_limit_bucket_key", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("suppliers", "model_catalog_revision", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("supplier_models", "archived_at", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("supplier_models", "archive_reason", "TEXT NOT NULL DEFAULT ''")
         self._backfill_asset_binding_scope()
         self._normalize_current_asset_bindings()
         self.conn.execute("DROP INDEX IF EXISTS asset_bindings_current_role_idx")
@@ -996,9 +1000,11 @@ class ProductStore:
         ).fetchone()
         return None if row is None else CredentialVersionRecord(**dict(row))
 
-    def list_supplier_models(self, supplier_id):
+    def list_supplier_models(self, supplier_id, *, include_archived=False):
+        archived_filter = "" if include_archived else " AND archived_at = ''"
         rows = self.conn.execute(
-            "SELECT * FROM supplier_models WHERE supplier_id = ? ORDER BY created_at, supplier_model_id",
+            "SELECT * FROM supplier_models WHERE supplier_id = ?%s ORDER BY created_at, supplier_model_id"
+            % archived_filter,
             (supplier_id,),
         ).fetchall()
         return [SupplierModelRecord(**dict(row)) for row in rows]
@@ -1156,6 +1162,13 @@ class ProductStore:
         ).fetchone()
         return int(row["n"])
 
+    def count_model_history_references(self, supplier_model_id):
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM execution_snapshots WHERE supplier_model_id = ?",
+            (supplier_model_id,),
+        ).fetchone()
+        return int(row["n"])
+
     def count_project_binding_references(self, supplier_model_id):
         row = self.conn.execute(
             """
@@ -1209,6 +1222,60 @@ class ProductStore:
         except Exception:
             self.conn.rollback()
             raise
+
+    def archive_supplier_model(
+        self,
+        supplier_model_id,
+        *,
+        expected_catalog_revision,
+        expected_model_revision,
+        archive_reason,
+    ):
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            model = self.get_supplier_model(supplier_model_id)
+            if model is None:
+                raise NotFound("model not found: %s" % supplier_model_id)
+            supplier = self.get_supplier(model.supplier_id)
+            if (
+                model.revision != expected_model_revision
+                or supplier.model_catalog_revision != expected_catalog_revision
+            ):
+                raise RevisionConflict("model revision conflict")
+            if model.archived_at:
+                self.conn.commit()
+                return model
+            archived_at = now_iso()
+            model_cursor = self.conn.execute(
+                """
+                UPDATE supplier_models
+                SET enabled = 0, revision = revision + 1,
+                    archived_at = ?, archive_reason = ?, updated_at = ?
+                WHERE supplier_model_id = ? AND revision = ? AND archived_at = ''
+                """,
+                (
+                    archived_at,
+                    str(archive_reason),
+                    archived_at,
+                    supplier_model_id,
+                    expected_model_revision,
+                ),
+            )
+            supplier_cursor = self.conn.execute(
+                """
+                UPDATE suppliers
+                SET model_catalog_revision = model_catalog_revision + 1, updated_at = ?
+                WHERE supplier_id = ? AND model_catalog_revision = ?
+                """,
+                (archived_at, model.supplier_id, expected_catalog_revision),
+            )
+            if model_cursor.rowcount != 1 or supplier_cursor.rowcount != 1:
+                raise RevisionConflict("model revision conflict")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return self.get_supplier_model(supplier_model_id)
 
     def get_project_model_binding(self, project_id):
         row = self.conn.execute(
