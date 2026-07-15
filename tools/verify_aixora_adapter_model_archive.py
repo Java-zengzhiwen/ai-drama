@@ -79,9 +79,27 @@ CHECK_DEFINITIONS = OrderedDict(
     (
         ("AIXORA-001", ("adapter", "exact four text models and GPT Image 2 manifest")),
         ("AIXORA-002", ("adapter", "Responses output, usage, and reasoning effort normalization")),
-        ("AIXORA-003", ("adapter+worker", "text-to-image URL and base64 result normalization")),
-        ("AIXORA-004", ("adapter+worker", "ordered image-to-image multipart inputs")),
-        ("AIXORA-005", ("worker+security", "bounded media helpers and isolated Worker globals")),
+        (
+            "AIXORA-003",
+            (
+                "adapter+worker",
+                "offline URL/base64 normalization, image magic validation, and bounded local media persistence",
+            ),
+        ),
+        (
+            "AIXORA-004",
+            (
+                "adapter+worker",
+                "offline ordered edit inputs plus Worker pre-network multipart assembly and aggregate limits",
+            ),
+        ),
+        (
+            "AIXORA-005",
+            (
+                "worker+security",
+                "trusted-local adapter API isolation, helper v1 compatibility, helper v2 media limits, redirect and peer checks",
+            ),
+        ),
         ("AIXORA-006", ("archive", "physical delete, history archive, and active binding block")),
         ("AIXORA-007", ("archive+ui", "archived identities hidden from catalogs and selections")),
         ("AIXORA-008", ("archive+migration", "immutable history and replay-safe additive migration")),

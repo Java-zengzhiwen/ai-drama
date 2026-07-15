@@ -10,6 +10,9 @@
  * 6. 图生图 multipart 只传声明过的 input_images，由 Worker 下载、校验并组装文件；
  * 7. 先在网页执行“校验并保存”，再对具体模型执行一次明确授权的真实测试。
  *
+ * 信任边界：网页保存的 adapter 属于 trusted local code。VM 与 Node permission model
+ * 限制常规 API、宿主文件、子进程和线程访问，但不是恶意脚本沙箱；不要保存来源不明代码。
+ *
  * AIXORA 当前冻结范围：四个 GPT 文本模型和一个 GPT Image 2 图片模型。
  * 本文件不声明 Grok 或视频能力，也不会把一个文本模型错误包装成图片/视频模型。
  */
@@ -41,7 +44,7 @@ export const vendor = {
   name: "AIXORA",
   author: "AI Drama",
   adapterContractVersion: "ai-drama-supplier-v1",
-  helperApiVersion: "ai-drama-helper-v1",
+  helperApiVersion: "ai-drama-helper-v2",
   rateLimitBucketKey: "aixora-generation",
   inputs: [
     { key: "base_url", label: "Base URL", type: "url", required: true },
@@ -100,7 +103,7 @@ function fail(code: string): never {
 /** Base URL 必须明确指向 OpenAI-compatible 的 /v1 根路径，避免请求落到网页路径。 */
 function baseUrl(payload: SupplierPayload): string {
   const value = String(payload.config?.base_url || "").replace(/\/+$/, "");
-  if (!/^https:\/\//.test(value) || !value.endsWith("/v1")) fail("INVALID_BASE_URL");
+  if (!/^https:\/\/[A-Za-z0-9.-]+(?::443)?\/v1$/.test(value)) fail("INVALID_BASE_URL");
   return value;
 }
 
@@ -205,11 +208,12 @@ export async function imageRequest(payload: SupplierPayload, helpers: SupplierHe
     : [];
 
   if (inputs.length) {
+    const auth = authorization(payload).Authorization;
     // 文件内容由 Worker 从 payload.request.input_images 的原始声明中取得；适配代码看不到字节。
     const raw = await helpers.http.request({
       method: "POST",
       url: `${baseUrl(payload)}/images/edits`,
-      headers: { Authorization: `Bearer ${payload.credential}` },
+      headers: { Authorization: auth },
       multipart: {
         fields,
         files: inputs.map(url => ({ fieldName: "image[]", url })),

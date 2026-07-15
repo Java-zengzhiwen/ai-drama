@@ -8,7 +8,10 @@ import tempfile
 
 
 WORKER_PROTOCOL_VERSION = "1"
-HELPER_API_VERSION = "ai-drama-helper-v1"
+HELPER_API_VERSION = "ai-drama-helper-v2"
+SUPPORTED_HELPER_API_VERSIONS = frozenset(
+    {"ai-drama-helper-v1", "ai-drama-helper-v2"}
+)
 
 
 def current_worker_runtime_version():
@@ -52,6 +55,25 @@ class SupplierWorker:
             Path(__file__).resolve().parents[2] / "worker" / "src" / "worker.ts"
         )
 
+    def command(self):
+        """Return a least-privilege Node command for trusted local adapters.
+
+        The VM is an API-isolation layer, not a hostile-code sandbox. Node's
+        permission model adds defense in depth by denying arbitrary host-file,
+        child-process, and worker-thread access if adapter code escapes the VM.
+        Network remains enabled only because the host-owned HTTP broker needs it.
+        """
+        temp_root = Path(tempfile.gettempdir()).resolve()
+        source_root = self.worker_entrypoint.resolve().parent
+        return [
+            "node",
+            "--permission",
+            f"--allow-fs-read={source_root}",
+            f"--allow-fs-write={temp_root}",
+            "--allow-net",
+            str(self.worker_entrypoint),
+        ]
+
     def invoke(self, artifact, operation, payload, *, mode="execution", limits=None):
         limits = limits or WorkerLimits()
         request = json.dumps(
@@ -74,7 +96,7 @@ class SupplierWorker:
             raise SupplierWorkerError("SUPPLIER_WORKER_REQUEST_TOO_LARGE", "supplier worker request too large")
 
         process = subprocess.Popen(
-            ["node", str(self.worker_entrypoint)],
+            self.command(),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -84,7 +106,7 @@ class SupplierWorker:
                 "TZ": "UTC",
                 # Keep downloaded media inside the exact root validated by the
                 # Python gateway without forwarding any supplier secrets.
-                "TMPDIR": tempfile.gettempdir(),
+                "TMPDIR": str(Path(tempfile.gettempdir()).resolve()),
             },
             start_new_session=True,
         )

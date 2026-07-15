@@ -1223,6 +1223,71 @@ class ProductStore:
             self.conn.rollback()
             raise
 
+    def remove_supplier_model_atomically(
+        self, supplier_model_id, *, expected_catalog_revision, expected_model_revision
+    ):
+        """Reject, archive, or physically delete from one locked decision."""
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            model = self.get_supplier_model(supplier_model_id)
+            if model is None:
+                raise NotFound("model not found: %s" % supplier_model_id)
+            supplier = self.get_supplier(model.supplier_id)
+            if (
+                model.revision != expected_model_revision
+                or supplier.model_catalog_revision != expected_catalog_revision
+            ):
+                raise RevisionConflict("model revision conflict")
+            if model.archived_at:
+                self.conn.commit()
+                return model
+            if self.count_project_binding_references(supplier_model_id):
+                raise ModelReferenced("MODEL_REFERENCED")
+
+            changed_at = now_iso()
+            if self.count_model_history_references(supplier_model_id):
+                cursor = self.conn.execute(
+                    """
+                    UPDATE supplier_models
+                    SET enabled = 0, revision = revision + 1,
+                        archived_at = ?, archive_reason = 'historical_snapshot', updated_at = ?
+                    WHERE supplier_model_id = ? AND revision = ? AND archived_at = ''
+                    """,
+                    (changed_at, changed_at, supplier_model_id, expected_model_revision),
+                )
+                if cursor.rowcount != 1:
+                    raise RevisionConflict("model revision conflict")
+            else:
+                self.conn.execute(
+                    "DELETE FROM model_creation_requests WHERE supplier_model_id = ?",
+                    (supplier_model_id,),
+                )
+                self.conn.execute(
+                    "DELETE FROM supplier_model_revisions WHERE supplier_model_id = ?",
+                    (supplier_model_id,),
+                )
+                cursor = self.conn.execute(
+                    "DELETE FROM supplier_models WHERE supplier_model_id = ? AND revision = ?",
+                    (supplier_model_id, expected_model_revision),
+                )
+                if cursor.rowcount != 1:
+                    raise RevisionConflict("model revision conflict")
+            supplier_cursor = self.conn.execute(
+                """
+                UPDATE suppliers
+                SET model_catalog_revision = model_catalog_revision + 1, updated_at = ?
+                WHERE supplier_id = ? AND model_catalog_revision = ?
+                """,
+                (changed_at, model.supplier_id, expected_catalog_revision),
+            )
+            if supplier_cursor.rowcount != 1:
+                raise RevisionConflict("model revision conflict")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return self.get_supplier_model(supplier_model_id)
+
     def archive_supplier_model(
         self,
         supplier_model_id,
@@ -1245,6 +1310,8 @@ class ProductStore:
             if model.archived_at:
                 self.conn.commit()
                 return model
+            if self.count_project_binding_references(supplier_model_id):
+                raise ModelReferenced("MODEL_REFERENCED")
             archived_at = now_iso()
             model_cursor = self.conn.execute(
                 """

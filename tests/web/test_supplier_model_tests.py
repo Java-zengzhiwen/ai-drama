@@ -459,6 +459,27 @@ def test_executor_persists_image_bytes_and_sanitizes_provider_url(tmp_path):
     runtime.close()
 
 
+def test_executor_rejects_image_media_type_when_magic_bytes_do_not_match(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path, capability="image")
+    service = ModelTestService(store)
+    run, _created = service.create_model_test(
+        supplier_model_id=snapshot.supplier_model_id,
+        prompt="a cup",
+        idempotency_key="invalid-image-magic",
+        expected_model_revision=1,
+    )
+    gateway = FakeModelTestGateway(
+        response={"media_type": "image/png", "bytes": b"not-a-png"}
+    )
+
+    ModelTestExecutor(store, gateway).execute(run["test_run_id"])
+    result = service.safe_read(run["test_run_id"])
+
+    assert result["status"] == "failed"
+    assert result["error_code"] == "PROVIDER_RESPONSE_MALFORMED"
+    runtime.close()
+
+
 def test_executor_marks_ambiguous_gateway_failure_unknown_without_retry(tmp_path):
     runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
     service = ModelTestService(store)
@@ -669,7 +690,7 @@ def test_image_model_test_content_is_local_and_private(tmp_path, monkeypatch):
     assert terminal["status"] == "completed"
     assert terminal["media_type"] == "image/png"
     assert content.status_code == 200
-    assert content.content == b"fake-png"
+    assert content.content.startswith(b"\x89PNG\r\n\x1a\n")
     assert content.headers["content-type"] == "image/png"
     assert content.headers["cache-control"] == "private, no-store"
     assert content.headers["x-content-type-options"] == "nosniff"

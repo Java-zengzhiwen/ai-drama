@@ -7,6 +7,7 @@ from dataclasses import replace
 from .contracts import CompiledSupplierArtifact
 from .snapshots import SupplierRuntimeUnavailable, load_snapshot
 from .worker import SupplierWorker, WorkerLimits
+from .media import image_bytes_match_media_type
 
 
 class SupplierExecutionError(RuntimeError):
@@ -80,12 +81,19 @@ class SnapshotExecutionGateway:
                 temp_root = Path(tempfile.gettempdir()).resolve()
                 if temp_root not in local_file.parents or not local_file.parent.name.startswith("ai-drama-worker-media-"):
                     raise SupplierExecutionError("SUPPLIER_MEDIA_REFERENCE_INVALID")
-                data = local_file.read_bytes()
-                if len(data) != int(value.get("size", -1)) or hashlib.sha256(data).hexdigest() != value.get("sha256"):
-                    raise SupplierExecutionError("SUPPLIER_MEDIA_REFERENCE_INVALID")
-                value["bytes"] = data
-                local_file.unlink(missing_ok=True)
-                local_file.parent.rmdir()
+                try:
+                    data = local_file.read_bytes()
+                    if len(data) != int(value.get("size", -1)) or hashlib.sha256(data).hexdigest() != value.get("sha256"):
+                        raise SupplierExecutionError("SUPPLIER_MEDIA_REFERENCE_INVALID")
+                    media_type = str(value.get("media_type") or "")
+                    if media_type.startswith("image/") and not image_bytes_match_media_type(
+                        data, media_type
+                    ):
+                        raise SupplierExecutionError("PROVIDER_RESPONSE_MALFORMED")
+                    value["bytes"] = data
+                finally:
+                    local_file.unlink(missing_ok=True)
+                    local_file.parent.rmdir()
             return value
         except SupplierRuntimeUnavailable:
             raise

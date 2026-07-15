@@ -94,6 +94,7 @@ def payload(model, *, request=None, config=None):
 
 
 def test_manifest_is_exact_and_stable(artifact):
+    assert artifact.helper_api_version == "ai-drama-helper-v2"
     assert [(model["providerModelName"], model["capability"]) for model in artifact.vendor["models"]] == [
         ("gpt-5.6-terra", "text"),
         ("gpt-5.6-sol", "text"),
@@ -156,7 +157,7 @@ def test_text_to_image_accepts_base64_and_url_results(artifact):
         artifact,
         "imageRequest",
         payload("gpt-image-2", request={"prompt": "a cup", "size": "1024x1024", "input_images": []}),
-        [{"data": [{"b64_json": "ZmFrZS1wbmc="}]}],
+        [{"data": [{"b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WlS8AAAAASUVORK5CYII="}]}],
     )
     url_result = invoke(
         artifact,
@@ -188,7 +189,7 @@ def test_image_edit_uses_ordered_declared_inputs_and_safe_multipart(artifact):
             "gpt-image-2",
             request={"prompt": "edit", "size": "1024x1024", "quality": "high", "input_images": images},
         ),
-        [{"data": [{"b64_json": "ZmFrZS1wbmc="}]}],
+        [{"data": [{"b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WlS8AAAAASUVORK5CYII="}]}],
     )
 
     assert result["ok"] is True

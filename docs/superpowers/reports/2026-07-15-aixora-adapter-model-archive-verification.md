@@ -4,7 +4,7 @@ Date: 2026-07-15
 
 Branch: `feat/aixora-adapter-model-archive`
 
-Status: `AWAITING_INDEPENDENT_REVIEW`
+Status: `AWAITING_REVIEW_FIX_CONFIRMATION`
 
 ## Outcome
 
@@ -16,8 +16,8 @@ Real acceptance was intentionally single-attempt and produced a mixed provider r
 
 - `gpt-5.6-sol`, `gpt-5.6-luna`, and `gpt-5.5` completed successfully through `/responses`.
 - `gpt-5.6-terra` returned JSON that did not contain either supported Responses text shape and failed closed as `PROVIDER_RESPONSE_MALFORMED`.
-- `gpt-image-2` text-to-image and image-to-image were each submitted exactly once and both returned `PROVIDER_HTTP_ERROR` in about one second.
-- Before implementation, AIXORA model discovery did not advertise `gpt-image-2`; the two real image failures therefore remain a provider account/route gap. No parameter guessing, retry, fallback, or alternate model was attempted.
+- `gpt-image-2` text-to-image and image-to-image were each submitted exactly once and both returned the then-current generic `PROVIDER_HTTP_ERROR` in about one second.
+- Before implementation, AIXORA model discovery did not advertise `gpt-image-2`. That is relevant context, but the persisted evidence cannot distinguish an account/route rejection from a request-contract rejection because the previous Worker collapsed HTTP status categories. The failures therefore remain unclassified Provider HTTP rejections. No parameter guessing, retry, fallback, or alternate model was attempted.
 - The earlier authorized AIXORA `grok-4.5` research probe returned `model_not_found`; no Grok model was added.
 
 The adapter and archive implementation are ready for code review. Provider readiness is currently proven for three text models, not for Terra or GPT Image 2.
@@ -34,7 +34,7 @@ The adapter and archive implementation are ready for code review. Provider readi
   `none`, `low`, `medium`, `high`, `xhigh`, `max`.
 - GPT Image 2 generation through `/images/generations`.
 - GPT Image 2 editing through `/images/edits` with Worker-owned multipart assembly.
-- Bounded host-side image base64 decoding, declared input download, data-URI input decoding, public-address checks, pinned DNS, peer-IP verification, redirect denial, and exact provider-result URL download.
+- Versioned helper v2 with bounded host-side image base64 decoding, image magic validation, declared input download, data-URI input decoding, aggregate multipart limits, public-address checks, pinned DNS, peer-IP verification, redirect denial, and one-shot exact provider-result URL download. Immutable helper v1 snapshots remain executable without v2 media privileges.
 - Archive metadata and replay-safe migration for historically referenced overlay models.
 - Active project bindings remain a delete blocker; no-reference overlays still physically delete.
 - Archived identities remain readable historically but are hidden from normal catalogs and rejected by new binding/resolution.
@@ -45,11 +45,11 @@ All automated verification ran with real Provider requests disabled and network 
 
 | Verification | Result |
 | --- | --- |
-| Python pytest | 685 passed, 1 skipped |
+| Python pytest | 690 passed, 1 skipped |
 | Web Vitest | 109 passed, 4 skipped |
 | Web production build | PASS |
 | Playwright E2E | 11 passed |
-| Supplier Worker tests | 17 passed |
+| Supplier Worker tests | 24 passed |
 | AIXORA semantic verifier | 10/10 PASS — `AIXORA_MODEL_ARCHIVE_PASS` |
 | Model-level provider-test verifier | 15/15 PASS — `MODEL_LEVEL_PROVIDER_TESTS_PASS` |
 | Migration verifier | valid, 81 tracked files |
@@ -66,6 +66,8 @@ AUTOMATED_PRODUCTION_M6_EXECUTION_FLAG_ENABLED=false
 ```
 
 The long-running loopback feature-test service already had model tests and M6 supplier execution enabled before this increment so the user can exercise business binding locally. This change did not enable or modify a production deployment flag.
+
+The automated verifier uses only fake/local transports. It verifies the adapter normalization, pre-network multipart assembly path, media boundaries, archive behavior, and default network denial; it does not independently reproduce or certify the real acceptance ledger below.
 
 ## Authorized Real Acceptance Ledger
 
@@ -108,9 +110,11 @@ The configured supplier is immediately available to current project workflows af
 
 ## Security And Secret Scan
 
-- Supplier code has no import, `require`, `process`, native fetch, filesystem, environment, socket, or subprocess access.
+- Supplier code is explicitly trusted local user-edited code. Its VM context exposes no import, `require`, `process`, native fetch, filesystem, environment, socket, or subprocess API. This is an API-isolation boundary, not a security claim that `node:vm` safely executes hostile code.
+- The Worker uses Node's permission model as defense in depth: read access is limited to Worker sources, write access to the process temporary root, and child processes and Worker threads are not granted.
 - Credentials enter only the selected immutable execution snapshot and the request Authorization header.
 - The Worker process receives a cleaned environment and the supplier VM cannot read host media globals.
+- Provider result URLs are exact, one-shot, GET-only byte downloads without supplier-controlled request metadata; image bytes must match the declared PNG/JPEG/WebP magic before persistence.
 - Validation, pytest, Vitest, Playwright, Worker tests, and both verifiers make zero real provider requests.
 - Tracked bearer/API-key hits were classified as variable interpolation, redaction logic, documentation placeholders, or test fixtures; no live credential value was found.
 - `runtime-data`, databases, real results, and credential files remain outside Git.
@@ -125,4 +129,17 @@ The configured supplier is immediately available to current project workflows af
 
 ## Independent Review
 
-Pending specification/acceptance and architecture/technical/security review against the exact candidate commit.
+The first two independent read-only reviews examined candidate `0acd00f8f25f779e41d787c0ab115c7705d5e53a` and requested changes. No real Provider request was made during review.
+
+The correction set addresses every blocker/high finding:
+
+- documents the trusted-local-code boundary and adds Node permission-model defense in depth instead of treating `node:vm` as a hostile-code sandbox;
+- upgrades new artifacts to helper API v2 while retaining exact helper v1 snapshot compatibility;
+- constrains dynamic result URLs to one-shot, GET-only bytes with no headers/query/body and validates public resolution, peer IP, redirect status, response limit, media type, and image magic;
+- enforces per-file and aggregate input limits before multipart concatenation;
+- moves model archive/delete reference checking and mutation into one immediate database transaction;
+- validates image magic in both Worker and Python persistence paths;
+- narrows verifier and report claims to the offline paths actually exercised;
+- updates the browser fixture to return a valid bounded PNG through helper v2.
+
+Final specification/acceptance and architecture/technical/security re-review of the correction commit is pending.

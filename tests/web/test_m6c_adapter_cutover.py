@@ -24,7 +24,7 @@ from ai_drama_web.services.legacy_agnes_backfill import LegacyAgnesBackfill, _le
 from ai_drama_web.suppliers.compiler import compile_supplier
 from ai_drama_web.secrets import LocalSecretStore
 from ai_drama_web.suppliers.builtin_adapters import OPENAI_SOURCE, install_builtin_adapters
-from ai_drama_web.suppliers.execution import SnapshotExecutionGateway
+from ai_drama_web.suppliers.execution import SnapshotExecutionGateway, SupplierExecutionError
 from ai_drama_web.suppliers.worker import SupplierInvocationResult, WorkerLimits
 from ai_drama_web.suppliers.snapshots import SupplierRuntimeUnavailable
 from ai_drama_web.suppliers.rate_limits import SupplierRateLimiter
@@ -750,6 +750,31 @@ def test_media_result_larger_than_protocol_output_uses_bounded_local_reference(t
     result = gateway.invoke(snapshot_record.snapshot_hash, "imageRequest", {"prompt": "fake"})
     assert result["bytes"] == data
     assert not local_file.exists()
+
+
+def test_gateway_rejects_malformed_image_magic_and_cleans_worker_file(tmp_path):
+    _runtime, store, project, _supplier, _gateway, coordinator = _coordinator_fixture(tmp_path, "image")
+    snapshot_record = persist_snapshot(
+        store, coordinator._resolve_snapshot(project.project_id, "storyboard_keyframe_image")
+    )
+    directory = Path(tempfile.mkdtemp(prefix="ai-drama-worker-media-"))
+    local_file = directory / "result.bin"
+    data = b"not-a-png"
+    local_file.write_bytes(data)
+
+    class Worker:
+        def invoke(self, artifact, operation, payload, **_kwargs):
+            return SupplierInvocationResult(
+                value={"local_file": str(local_file), "sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "media_type": "image/png"},
+                worker_protocol_version="1", helper_api_version=artifact.helper_api_version,
+                worker_runtime_version=artifact.worker_runtime_version,
+            )
+
+    gateway = SnapshotExecutionGateway(store, coordinator.credentials, worker=Worker())
+    with pytest.raises(SupplierExecutionError, match="PROVIDER_RESPONSE_MALFORMED"):
+        gateway.invoke(snapshot_record.snapshot_hash, "imageRequest", {"prompt": "fake"})
+    assert not local_file.exists()
+    assert not directory.exists()
 
 
 def test_gateway_rebuilds_worker_limits_from_snapshot_and_rejects_override(tmp_path):

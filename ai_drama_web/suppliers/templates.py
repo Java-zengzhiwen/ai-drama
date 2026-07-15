@@ -21,7 +21,10 @@ def custom_supplier_template(slug, display_name):
  * 9. 点击对应模型行“测试”，确认一次真实请求并检查规范化结果或脱敏错误。
  * 10. 仅实现已确认能力，并在模型级测试成功后再绑定项目。
  *
- * 安全与隔离禁用清单：
+ * 信任边界与禁用清单：
+ * - 网页中可编辑的适配代码属于本机用户明确保存的 trusted local code。VM 和 Node permission
+ *   model 用于限制常规能力与宿主文件访问，但不是运行来源不明恶意代码的安全沙箱；不要粘贴
+ *   未审查的第三方脚本。
  * - 禁止 import、require、process、原生 fetch、Node 内建模块、文件系统、环境变量、
  *   socket、子进程，以及 Toonflow 的 axios、logger、pollTask、createOpenAI 等全局对象。
  * - 禁止 exports.vendor、module.exports 或在 CommonJS 模板末尾追加 export {{}}；本文件只用 ESM 导出。
@@ -66,7 +69,7 @@ export const vendor = {{
   name: {supplier_name},
   author: "AI Drama",
   adapterContractVersion: "ai-drama-supplier-v1",
-  helperApiVersion: "ai-drama-helper-v1",
+  helperApiVersion: "ai-drama-helper-v2",
   rateLimitBucketKey: {supplier_id},
   inputs: [
     {{ key: "base_url", label: "Base URL", type: "url", required: true }}

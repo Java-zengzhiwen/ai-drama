@@ -4,22 +4,27 @@ import { readFileSync, rmSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createPinnedLookup } from "./pinned-lookup.mjs";
+import { assertNotRedirect, assertPeerAddress } from "./network-policy.mjs";
 import {
+  assertInputBudget,
+  authorizeDeclaredInputReference,
+  authorizeProviderResultDownload,
   buildMultipartBody,
-  collectHttpsUrls,
+  collectProviderResultUrls,
   decodeBase64,
   decodeDeclaredImageReference,
+  providerHttpErrorCode,
 } from "./media-helpers.mjs";
 
 
-function invoke(compiledCode, mode = "execution", payload = {}) {
+function invoke(compiledCode, mode = "execution", payload = {}, helperApiVersion = "ai-drama-helper-v2") {
   const result = spawnSync(process.execPath, [
     "--import", fileURLToPath(new URL("./network-denial.mjs", import.meta.url)),
     fileURLToPath(new URL("./worker.ts", import.meta.url)),
   ], {
     input: JSON.stringify({
       workerProtocolVersion: "1",
-      helperApiVersion: "ai-drama-helper-v1",
+      helperApiVersion,
       workerRuntimeVersion: process.version,
       compiledCode,
       operation: "textRequest",
@@ -67,10 +72,27 @@ test("pinned lookup returns one address for the legacy callback contract", async
 });
 
 
+test("network policy rejects redirects and peer-IP mismatches", () => {
+  assert.throws(() => assertNotRedirect(302), error => error.code === "HTTP_REDIRECT_FORBIDDEN");
+  assert.doesNotThrow(() => assertNotRedirect(200));
+  assert.doesNotThrow(() => assertPeerAddress("8.8.8.8", new Set(["8.8.8.8"])));
+  assert.throws(
+    () => assertPeerAddress("8.8.4.4", new Set(["8.8.8.8"])),
+    error => error.code === "HTTP_PEER_ADDRESS_MISMATCH",
+  );
+  assert.throws(
+    () => assertPeerAddress("127.0.0.1", new Set(["127.0.0.1"])),
+    error => error.code === "HTTP_PEER_ADDRESS_MISMATCH",
+  );
+});
+
+
 test("bounded base64 decoder rejects malformed and oversized media", () => {
-  assert.deepEqual(decodeBase64("ZmFrZS1wbmc=", 32), Buffer.from("fake-png"));
-  assert.throws(() => decodeBase64("%%%", 32), error => error.code === "PROVIDER_RESPONSE_MALFORMED");
-  assert.throws(() => decodeBase64("ZmFrZS1wbmc=", 4), error => error.code === "SUPPLIER_WORKER_OUTPUT_TOO_LARGE");
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WlS8AAAAASUVORK5CYII=";
+  assert.equal(decodeBase64(png, "image/png", 128).subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+  assert.throws(() => decodeBase64("%%%", "image/png", 32), error => error.code === "PROVIDER_RESPONSE_MALFORMED");
+  assert.throws(() => decodeBase64("ZmFrZS1wbmc=", "image/png", 32), error => error.code === "PROVIDER_RESPONSE_MALFORMED");
+  assert.throws(() => decodeBase64(png, "image/png", 4), error => error.code === "SUPPLIER_WORKER_OUTPUT_TOO_LARGE");
 });
 
 
@@ -91,11 +113,11 @@ test("multipart builder accepts only fixed safe scalar fields", () => {
 
 test("declared data image is decoded without exposing Buffer to supplier code", () => {
   const decoded = decodeDeclaredImageReference(
-    "data:image/png;base64,ZmFrZS1wbmc=",
-    32,
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WlS8AAAAASUVORK5CYII=",
+    128,
   );
   assert.equal(decoded.mediaType, "image/png");
-  assert.deepEqual(decoded.buffer, Buffer.from("fake-png"));
+  assert.equal(decoded.buffer.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
   assert.throws(
     () => decodeDeclaredImageReference("data:text/plain;base64,ZmFrZQ==", 32),
     error => error.code === "SUPPLIER_INPUT_MEDIA_INVALID",
@@ -103,23 +125,75 @@ test("declared data image is decoded without exposing Buffer to supplier code", 
 });
 
 
-test("provider result URL collection returns only exact HTTPS values", () => {
+test("provider result URL collection returns only named media result fields", () => {
   assert.deepEqual(
-    collectHttpsUrls({ data: [{ url: "https://cdn.example.test/result.png?sig=x" }], ignored: "http://bad.test" }),
+    collectProviderResultUrls({
+      data: [{ url: "https://cdn.example.test/result.png?sig=x" }],
+      homepage: "https://untrusted.example.test/",
+      ignored: "http://bad.test",
+    }),
     ["https://cdn.example.test/result.png?sig=x"],
   );
+});
+
+
+test("provider result download is one-shot GET bytes without request metadata", () => {
+  const raw = "https://cdn.example.test/result.png?sig=x";
+  const allowed = new Set([raw]);
+  assert.equal(
+    authorizeProviderResultDownload({ method: "GET", url: raw, responseType: "bytes" }, allowed),
+    true,
+  );
+  assert.equal(allowed.size, 0);
+  assert.throws(
+    () => authorizeProviderResultDownload({ method: "GET", url: raw, responseType: "bytes" }, allowed),
+    error => error.code === "HTTP_DESTINATION_NOT_ALLOWED",
+  );
+  assert.throws(
+    () => authorizeProviderResultDownload({ method: "POST", url: raw, responseType: "bytes", headers: { Authorization: "x" } }, new Set([raw])),
+    error => error.code === "HTTP_DESTINATION_NOT_ALLOWED",
+  );
+});
+
+
+test("declared input authorization requires an exact original reference", () => {
+  const raw = "https://assets.example.test/input.png?sig=x";
+  const declared = new Set([raw]);
+  assert.equal(authorizeDeclaredInputReference(raw, declared), raw);
+  assert.throws(
+    () => authorizeDeclaredInputReference("https://assets.example.test/input.png?sig=y", declared),
+    error => error.code === "HTTP_DESTINATION_NOT_ALLOWED",
+  );
+});
+
+
+test("multipart input budget rejects aggregate bytes before body concatenation", () => {
+  assert.equal(assertInputBudget(10, 5, 16), 15);
+  assert.throws(
+    () => assertInputBudget(10, 7, 16),
+    error => error.code === "SUPPLIER_WORKER_OUTPUT_TOO_LARGE",
+  );
+});
+
+
+test("provider HTTP status maps to stable sanitized categories", () => {
+  assert.equal(providerHttpErrorCode(400), "PROVIDER_REQUEST_REJECTED");
+  assert.equal(providerHttpErrorCode(401), "PROVIDER_AUTHENTICATION_ERROR");
+  assert.equal(providerHttpErrorCode(404), "PROVIDER_ROUTE_OR_MODEL_NOT_FOUND");
+  assert.equal(providerHttpErrorCode(429), "PROVIDER_RATE_LIMITED");
+  assert.equal(providerHttpErrorCode(502), "PROVIDER_UPSTREAM_ERROR");
 });
 
 
 test("supplier can decode base64 only through bounded media helper", () => {
   const response = invoke(`
     module.exports.textRequest = async (_payload, helpers) =>
-      helpers.media.decodeBase64("ZmFrZS1wbmc=", "image/png");
+      helpers.media.decodeBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WlS8AAAAASUVORK5CYII=", "image/png");
   `);
   assert.equal(response.ok, true);
   assert.equal(response.value.media_type, "image/png");
-  assert.equal(response.value.size, 8);
-  assert.equal(readFileSync(response.value.local_file, "utf8"), "fake-png");
+  assert.equal(response.value.size, 68);
+  assert.equal(readFileSync(response.value.local_file).subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
   rmSync(new URL(`file://${response.value.local_file}`).pathname);
   rmSync(new URL(`file://${response.value.local_file}`).pathname.replace(/\/[^/]+$/, ""), { recursive: true, force: true });
 });
@@ -140,6 +214,37 @@ test("supplier VM still cannot access host media globals", () => {
     process: "undefined",
     require: "undefined",
   });
+});
+
+
+test("legacy helper v1 cannot use v2 media or multipart contracts", () => {
+  const media = invoke(
+    "module.exports.textRequest = async (_payload, helpers) => helpers.media.decodeBase64('x','image/png');",
+    "execution",
+    {},
+    "ai-drama-helper-v1",
+  );
+  const multipart = invoke(
+    "module.exports.textRequest = async (payload, helpers) => helpers.http.request({method:'POST',url:payload.config.base_url,multipart:{fields:{model:'x'},files:[{url:payload.request.input_images[0]}]}});",
+    "execution",
+    {config:{base_url:"https://example.invalid/v1"},request:{input_images:["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WlS8AAAAASUVORK5CYII="]}},
+    "ai-drama-helper-v1",
+  );
+  assert.equal(media.ok, false);
+  assert.equal(multipart.error.code, "SUPPLIER_RUNTIME_UNAVAILABLE");
+});
+
+
+test("v2 multipart resolves a declared data image before denied test transport", () => {
+  const code = `module.exports.textRequest = async (payload, helpers) => helpers.http.request({
+    method:'POST', url:payload.config.base_url, headers:{},
+    multipart:{fields:{model:'gpt-image-2',prompt:'edit'},files:[{fieldName:'image[]',url:payload.request.input_images[0]}]}
+  });`;
+  const image = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WlS8AAAAASUVORK5CYII=";
+  const accepted = invoke(code, "execution", {config:{base_url:"https://example.invalid/v1"},request:{input_images:[image]}});
+  const rejected = invoke(code, "execution", {config:{base_url:"https://example.invalid/v1"},request:{input_images:[]}});
+  assert.match(accepted.error.code, /SUPPLIER_EXECUTION_FAILED|UNEXPECTED_REAL_NETWORK/);
+  assert.equal(rejected.error.code, "HTTP_DESTINATION_NOT_ALLOWED");
 });
 
 

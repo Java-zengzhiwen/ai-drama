@@ -25,7 +25,7 @@ function sourceFor(version: string, marker: string) {
   name: "M6D Local",
   author: "Playwright",
   adapterContractVersion: "ai-drama-supplier-v1",
-  helperApiVersion: "ai-drama-helper-v1",
+  helperApiVersion: "ai-drama-helper-v2",
   rateLimitBucketKey: "m6d-local",
   inputs: [{ key: "base_url", label: "Base URL", type: "url", required: true }],
   inputValues: { base_url: "https://fake.invalid/v1" },
@@ -34,8 +34,11 @@ function sourceFor(version: string, marker: string) {
 export async function textRequest(request: { prompt: string }) {
   return { output: "# ${marker}\\n\\nruntime_model: local-fake\\nsource_basis: browser-e2e\\n\\n## Scene: 1-1\\n\\n【画面】本地假供应商完成确定性剧本输出。\\n\\n【动作】角色检查模型版本。\\n\\n【台词】角色：${marker}。", usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } };
 }
-export async function imageRequest() {
-  return { content: "deterministic-local-png-fixture", media_type: "image/png" };
+export async function imageRequest(_request: unknown, helpers: any) {
+  return helpers.media.decodeBase64(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9WlS8AAAAASUVORK5CYII=",
+    "image/png"
+  );
 }`;
 }
 

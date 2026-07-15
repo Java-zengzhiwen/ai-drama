@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_web.store import ProductStore
@@ -302,3 +303,28 @@ def test_store_transaction_rejects_active_duplicate_without_service_precheck(tmp
             idempotency_key="race-second",
             request_hash="race-second-hash",
         )
+
+
+def test_catalog_removal_delegates_reference_decision_to_one_store_transaction():
+    model = SimpleNamespace(source="overlay", archived_at="")
+
+    class AtomicStore:
+        called = None
+
+        def get_supplier_model(self, _model_id):
+            return model
+
+        def remove_supplier_model_atomically(self, model_id, **preconditions):
+            self.called = (model_id, preconditions)
+            return None
+
+    store = AtomicStore()
+
+    ModelCatalogService(store).delete_overlay(
+        "model-id", expected_catalog_revision=7, expected_model_revision=3
+    )
+
+    assert store.called == (
+        "model-id",
+        {"expected_catalog_revision": 7, "expected_model_revision": 3},
+    )

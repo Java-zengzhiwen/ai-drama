@@ -157,6 +157,17 @@ def test_worker_child_environment_is_allowlisted(tmp_path, monkeypatch):
     assert "must-not-cross-boundary" not in repr(result)
 
 
+def test_worker_process_uses_node_permission_model(tmp_path):
+    command = SupplierWorker(worker_entrypoint=tmp_path / "probe.mjs").command()
+
+    assert "--permission" in command
+    assert "--allow-net" in command
+    assert any(item.startswith("--allow-fs-read=") for item in command)
+    assert any(item.startswith("--allow-fs-write=") for item in command)
+    assert "--allow-child-process" not in command
+    assert "--allow-worker" not in command
+
+
 def test_worker_child_uses_same_trusted_temp_root_as_python(tmp_path):
     probe = tmp_path / "temp-root-probe.mjs"
     probe.write_text(

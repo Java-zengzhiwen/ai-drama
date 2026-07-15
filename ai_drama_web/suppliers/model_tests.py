@@ -10,6 +10,7 @@ from .idempotency import canonical_request_hash
 from .models import RevisionConflict
 from .resolution import ResolvedModel
 from .snapshots import SnapshotBuilder, SupplierRuntimeUnavailable, load_snapshot, snapshot_hash
+from .media import image_bytes_match_media_type
 
 
 TEST_CONTRACT_VERSION = "model-test-v1"
@@ -339,7 +340,11 @@ class ModelTestExecutor:
         if isinstance(content, str):
             content = content.encode("utf-8")
         media_type = str(response.get("media_type") or "")
-        if not isinstance(content, bytes) or not content or not media_type.startswith("image/"):
+        if (
+            not isinstance(content, bytes)
+            or not content
+            or not image_bytes_match_media_type(content, media_type)
+        ):
             raise ModelTestError("PROVIDER_RESPONSE_MALFORMED")
         if len(content) > 25 * 1024 * 1024:
             raise ModelTestError("SUPPLIER_WORKER_OUTPUT_TOO_LARGE")
