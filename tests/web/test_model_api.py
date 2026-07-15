@@ -114,6 +114,62 @@ def test_model_reads_include_project_binding_count_without_snapshot_inflation(cl
     assert detail.json()["binding_count"] == 2
 
 
+def test_delete_archives_snapshotted_overlay_and_hides_it_from_catalog(client):
+    supplier = _supplier(client)
+    created = client.post(
+        f"/api/suppliers/{supplier['supplier_id']}/models",
+        json={
+            "provider_model_name": "archive-api-text",
+            "display_name": "Archive API Text",
+            "capability": "text",
+            "definition": {},
+        },
+        headers={
+            "If-None-Match": "*",
+            "If-Match": '"model-catalog-0"',
+            "Idempotency-Key": "archive-api-text",
+        },
+    )
+    model_id = created.json()["supplier_model_id"]
+    def persist_project_snapshot():
+        store = client.app.state.product_store
+        model = store.get_supplier_model(model_id)
+        object_id = store.runtime.write_text_object('{"schema":"archive-api-test"}')
+        store.conn.execute(
+            """
+            INSERT INTO execution_snapshots
+            (snapshot_hash, snapshot_object_id, supplier_id, supplier_model_id,
+             model_revision_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "archive-api-snapshot",
+                object_id,
+                supplier["supplier_id"],
+                model_id,
+                model.current_model_revision_id,
+                "2026-07-15T00:00:00Z",
+            ),
+        )
+        store.conn.commit()
+
+    client.portal.call(persist_project_snapshot)
+
+    deleted = client.delete(
+        f"/api/models/{model_id}",
+        headers={"If-Match": f'"model-{model_id}-1", "model-catalog-1"'},
+    )
+    listing = client.get(f"/api/suppliers/{supplier['supplier_id']}/models")
+    historical = client.get(f"/api/models/{model_id}")
+
+    assert deleted.status_code == 204, deleted.text
+    assert listing.json() == []
+    assert historical.status_code == 200
+    assert historical.json()["archived_at"]
+    assert historical.json()["archive_reason"] == "historical_snapshot"
+    assert historical.json()["enabled"] == 0
+
+
 def test_model_create_requires_preconditions_and_conflicts_on_changed_replay(client):
     supplier = _supplier(client)
     path = f"/api/suppliers/{supplier['supplier_id']}/models"

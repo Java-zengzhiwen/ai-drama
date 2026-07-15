@@ -71,6 +71,8 @@ export type SupplierModelRead = {
   enabled: number;
   revision: number;
   entity_revision: number;
+  archived_at: string;
+  archive_reason: string;
   definition: Record<string, unknown>;
   binding_count: number;
   created_at: string;

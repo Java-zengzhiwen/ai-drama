@@ -127,13 +127,27 @@ class ModelCatalogService:
     def delete_overlay(
         self, supplier_model_id, *, expected_catalog_revision, expected_model_revision
     ):
-        model = self._model(supplier_model_id)
+        model = self._model(supplier_model_id, allow_archived=True)
         if model.source == "built_in":
             raise ModelCatalogError("BUILT_IN_MODEL_DELETE_FORBIDDEN")
-        if self.store.count_model_references(supplier_model_id):
+        if model.archived_at:
+            return self.store.archive_supplier_model(
+                supplier_model_id,
+                expected_catalog_revision=expected_catalog_revision,
+                expected_model_revision=expected_model_revision,
+                archive_reason=model.archive_reason,
+            )
+        if self.store.count_project_binding_references(supplier_model_id):
             raise ModelCatalogError("MODEL_REFERENCED")
+        if self.store.count_model_history_references(supplier_model_id):
+            return self.store.archive_supplier_model(
+                supplier_model_id,
+                expected_catalog_revision=expected_catalog_revision,
+                expected_model_revision=expected_model_revision,
+                archive_reason="historical_snapshot",
+            )
         try:
-            self.store.delete_supplier_model(
+            return self.store.delete_supplier_model(
                 supplier_model_id,
                 expected_catalog_revision=expected_catalog_revision,
                 expected_model_revision=expected_model_revision,
@@ -141,10 +155,12 @@ class ModelCatalogService:
         except ModelReferenced as exc:
             raise ModelCatalogError("MODEL_REFERENCED") from exc
 
-    def _model(self, supplier_model_id):
+    def _model(self, supplier_model_id, *, allow_archived=False):
         model = self.store.get_supplier_model(supplier_model_id)
         if model is None:
             raise ModelCatalogError("MODEL_NOT_FOUND")
+        if model.archived_at and not allow_archived:
+            raise ModelCatalogError("MODEL_ARCHIVED")
         return model
 
     def _reject_active_duplicate(

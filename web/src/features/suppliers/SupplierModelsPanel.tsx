@@ -268,7 +268,7 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
       <ModelInspector model={selected} />
       <Modal title="新增模型" open={createOpen} footer={null} onCancel={() => setCreateOpen(false)} destroyOnHidden>{form("create")}</Modal>
       <Modal title="编辑模型并保存新版本" open={Boolean(editing)} footer={null} onCancel={() => setEditing(null)} destroyOnHidden>{editing ? form("edit") : null}</Modal>
-      <Modal title="确认删除模型" open={Boolean(deleting)} onCancel={() => setDeleting(null)} onOk={() => void remove()} okText="确认删除模型" cancelText="取消" okButtonProps={{ danger: true }} confirmLoading={saving} destroyOnHidden><p>仅未绑定且没有快照引用的 Overlay 模型可以物理删除。此操作不可撤销。</p></Modal>
+      <Modal title="确认删除模型" open={Boolean(deleting)} onCancel={() => setDeleting(null)} onOk={() => void remove()} okText="确认删除模型" cancelText="取消" okButtonProps={{ danger: true }} confirmLoading={saving} destroyOnHidden><p>没有历史引用的模型会永久删除；已有测试或任务历史的模型会归档并从可选列表隐藏。</p></Modal>
       {testing ? <ModelTestDialog supplier={supplier} model={testing} open onClose={() => setTesting(null)} /> : null}
     </section>
   );

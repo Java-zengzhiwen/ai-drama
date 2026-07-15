@@ -216,6 +216,7 @@ describe("supplier models panel", () => {
       ),
     );
     fireEvent.click(screen.getByRole("button", { name: "删除 Image Model" }));
+    expect(screen.getByText("没有历史引用的模型会永久删除；已有测试或任务历史的模型会归档并从可选列表隐藏。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认删除模型" }));
     await waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
   });
