@@ -70,6 +70,28 @@ def test_model_crud_uses_stable_ids_etags_and_idempotency(client):
     assert client.get(f"/api/models/{model_id}").status_code == 404
 
 
+def test_model_api_rejects_invalid_reasoning_definition_locally(client):
+    supplier = _supplier(client)
+    response = client.post(
+        f"/api/suppliers/{supplier['supplier_id']}/models",
+        json={
+            "provider_model_name": "invalid-reasoning",
+            "display_name": "Invalid Reasoning",
+            "capability": "text",
+            "definition": {"constraints": {"reasoning_effort": "turbo"}},
+        },
+        headers={
+            "If-None-Match": "*",
+            "If-Match": '"model-catalog-0"',
+            "Idempotency-Key": "invalid-reasoning",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["error_code"] == "INVALID_REASONING_EFFORT"
+    assert client.get(f"/api/suppliers/{supplier['supplier_id']}/models").json() == []
+
+
 def test_model_reads_include_project_binding_count_without_snapshot_inflation(client):
     supplier = _supplier(client)
     created = client.post(

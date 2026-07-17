@@ -25,3 +25,14 @@ def resolve_reasoning_effort(*, request, model_definition, supplier_config):
     if value not in REASONING_EFFORTS:
         raise ReasoningEffortError(value)
     return value
+
+
+def validate_reasoning_definition(*, definition, capability):
+    if not isinstance(definition, dict):
+        return
+    constraints = definition.get("constraints")
+    if not isinstance(constraints, dict) or "reasoning_effort" not in constraints:
+        return
+    value = constraints["reasoning_effort"]
+    if capability != "text" or value not in REASONING_EFFORTS:
+        raise ReasoningEffortError(value)

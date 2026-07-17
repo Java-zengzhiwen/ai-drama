@@ -46,6 +46,25 @@ def test_overlay_revision_keeps_stable_identity_and_old_revision(tmp_path):
     assert store.get_supplier_model_revision(revised.current_model_revision_id).provider_model_name == "text-v2"
 
 
+@pytest.mark.parametrize("effort", ["turbo", "none", "", 7])
+def test_catalog_rejects_invalid_reasoning_definition_before_persistence(tmp_path, effort):
+    _runtime, store, catalog = _catalog(tmp_path)
+    supplier = store.list_suppliers()[0]
+
+    with pytest.raises(ModelCatalogError, match="INVALID_REASONING_EFFORT"):
+        catalog.create_overlay(
+            supplier.supplier_id,
+            provider_model_name="invalid-reasoning",
+            display_name="Invalid Reasoning",
+            capability="text",
+            definition={"constraints": {"reasoning_effort": effort}},
+            expected_catalog_revision=0,
+            idempotency_key="invalid-reasoning",
+        )
+
+    assert store.list_supplier_models(supplier.supplier_id) == []
+
+
 def test_active_duplicate_name_is_rejected_but_disabled_model_allows_reuse(tmp_path):
     _, store, catalog = _catalog(tmp_path)
     supplier = store.list_suppliers()[0]

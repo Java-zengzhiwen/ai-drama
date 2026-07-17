@@ -59,7 +59,7 @@ GROUP_COMMANDS = OrderedDict(
                     "tests/web/test_supplier_model_tests.py",
                     "tests/web/test_model_api.py",
                     "-k",
-                    "reasoning or frozen_constraints or disables_removed",
+                    "reasoning or frozen_constraints or disables_removed or invalid_reasoning",
                 ]
             ],
         ),

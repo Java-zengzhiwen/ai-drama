@@ -177,7 +177,12 @@ def _precondition_required():
 
 
 def _catalog_error(exc):
-    status = 404 if exc.code == "MODEL_NOT_FOUND" else 409
+    if exc.code == "MODEL_NOT_FOUND":
+        status = 404
+    elif exc.code == "INVALID_REASONING_EFFORT":
+        status = 422
+    else:
+        status = 409
     raise HTTPException(status, detail={"error_code": exc.code}) from exc
 
 

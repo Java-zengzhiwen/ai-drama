@@ -109,27 +109,32 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
     const value = JSON.parse(draft.definition || "{}");
     if (!value || Array.isArray(value) || typeof value !== "object") throw new Error("definition");
     if (supplier.slug === "aixora" && draft.capability === "text") {
+      const reasoningEffort = draftReasoningEffort();
+      if (!reasoningEffort) throw new Error("INVALID_REASONING_EFFORT");
       const constraints = value.constraints;
       value.constraints = {
         ...(constraints && !Array.isArray(constraints) && typeof constraints === "object"
           ? constraints as Record<string, unknown>
           : {}),
-        reasoning_effort: draftReasoningEffort(),
+        reasoning_effort: reasoningEffort,
       };
     }
     return value;
   }
 
-  function draftReasoningEffort(): ReasoningEffort {
+  function draftReasoningEffort(): ReasoningEffort | "" {
     try {
       const value = JSON.parse(draft.definition || "{}") as Record<string, unknown>;
       const constraints = value.constraints;
-      const effort = constraints && !Array.isArray(constraints) && typeof constraints === "object"
+      if (constraints === undefined) return "medium";
+      if (!constraints || Array.isArray(constraints) || typeof constraints !== "object") return "";
+      const effort = constraints
         ? (constraints as Record<string, unknown>).reasoning_effort
         : undefined;
-      return effort === "low" || effort === "high" ? effort : "medium";
+      if (effort === undefined) return "medium";
+      return effort === "low" || effort === "medium" || effort === "high" ? effort : "";
     } catch {
-      return "medium";
+      return "";
     }
   }
 
@@ -170,7 +175,11 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
       setCreateOpen(false);
       await models.refetch();
     } catch (caught) {
-      setError(caught instanceof SyntaxError ? { code: "INVALID_DEFINITION", message: "模型约束必须是有效 JSON 对象。" } : toManagementError(caught));
+      setError(caught instanceof Error && caught.message === "INVALID_REASONING_EFFORT"
+        ? { code: "INVALID_REASONING_EFFORT", message: "思考深度只支持低、中、高，请修复模式与约束 JSON。" }
+        : caught instanceof SyntaxError
+          ? { code: "INVALID_DEFINITION", message: "模型约束必须是有效 JSON 对象。" }
+          : toManagementError(caught));
     } finally {
       setSaving(false);
     }
@@ -197,7 +206,11 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
       setEditing(null);
       await models.refetch();
     } catch (caught) {
-      setError(caught instanceof SyntaxError ? { code: "INVALID_DEFINITION", message: "模型约束必须是有效 JSON 对象。" } : toManagementError(caught));
+      setError(caught instanceof Error && caught.message === "INVALID_REASONING_EFFORT"
+        ? { code: "INVALID_REASONING_EFFORT", message: "思考深度只支持低、中、高，请修复模式与约束 JSON。" }
+        : caught instanceof SyntaxError
+          ? { code: "INVALID_DEFINITION", message: "模型约束必须是有效 JSON 对象。" }
+          : toManagementError(caught));
     } finally {
       setSaving(false);
     }
@@ -264,7 +277,7 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
       <label><span>供应商模型名</span><Input aria-label="供应商模型名" value={draft.providerName} onChange={(event) => setDraft((current) => ({ ...current, providerName: event.target.value }))} /></label>
       <label><span>能力</span><select aria-label="能力" value={draft.capability} onChange={(event) => setDraft((current) => ({ ...current, capability: event.target.value as SupplierModelCapability }))}><option value="text">文本</option><option value="image">图片</option><option value="video">视频</option></select></label>
       {supplier.slug === "aixora" && draft.capability === "text" ? (
-        <label><span>默认思考深度</span><select aria-label="默认思考深度" value={draftReasoningEffort()} onChange={(event) => setDraftReasoningEffort(event.target.value as ReasoningEffort)}><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
+        <label><span>默认思考深度</span><select aria-label="默认思考深度" value={draftReasoningEffort()} onChange={(event) => setDraftReasoningEffort(event.target.value as ReasoningEffort)}>{!draftReasoningEffort() ? <option value="" disabled>无效值，请修复 JSON</option> : null}<option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
       ) : null}
       <label><span>模式与约束 JSON</span><textarea aria-label="模式与约束 JSON" value={draft.definition} onChange={(event) => setDraft((current) => ({ ...current, definition: event.target.value }))} /></label>
       {mode === "edit" && editing?.binding_count ? <Checkbox checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)}>我已确认将影响 {editing.binding_count} 处项目绑定</Checkbox> : null}

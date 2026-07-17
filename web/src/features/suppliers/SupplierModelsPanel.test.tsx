@@ -236,6 +236,31 @@ describe("supplier models panel", () => {
     });
   });
 
+  test("does not silently replace an invalid AIXORA reasoning value", async () => {
+    const aixora = { ...supplier, slug: "aixora", display_name: "AIXORA" } as SupplierRead;
+    const invalid = [{
+      ...models[0],
+      binding_count: 0,
+      definition: { constraints: { reasoning_effort: "turbo" }, modes: ["responses"] },
+    }];
+    get.mockImplementation((url: string) => Promise.resolve(
+      url === "/model-tests/status"
+        ? { data: { enabled: true }, headers: {} }
+        : { data: invalid, headers: { etag: '"model-catalog-4"' } },
+    ));
+
+    renderPanel(aixora);
+    await screen.findByRole("cell", { name: "Text Model" });
+    fireEvent.click(screen.getByRole("button", { name: "编辑 Text Model" }));
+
+    expect(screen.getByLabelText("默认思考深度")).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "保存新版本" }));
+
+    expect(await screen.findByText("思考深度只支持低、中、高，请修复模式与约束 JSON。")).toBeInTheDocument();
+    expect(patch).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("模式与约束 JSON") as HTMLTextAreaElement).value).toContain("turbo");
+  });
+
   test("separates disable and physical-delete rules", async () => {
     patch.mockResolvedValue({ data: { ...models[0], enabled: 0, revision: 3 }, headers: {} });
     remove.mockResolvedValue({ data: undefined, headers: {} });
