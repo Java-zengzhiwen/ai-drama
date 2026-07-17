@@ -10,6 +10,10 @@ from ai_drama_web.suppliers.idempotency import (
 from ai_drama_web.suppliers.resolution import ModelResolver, ModelResolutionError
 from ai_drama_web.suppliers.snapshots import SnapshotBuilder
 from ai_drama_web.suppliers.snapshots import load_snapshot, snapshot_hash
+from ai_drama_web.suppliers.reasoning import (
+    ReasoningEffortError,
+    resolve_reasoning_effort,
+)
 from ai_drama_runtime.store import now_iso
 
 
@@ -31,7 +35,7 @@ class M6GenerationCoordinator:
         self.rate_limiter = rate_limiter
         self._checkpoint = checkpoint or (lambda _name: None)
 
-    def _resolve_snapshot(self, project_id, operation_key, constraints=None):
+    def _resolve_snapshot(self, project_id, operation_key, constraints=None, request=None):
         try:
             resolved = ModelResolver(self.store).resolve(project_id, operation_key)
         except ModelResolutionError as exc:
@@ -49,6 +53,20 @@ class M6GenerationCoordinator:
                 if credential.state == "credential_storage_corrupt"
                 else "CREDENTIAL_NOT_READY"
             )
+        if constraints is None and resolved.revision.capability == "text":
+            definition = self._read_json_object(resolved.revision.definition_object_id)
+            config = self.store.get_config_revision(supplier.current_config_revision_id)
+            config_value = self._read_json_object(config.config_object_id) if config else {}
+            try:
+                constraints = {
+                    "reasoning_effort": resolve_reasoning_effort(
+                        request=request or {},
+                        model_definition=definition,
+                        supplier_config=config_value,
+                    )
+                }
+            except ReasoningEffortError as exc:
+                raise M6GenerationError(exc.code) from exc
         return SnapshotBuilder(self.store).build(
             resolved,
             credential_resolution_mode="current",
@@ -56,6 +74,15 @@ class M6GenerationCoordinator:
             resolved_constraints=constraints or {},
             worker_limits={"timeout_seconds": 30, "max_output_bytes": 4 * 1024 * 1024},
         )
+
+    def _read_json_object(self, object_id):
+        if not object_id:
+            return {}
+        try:
+            value = json.loads(self.runtime.read_text(object_id))
+        except (OSError, ValueError, TypeError) as exc:
+            raise M6GenerationError("SUPPLIER_RUNTIME_UNAVAILABLE") from exc
+        return value if isinstance(value, dict) else {}
 
     def enqueue_video(self, *, project_id, chapter_id, shot_id, prompt_revision_id,
                       idempotency_key, request, snapshot=None, source_job_id="",
@@ -115,7 +142,7 @@ class M6GenerationCoordinator:
         )
 
     def execute_text(self, *, project_id, operation_key, idempotency_key, request):
-        snapshot = self._resolve_snapshot(project_id, operation_key)
+        snapshot = self._resolve_snapshot(project_id, operation_key, request=request)
         replay = self._matching_replay(snapshot, "text", idempotency_key, request)
         if replay is not None:
             if replay["status"] == "completed":

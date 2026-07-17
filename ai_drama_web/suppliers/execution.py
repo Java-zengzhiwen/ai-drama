@@ -72,6 +72,7 @@ class SnapshotExecutionGateway:
                 "request": request,
                 "model": snapshot.provider_model_name,
                 "config": config_value,
+                "constraints": dict(snapshot.resolved_constraints),
                 "credential": credential,
             }
             value = self.worker.invoke(artifact, operation, payload, mode="execution", limits=frozen_limits).value

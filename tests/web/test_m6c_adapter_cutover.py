@@ -28,6 +28,11 @@ from ai_drama_web.suppliers.execution import SnapshotExecutionGateway, SupplierE
 from ai_drama_web.suppliers.worker import SupplierInvocationResult, WorkerLimits
 from ai_drama_web.suppliers.snapshots import SupplierRuntimeUnavailable
 from ai_drama_web.suppliers.rate_limits import SupplierRateLimiter
+from ai_drama_web.suppliers.model_catalog import ModelCatalogService
+from ai_drama_web.suppliers.reasoning import (
+    ReasoningEffortError,
+    resolve_reasoning_effort,
+)
 
 
 def test_feature_flag_defaults_off():
@@ -370,6 +375,73 @@ def test_m6_text_execution_persists_snapshot_before_invocation_and_sanitizes_evi
     assert "sensitive-marker" not in evidence
     assert result["output"] == "deterministic text"
     assert result["usage"] == {"input_tokens": 2, "output_tokens": 3}
+
+
+@pytest.mark.parametrize(
+    ("request_value", "definition", "config", "expected"),
+    [
+        (
+            {"parameters": {"reasoning_effort": "high"}},
+            {"constraints": {"reasoning_effort": "low"}},
+            {"reasoning_effort": "medium"},
+            "high",
+        ),
+        (
+            {},
+            {"constraints": {"reasoning_effort": "low"}},
+            {"reasoning_effort": "high"},
+            "low",
+        ),
+        ({}, {}, {"reasoning_effort": "high"}, "high"),
+        ({}, {}, {}, "medium"),
+    ],
+)
+def test_reasoning_resolution_precedence(request_value, definition, config, expected):
+    assert resolve_reasoning_effort(
+        request=request_value,
+        model_definition=definition,
+        supplier_config=config,
+    ) == expected
+
+
+def test_reasoning_resolution_rejects_unexposed_value():
+    with pytest.raises(ReasoningEffortError, match="INVALID_REASONING_EFFORT"):
+        resolve_reasoning_effort(
+            request={"parameters": {"reasoning_effort": "turbo"}},
+            model_definition={},
+            supplier_config={},
+        )
+
+
+@pytest.mark.parametrize(
+    ("request_value", "expected"),
+    [({"prompt": "adapt"}, "low"), ({"prompt": "adapt", "parameters": {"reasoning_effort": "high"}}, "high")],
+)
+def test_m6_text_execution_freezes_effective_reasoning_in_snapshot(tmp_path, request_value, expected):
+    _runtime, store, project, supplier, gateway, coordinator = _coordinator_fixture(
+        tmp_path, "text"
+    )
+    resolved = ModelResolver(store).resolve(project.project_id, "script_adaptation")
+    ModelCatalogService(store).revise_model(
+        resolved.model.supplier_model_id,
+        provider_model_name=resolved.revision.provider_model_name,
+        display_name=resolved.revision.display_name,
+        capability="text",
+        definition={"constraints": {"profile": "fake-text", "reasoning_effort": "low"}},
+        expected_catalog_revision=supplier.model_catalog_revision,
+        expected_model_revision=resolved.model.revision,
+        acknowledged_binding_count=1,
+    )
+
+    coordinator.execute_text(
+        project_id=project.project_id,
+        operation_key="script_adaptation",
+        idempotency_key=f"reasoning-{expected}",
+        request=request_value,
+    )
+
+    snapshot = load_snapshot(store, gateway.calls[0][0])
+    assert snapshot.resolved_constraints == {"reasoning_effort": expected}
 
 
 def test_m6_text_idempotent_replay_does_not_consume_or_require_rate_limit(tmp_path):

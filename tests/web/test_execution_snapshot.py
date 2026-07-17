@@ -14,6 +14,9 @@ from ai_drama_web.suppliers.snapshots import (
     persist_snapshot,
     snapshot_hash,
 )
+from ai_drama_web.suppliers.execution import SnapshotExecutionGateway
+from ai_drama_web.suppliers.worker import SupplierInvocationResult
+from ai_drama_web.suppliers.credentials import SupplierCredentialStore
 from tests.web.model_test_support import create_model, install_test_supplier_runtime
 
 
@@ -245,3 +248,39 @@ def test_snapshot_rejects_forged_immutable_fields_and_unknown_credential(tmp_pat
     for candidate in forged:
         with pytest.raises(SupplierRuntimeUnavailable, match="SUPPLIER_RUNTIME_UNAVAILABLE"):
             persist_snapshot(store, candidate)
+
+
+def test_snapshot_gateway_passes_frozen_constraints_to_worker(tmp_path):
+    _runtime, store, resolved = _resolved(tmp_path)
+    snapshot = SnapshotBuilder(store).build(
+        resolved,
+        credential_resolution_mode="current",
+        resolved_credential_version_id="",
+        resolved_constraints={"reasoning_effort": "high"},
+        worker_limits={"timeout_seconds": 30},
+    )
+    record = persist_snapshot(store, snapshot)
+
+    class RecordingWorker:
+        def __init__(self):
+            self.payload = None
+
+        def invoke(self, _artifact, _operation, payload, *, mode, limits):
+            self.payload = payload
+            return SupplierInvocationResult(
+                value={"output": "ok", "usage": {}},
+                worker_protocol_version="1",
+                helper_api_version="ai-drama-helper-v2",
+                worker_runtime_version="v25.5.0",
+            )
+
+    worker = RecordingWorker()
+    gateway = SnapshotExecutionGateway(
+        store,
+        SupplierCredentialStore(store, tmp_path / "credentials"),
+        worker=worker,
+    )
+
+    gateway.invoke(record.snapshot_hash, "textRequest", {"prompt": "hello"})
+
+    assert worker.payload["constraints"] == {"reasoning_effort": "high"}
