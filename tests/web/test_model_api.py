@@ -231,3 +231,52 @@ export async function textRequest() {{ return {{ text: "fake" }}; }}
     assert revised["supplier_model_id"] == model_id
     assert revised["provider_model_name"] == "base-text-v2"
     assert revised["model_revision_id"] != models.json()[0]["model_revision_id"]
+
+
+def test_supplier_code_manifest_disables_removed_builtin_without_deleting_history(client):
+    supplier = _supplier(client)
+    text_id = "11111111-1111-4111-8111-111111111111"
+    image_id = "22222222-2222-4222-8222-222222222222"
+
+    def source(include_image):
+        image = (
+            f', {{ supplierModelId: "{image_id}", providerModelName: "gpt-image-2", '
+                'displayName: "GPT Image 2", capability: "image" }'
+            if include_image
+            else ""
+        )
+        return f"""
+export const vendor = {{
+  id: "archive-manifest", version: "1", name: "Archive Manifest", author: "Test",
+  adapterContractVersion: "ai-drama-supplier-v1",
+  helperApiVersion: "ai-drama-helper-v1",
+  rateLimitBucketKey: "archive-manifest-bucket", inputs: [], inputValues: {{}},
+  models: [{{ supplierModelId: "{text_id}", providerModelName: "gpt-5.6", displayName: "GPT-5.6", capability: "text" }}{image}]
+}};
+export async function textRequest() {{ return {{ output: "fake", usage: {{}} }}; }}
+export async function imageRequest() {{ return {{ media_type: "image/png" }}; }}
+"""
+
+    first = client.put(
+        f"/api/suppliers/{supplier['supplier_id']}/code",
+        json={"source": source(True)},
+        headers={"If-Match": '"supplier-1"'},
+    )
+    assert first.status_code == 200, first.text
+    before = client.get(f"/api/suppliers/{supplier['supplier_id']}/models").json()
+    image_before = next(model for model in before if model["capability"] == "image")
+
+    second = client.put(
+        f"/api/suppliers/{supplier['supplier_id']}/code",
+        json={"source": source(False)},
+        headers={"If-Match": '"supplier-2"'},
+    )
+    assert second.status_code == 200, second.text
+    after = client.get(f"/api/suppliers/{supplier['supplier_id']}/models").json()
+    image_after = next(model for model in after if model["supplier_model_id"] == image_before["supplier_model_id"])
+
+    assert image_after["enabled"] == 0
+    assert image_after["model_revision_id"] == image_before["model_revision_id"]
+    detail = client.get(f"/api/models/{image_before['supplier_model_id']}")
+    assert detail.status_code == 200
+    assert detail.json()["provider_model_name"] == "gpt-image-2"

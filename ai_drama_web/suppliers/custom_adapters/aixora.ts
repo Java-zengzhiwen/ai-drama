@@ -13,14 +13,16 @@
  * 信任边界：网页保存的 adapter 属于 trusted local code。VM 与 Node permission model
  * 限制常规 API、宿主文件、子进程和线程访问，但不是恶意脚本沙箱；不要保存来源不明代码。
  *
- * AIXORA 当前冻结范围：四个 GPT 文本模型和一个 GPT Image 2 图片模型。
- * 本文件不声明 Grok 或视频能力，也不会把一个文本模型错误包装成图片/视频模型。
+ * AIXORA 当前冻结范围：五个 GPT 文本模型。已验证的 /v1/models 目录未提供图片模型，
+ * 因此当前 manifest 不声明 GPT Image 2；历史模型、修订和测试记录由宿主归档保留。
+ * 本文件不声明 Grok 或视频能力，也不会猜测或替换图片/视频模型。
  */
 
 type SupplierPayload = {
   model: string;
   credential: string;
   config: { base_url?: string; reasoning_effort?: string };
+  constraints?: { reasoning_effort?: string };
   request: {
     prompt?: string;
     messages?: unknown[];
@@ -40,7 +42,7 @@ type SupplierHelpers = {
 
 export const vendor = {
   id: "aixora",
-  version: "ai-drama-1",
+  version: "ai-drama-2",
   name: "AIXORA",
   author: "AI Drama",
   adapterContractVersion: "ai-drama-supplier-v1",
@@ -56,36 +58,39 @@ export const vendor = {
   },
   models: [
     {
-      supplierModelId: "ad6e2e9101f35b62800dc8a6ff1cdaaa",
-      providerModelName: "gpt-5.6-terra",
-      displayName: "GPT-5.6 Terra",
+      supplierModelId: "9ea394a5b44e555db3af4c95711c929b",
+      providerModelName: "gpt-5.5",
+      displayName: "GPT-5.5",
       capability: "text",
+      constraints: { reasoning_effort: "medium" },
+    },
+    {
+      supplierModelId: "07c95486e414569bb18f694431f3ad4f",
+      providerModelName: "gpt-5.6",
+      displayName: "GPT-5.6",
+      capability: "text",
+      constraints: { reasoning_effort: "medium" },
     },
     {
       supplierModelId: "a1a97eb5b16457c38a1e53ee7459c6de",
       providerModelName: "gpt-5.6-sol",
       displayName: "GPT-5.6 Sol",
       capability: "text",
+      constraints: { reasoning_effort: "medium" },
     },
     {
       supplierModelId: "41f191fa614050daabefd1085cf730aa",
       providerModelName: "gpt-5.6-luna",
       displayName: "GPT-5.6 Luna",
       capability: "text",
+      constraints: { reasoning_effort: "medium" },
     },
     {
-      supplierModelId: "9ea394a5b44e555db3af4c95711c929b",
-      providerModelName: "gpt-5.5",
-      displayName: "GPT-5.5",
+      supplierModelId: "ad6e2e9101f35b62800dc8a6ff1cdaaa",
+      providerModelName: "gpt-5.6-terra",
+      displayName: "GPT-5.6 Terra",
       capability: "text",
-    },
-    {
-      supplierModelId: "e7dc2c3c5a205726ad2b44b583e3aeb9",
-      providerModelName: "gpt-image-2",
-      displayName: "GPT Image 2",
-      capability: "image",
-      default_size: "1024x1024",
-      constraints: { sizes: ["1024x1024", "1536x1024", "1024x1536", "auto"] },
+      constraints: { reasoning_effort: "medium" },
     },
   ],
 };
@@ -115,10 +120,11 @@ function authorization(payload: SupplierPayload): Record<string, string> {
   };
 }
 
-/** 请求级思考深度优先于供应商默认值；所有值都先经过固定白名单。 */
+/** 请求级覆盖优先，其次使用快照冻结值，最后才读取供应商默认值。 */
 function reasoningEffort(payload: SupplierPayload): string {
   const value = String(
     payload.request?.parameters?.reasoning_effort
+      || payload.constraints?.reasoning_effort
       || payload.config?.reasoning_effort
       || "medium",
   );

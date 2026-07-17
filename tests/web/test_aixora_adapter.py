@@ -81,7 +81,7 @@ def invoke(artifact, operation, payload, responses):
     return json.loads(completed.stdout)
 
 
-def payload(model, *, request=None, config=None):
+def payload(model, *, request=None, config=None, constraints=None):
     return {
         "model": model,
         "credential": "test-credential-not-real",
@@ -90,24 +90,29 @@ def payload(model, *, request=None, config=None):
             "reasoning_effort": "medium",
         },
         "request": request or {"prompt": "hello"},
+        "constraints": constraints or {},
     }
 
 
 def test_manifest_is_exact_and_stable(artifact):
     assert artifact.helper_api_version == "ai-drama-helper-v2"
     assert [(model["providerModelName"], model["capability"]) for model in artifact.vendor["models"]] == [
-        ("gpt-5.6-terra", "text"),
+        ("gpt-5.5", "text"),
+        ("gpt-5.6", "text"),
         ("gpt-5.6-sol", "text"),
         ("gpt-5.6-luna", "text"),
-        ("gpt-5.5", "text"),
-        ("gpt-image-2", "image"),
+        ("gpt-5.6-terra", "text"),
     ]
     assert [item["key"] for item in artifact.vendor["inputs"]] == ["base_url", "reasoning_effort"]
     assert artifact.vendor["inputValues"] == {
         "base_url": "https://www.aixora.store/v1",
         "reasoning_effort": "medium",
     }
-    assert artifact.vendor["models"][-1]["default_size"] == "1024x1024"
+    assert artifact.vendor["models"][1]["supplierModelId"] == "07c95486e414569bb18f694431f3ad4f"
+    assert all(
+        model["constraints"]["reasoning_effort"] == "medium"
+        for model in artifact.vendor["models"]
+    )
 
 
 @pytest.mark.parametrize("effort", ["none", "low", "medium", "high", "xhigh", "max"])
@@ -150,6 +155,32 @@ def test_text_uses_canonical_response_content_and_rejects_invalid_effort(artifac
 
     assert canonical["result"]["output"] == "canonical"
     assert invalid == {"ok": False, "error_code": "INVALID_REASONING_EFFORT", "calls": []}
+
+
+def test_text_reasoning_precedence_uses_frozen_constraints_before_supplier_config(artifact):
+    frozen = invoke(
+        artifact,
+        "textRequest",
+        payload(
+            "gpt-5.6",
+            constraints={"reasoning_effort": "low"},
+            config={"base_url": "https://www.aixora.store/v1", "reasoning_effort": "high"},
+        ),
+        [{"output_text": "ok", "usage": {}}],
+    )
+    explicit = invoke(
+        artifact,
+        "textRequest",
+        payload(
+            "gpt-5.6",
+            request={"prompt": "hello", "parameters": {"reasoning_effort": "high"}},
+            constraints={"reasoning_effort": "low"},
+        ),
+        [{"output_text": "ok", "usage": {}}],
+    )
+
+    assert frozen["calls"][0]["body"]["reasoning"] == {"effort": "low"}
+    assert explicit["calls"][0]["body"]["reasoning"] == {"effort": "high"}
 
 
 def test_text_to_image_accepts_base64_and_url_results(artifact):
