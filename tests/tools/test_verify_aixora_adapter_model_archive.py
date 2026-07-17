@@ -20,7 +20,8 @@ def test_verifier_schema_is_fake_only_and_has_zero_real_calls():
     loaded = module()
     report = loaded.verify(group_results={name: True for name in loaded.GROUP_COMMANDS})
 
-    assert list(report["checks"]) == [f"AIXORA-{number:03d}" for number in range(1, 11)]
+    assert list(report["checks"]) == [f"AIXORA-{number:03d}" for number in range(1, 13)]
+    assert "reasoning" in loaded.GROUP_COMMANDS
     assert report["result"] == "PASS"
     assert report["success_token"] == "AIXORA_MODEL_ARCHIVE_PASS"
     assert report["verification_mode"] == "offline_fake_only"

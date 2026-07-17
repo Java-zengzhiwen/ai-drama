@@ -44,6 +44,22 @@ GROUP_COMMANDS = OrderedDict(
                     "--",
                     "--run",
                     "src/features/suppliers/SupplierModelsPanel.test.tsx",
+                    "src/features/suppliers/ModelTestDialog.test.tsx",
+                    "src/features/suppliers/api.test.ts",
+                ]
+            ],
+        ),
+        (
+            "reasoning",
+            [
+                PYTEST
+                + [
+                    "tests/web/test_m6c_adapter_cutover.py",
+                    "tests/web/test_execution_snapshot.py",
+                    "tests/web/test_supplier_model_tests.py",
+                    "tests/web/test_model_api.py",
+                    "-k",
+                    "reasoning or frozen_constraints or disables_removed",
                 ]
             ],
         ),
@@ -77,7 +93,7 @@ GROUP_COMMANDS = OrderedDict(
 
 CHECK_DEFINITIONS = OrderedDict(
     (
-        ("AIXORA-001", ("adapter", "exact four text models and GPT Image 2 manifest")),
+        ("AIXORA-001", ("adapter", "exact five text models including gpt-5.6 and no active image declaration")),
         ("AIXORA-002", ("adapter", "Responses output, usage, and reasoning effort normalization")),
         (
             "AIXORA-003",
@@ -105,6 +121,20 @@ CHECK_DEFINITIONS = OrderedDict(
         ("AIXORA-008", ("archive+migration", "immutable history and replay-safe additive migration")),
         ("AIXORA-009", ("security", "loopback management and default transport denial")),
         ("AIXORA-010", ("regression+security", "M6 governance gates and zero real provider calls")),
+        (
+            "AIXORA-011",
+            (
+                "reasoning+adapter+ui",
+                "request-model-supplier reasoning precedence, immutable snapshot payload, model-test override and recovery UI",
+            ),
+        ),
+        (
+            "AIXORA-012",
+            (
+                "reasoning+archive",
+                "removed GPT Image 2 declaration disables the stable model while preserving its immutable revision",
+            ),
+        ),
     )
 )
 
@@ -168,7 +198,7 @@ def verify(*, group_results=None, force_fail=()):
         }
     passed = all(item["result"] == "PASS" for item in checks.values())
     return {
-        "schema_version": "aixora-adapter-model-archive-verification-v1",
+        "schema_version": "aixora-adapter-model-archive-verification-v2",
         "verification_mode": "offline_fake_only",
         "checks": checks,
         "result": "PASS" if passed else "FAIL",
