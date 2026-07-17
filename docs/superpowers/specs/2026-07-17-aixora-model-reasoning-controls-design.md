@@ -2,7 +2,7 @@
 
 Date: 2026-07-17
 
-Status: `APPROVED_DIRECTION_AWAITING_WRITTEN_SPEC_CONFIRMATION`
+Status: `APPROVED`
 
 Branch: `feat/aixora-adapter-model-archive`
 
