@@ -145,13 +145,29 @@ function responseText(raw: any): string {
   return parts.join("");
 }
 
+/**
+ * AIXORA 的 Responses 入口对字符串 input 的兼容性并不稳定：部分推理模型会只返回
+ * reasoning 项而不返回最终 message。普通提示词因此统一转换为 Responses API 的标准
+ * message/input_text 结构；调用方已提供 messages 时保持原样。这里不做失败重试，避免
+ * 一次用户测试被重复提交和重复计费。
+ */
+function responsesInput(payload: SupplierPayload): unknown[] {
+  if (Array.isArray(payload.request?.messages) && payload.request.messages.length) {
+    return payload.request.messages;
+  }
+  return [
+    {
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: String(payload.request?.prompt || "") }],
+    },
+  ];
+}
+
 export async function textRequest(payload: SupplierPayload, helpers: SupplierHelpers) {
-  const input = Array.isArray(payload.request?.messages) && payload.request.messages.length
-    ? payload.request.messages
-    : String(payload.request?.prompt || "");
   const body: Record<string, unknown> = {
     model: payload.model,
-    input,
+    input: responsesInput(payload),
     reasoning: { effort: reasoningEffort(payload) },
     stream: false,
     store: false,

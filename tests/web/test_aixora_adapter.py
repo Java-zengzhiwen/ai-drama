@@ -134,9 +134,34 @@ def test_text_responses_normalizes_output_and_reasoning_effort(artifact, effort)
     }
     request = result["calls"][0]
     assert request["url"] == "https://www.aixora.store/v1/responses"
+    assert request["body"]["input"] == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "hello"}],
+        }
+    ]
     assert request["body"]["reasoning"] == {"effort": effort}
     assert request["body"]["stream"] is False
     assert request["body"]["store"] is False
+
+
+def test_text_preserves_caller_supplied_response_messages(artifact):
+    messages = [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "hello"}],
+        }
+    ]
+    result = invoke(
+        artifact,
+        "textRequest",
+        payload("gpt-5.6-luna", request={"messages": messages}),
+        [{"output_text": "ok", "usage": {}}],
+    )
+
+    assert result["calls"][0]["body"]["input"] == messages
 
 
 def test_text_uses_canonical_response_content_and_rejects_invalid_effort(artifact):
