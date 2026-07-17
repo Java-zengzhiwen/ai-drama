@@ -46,7 +46,7 @@ def test_overlay_revision_keeps_stable_identity_and_old_revision(tmp_path):
     assert store.get_supplier_model_revision(revised.current_model_revision_id).provider_model_name == "text-v2"
 
 
-@pytest.mark.parametrize("effort", ["turbo", "none", "", 7])
+@pytest.mark.parametrize("effort", ["turbo", "none", "", 7, [], {"nested": "bad"}])
 def test_catalog_rejects_invalid_reasoning_definition_before_persistence(tmp_path, effort):
     _runtime, store, catalog = _catalog(tmp_path)
     supplier = store.list_suppliers()[0]

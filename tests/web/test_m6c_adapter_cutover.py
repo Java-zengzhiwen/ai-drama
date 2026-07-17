@@ -404,10 +404,11 @@ def test_reasoning_resolution_precedence(request_value, definition, config, expe
     ) == expected
 
 
-def test_reasoning_resolution_rejects_unexposed_value():
+@pytest.mark.parametrize("value", ["turbo", [], {"nested": "bad"}])
+def test_reasoning_resolution_rejects_unexposed_value(value):
     with pytest.raises(ReasoningEffortError, match="INVALID_REASONING_EFFORT"):
         resolve_reasoning_effort(
-            request={"parameters": {"reasoning_effort": "turbo"}},
+            request={"parameters": {"reasoning_effort": value}},
             model_definition={},
             supplier_config={},
         )

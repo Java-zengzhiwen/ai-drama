@@ -48,7 +48,7 @@ All automated commands used fake/local transports with default external-network 
 
 | Verification | Result |
 | --- | --- |
-| Python pytest | 713 passed, 1 skipped after the review correction |
+| Python pytest | 717 passed, 1 skipped after both review corrections |
 | Web Vitest | 113 passed, 4 skipped after the review correction |
 | Web production build | PASS |
 | Playwright E2E | 11 passed |
