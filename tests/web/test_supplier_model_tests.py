@@ -11,7 +11,8 @@ from ai_drama_web.suppliers.models import RevisionConflict
 from ai_drama_web.suppliers.model_tests import ModelTestError, ModelTestExecutor, ModelTestService
 from ai_drama_web.suppliers.rate_limits import SupplierRateLimiter
 from ai_drama_web.suppliers.resolution import ResolvedModel
-from ai_drama_web.suppliers.snapshots import SnapshotBuilder
+from ai_drama_web.suppliers.snapshots import SnapshotBuilder, load_snapshot
+from ai_drama_web.suppliers.model_catalog import ModelCatalogService
 from tests.web.model_test_support import create_model, install_test_supplier_runtime
 
 
@@ -231,6 +232,97 @@ def test_service_creates_text_run_from_direct_model_snapshot(tmp_path):
     assert '"rate_limit_bucket_key":"test-bucket"' in persisted_snapshot
     request = runtime.read_text(run["request_object_id"])
     assert request == '{"prompt":"hello","test_contract_version":"model-test-v1"}'
+    assert service.safe_read(run["test_run_id"])["reasoning_effort"] == "medium"
+    runtime.close()
+
+
+def test_text_model_test_override_wins_and_is_frozen_for_audit(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
+    service = ModelTestService(store)
+
+    run, created = service.create_model_test(
+        supplier_model_id=snapshot.supplier_model_id,
+        prompt="hello",
+        reasoning_effort="high",
+        idempotency_key="reasoning-override",
+        expected_model_revision=1,
+    )
+
+    assert created is True
+    persisted = load_snapshot(store, run["snapshot_hash"])
+    assert persisted.resolved_constraints["reasoning_effort"] == "high"
+    assert runtime.read_text(run["request_object_id"]) == (
+        '{"parameters":{"reasoning_effort":"high"},"prompt":"hello",'
+        '"test_contract_version":"model-test-v1"}'
+    )
+    assert service.safe_read(run["test_run_id"])["reasoning_effort"] == "high"
+    runtime.close()
+
+
+def test_text_model_test_uses_model_default_before_supplier_default(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
+    supplier = store.get_supplier(snapshot.supplier_id)
+    model = store.get_supplier_model(snapshot.supplier_model_id)
+    revision = store.get_supplier_model_revision(model.current_model_revision_id)
+    ModelCatalogService(store).revise_model(
+        model.supplier_model_id,
+        provider_model_name=revision.provider_model_name,
+        display_name=revision.display_name,
+        capability="text",
+        definition={"constraints": {"profile": "test-text", "reasoning_effort": "low"}},
+        expected_catalog_revision=supplier.model_catalog_revision,
+        expected_model_revision=model.revision,
+        acknowledged_binding_count=0,
+    )
+    current = store.get_supplier_model(model.supplier_model_id)
+
+    run, _created = ModelTestService(store).create_model_test(
+        supplier_model_id=model.supplier_model_id,
+        prompt="hello",
+        idempotency_key="reasoning-model-default",
+        expected_model_revision=current.revision,
+    )
+
+    persisted = load_snapshot(store, run["snapshot_hash"])
+    assert persisted.resolved_constraints["reasoning_effort"] == "low"
+    runtime.close()
+
+
+def test_image_model_test_rejects_reasoning_before_writing_run(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(
+        tmp_path, capability="image"
+    )
+
+    with pytest.raises(ModelTestError, match="MODEL_TEST_REASONING_UNSUPPORTED"):
+        ModelTestService(store).create_model_test(
+            supplier_model_id=snapshot.supplier_model_id,
+            prompt="a cup",
+            reasoning_effort="high",
+            idempotency_key="image-reasoning",
+            expected_model_revision=1,
+        )
+
+    assert store.conn.execute(
+        "SELECT count(*) FROM supplier_model_test_runs"
+    ).fetchone()[0] == 0
+    runtime.close()
+
+
+def test_text_model_test_rejects_invalid_reasoning_before_writing_run(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
+
+    with pytest.raises(ModelTestError, match="INVALID_REASONING_EFFORT"):
+        ModelTestService(store).create_model_test(
+            supplier_model_id=snapshot.supplier_model_id,
+            prompt="hello",
+            reasoning_effort="turbo",
+            idempotency_key="invalid-reasoning",
+            expected_model_revision=1,
+        )
+
+    assert store.conn.execute(
+        "SELECT count(*) FROM supplier_model_test_runs"
+    ).fetchone()[0] == 0
     runtime.close()
 
 
@@ -259,6 +351,28 @@ def test_service_replays_same_key_and_input_but_conflicts_on_changed_prompt(tmp_
             supplier_model_id=snapshot.supplier_model_id,
             prompt="changed",
             idempotency_key="service-replay",
+            expected_model_revision=1,
+        )
+    runtime.close()
+
+
+def test_service_replay_conflicts_when_reasoning_override_changes(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
+    service = ModelTestService(store)
+    service.create_model_test(
+        supplier_model_id=snapshot.supplier_model_id,
+        prompt="hello",
+        reasoning_effort="low",
+        idempotency_key="reasoning-conflict",
+        expected_model_revision=1,
+    )
+
+    with pytest.raises(RevisionConflict, match="IDEMPOTENCY_CONFLICT"):
+        service.create_model_test(
+            supplier_model_id=snapshot.supplier_model_id,
+            prompt="hello",
+            reasoning_effort="high",
+            idempotency_key="reasoning-conflict",
             expected_model_revision=1,
         )
     runtime.close()
@@ -665,7 +779,42 @@ def test_text_model_test_api_queues_recovers_and_completes_locally(tmp_path, mon
     assert terminal["status"] == "completed"
     assert terminal["output"] == "hello"
     assert terminal["usage"] == {"total_tokens": 1}
+    assert terminal["reasoning_effort"] == "medium"
     assert "credential" not in terminal
+
+
+@pytest.mark.parametrize(
+    ("capability", "reasoning_effort", "expected_code"),
+    [
+        ("text", "turbo", "INVALID_REASONING_EFFORT"),
+        ("image", "high", "MODEL_TEST_REASONING_UNSUPPORTED"),
+    ],
+)
+def test_model_test_api_rejects_unsupported_reasoning_locally(
+    tmp_path, monkeypatch, capability, reasoning_effort, expected_code
+):
+    monkeypatch.setenv("AI_DRAMA_MODEL_TESTS_ENABLED", "true")
+    app = create_app(data_root=tmp_path / "runtime-data", skills_root="skills")
+
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
+        model = client.portal.call(lambda: _install_api_model(app, tmp_path, capability))
+        response = client.post(
+            f"/api/models/{model.supplier_model_id}/tests",
+            headers={
+                "Idempotency-Key": f"api-reasoning-{capability}",
+                "If-Match": f'"model-{model.supplier_model_id}-1"',
+            },
+            json={"prompt": "hello", "reasoning_effort": reasoning_effort},
+        )
+        run_count = client.portal.call(
+            lambda: app.state.product_store.conn.execute(
+                "SELECT count(*) FROM supplier_model_test_runs"
+            ).fetchone()[0]
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["error_code"] == expected_code
+    assert run_count == 0
 
 
 def test_image_model_test_content_is_local_and_private(tmp_path, monkeypatch):

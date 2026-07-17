@@ -7,6 +7,7 @@ class ModelTestCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prompt: str = Field(min_length=1, max_length=4000)
+    reasoning_effort: str | None = Field(default=None, min_length=1, max_length=16)
 
 
 class ModelTestFeatureStatus(BaseModel):
@@ -30,3 +31,4 @@ class ModelTestRead(BaseModel):
     elapsed_ms: int = 0
     error_code: str = ""
     error_message: str = ""
+    reasoning_effort: str = ""

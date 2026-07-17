@@ -39,6 +39,7 @@ async def create_model_test(
         run, _created = service.create_model_test(
             supplier_model_id=supplier_model_id,
             prompt=payload.prompt,
+            reasoning_effort=payload.reasoning_effort,
             idempotency_key=idempotency_key,
             expected_model_revision=revision,
         )
@@ -115,7 +116,12 @@ def _model_revision(header, model_id):
 
 
 def _model_test_error(exc):
-    status = 404 if exc.code in {"MODEL_NOT_FOUND", "MODEL_TEST_NOT_FOUND"} else 409
+    if exc.code in {"MODEL_NOT_FOUND", "MODEL_TEST_NOT_FOUND"}:
+        status = 404
+    elif exc.code in {"INVALID_REASONING_EFFORT", "MODEL_TEST_REASONING_UNSUPPORTED"}:
+        status = 422
+    else:
+        status = 409
     raise HTTPException(
         status,
         detail={"error_code": exc.code, "error_message": _safe_message(exc.code)},
@@ -132,5 +138,7 @@ def _safe_message(code):
         "CREDENTIAL_STORAGE_CORRUPT": "供应商密钥存储异常。",
         "SUPPLIER_OPERATION_UNAVAILABLE": "适配代码未导出该模型能力。",
         "SUPPLIER_RUNTIME_UNAVAILABLE": "供应商运行时不可用。",
+        "INVALID_REASONING_EFFORT": "思考深度只支持低、中、高。",
+        "MODEL_TEST_REASONING_UNSUPPORTED": "当前模型能力不支持思考深度。",
     }
     return messages.get(code, "模型测试无法启动。")

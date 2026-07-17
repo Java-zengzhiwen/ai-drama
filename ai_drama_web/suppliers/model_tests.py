@@ -11,6 +11,7 @@ from .models import RevisionConflict
 from .resolution import ResolvedModel
 from .snapshots import SnapshotBuilder, SupplierRuntimeUnavailable, load_snapshot, snapshot_hash
 from .media import image_bytes_match_media_type
+from .reasoning import ReasoningEffortError, resolve_reasoning_effort
 
 
 TEST_CONTRACT_VERSION = "model-test-v1"
@@ -33,7 +34,8 @@ class ModelTestService:
         self.store = store
 
     def create_model_test(
-        self, *, supplier_model_id, prompt, idempotency_key, expected_model_revision
+        self, *, supplier_model_id, prompt, idempotency_key, expected_model_revision,
+        reasoning_effort=None,
     ):
         model = self.store.get_supplier_model(supplier_model_id)
         if model is None:
@@ -46,6 +48,8 @@ class ModelTestService:
         capability = revision.capability
         if capability not in {"text", "image"}:
             raise ModelTestError("MODEL_TEST_CAPABILITY_UNSUPPORTED")
+        if capability != "text" and reasoning_effort is not None:
+            raise ModelTestError("MODEL_TEST_REASONING_UNSUPPORTED")
         max_prompt = 4000 if capability == "text" else 2000
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > max_prompt:
             raise ModelTestError("MODEL_TEST_PROMPT_INVALID")
@@ -72,7 +76,24 @@ class ModelTestService:
         definition = self._read_json(revision.definition_object_id)
         request = {"prompt": prompt.strip(), "test_contract_version": TEST_CONTRACT_VERSION}
         resolved_constraints = {}
-        if capability == "image":
+        if capability == "text":
+            if reasoning_effort is not None:
+                request["parameters"] = {"reasoning_effort": reasoning_effort}
+            config = self.store.get_config_revision(supplier.current_config_revision_id)
+            config_value = (
+                self._read_json(config.config_object_id)
+                if config and config.config_object_id
+                else {}
+            )
+            try:
+                resolved_constraints["reasoning_effort"] = resolve_reasoning_effort(
+                    request=request,
+                    model_definition=definition,
+                    supplier_config=config_value,
+                )
+            except ReasoningEffortError as exc:
+                raise ModelTestError(exc.code) from exc
+        else:
             constraints = definition.get("constraints") if isinstance(definition, dict) else {}
             declared_size = definition.get("default_size") if isinstance(definition, dict) else None
             if not declared_size and isinstance(constraints, dict):
@@ -167,6 +188,14 @@ class ModelTestService:
             "error_code": run["error_code"],
             "error_message": run["error_message"],
         }
+        if run["capability"] == "text":
+            try:
+                snapshot = load_snapshot(self.store, run["snapshot_hash"])
+            except Exception as exc:
+                raise ModelTestError("SUPPLIER_RUNTIME_UNAVAILABLE") from exc
+            result["reasoning_effort"] = str(
+                snapshot.resolved_constraints.get("reasoning_effort") or ""
+            )
         if run["normalized_result_object_id"]:
             normalized = self._read_json(run["normalized_result_object_id"])
             if run["capability"] == "text":
