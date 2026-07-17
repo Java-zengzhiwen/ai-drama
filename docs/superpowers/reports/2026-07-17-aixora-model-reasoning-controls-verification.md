@@ -4,7 +4,7 @@ Date: 2026-07-17
 
 Branch: `feat/aixora-adapter-model-archive`
 
-Status: `IMPLEMENTED_AWAITING_FINAL_READ_ONLY_REVIEW`
+Status: `READY_FOR_REVIEW`
 
 ## Outcome
 
@@ -100,6 +100,10 @@ The feature remains reachable at `http://127.0.0.1:8000/suppliers`. A project ca
 
 ## Review State
 
-Two independent reviewers inspected candidate `0c41ac696cf9a2ff9240bedaad4d0e59a5b105f1` and found the same High issue: model catalog mutations accepted invalid reasoning definitions and the UI could silently normalize them. The correction adds service-boundary validation, stable HTTP 422 mapping, fail-closed UI behavior, and focused red/green tests.
+Two independent reviewers inspected candidate `0c41ac696cf9a2ff9240bedaad4d0e59a5b105f1` and found the same High issue: model catalog mutations accepted invalid reasoning definitions and the UI could silently normalize them. The first correction added service-boundary validation, stable HTTP 422 mapping, fail-closed UI behavior, and focused red/green tests. Technical/security review then found that structured values could still reach a Python membership check and return HTTP 500. Candidate `5f20532b26d591e79ef974bb95c9c3a613203d18` resolves values by field presence, validates the type before membership, and rejects strings, numbers, arrays, objects, booleans, null, and empty strings outside the supported enum without persistence or Provider traffic.
 
-The corrected report-bearing candidate must receive specification/acceptance and architecture/technical/security re-review before this report changes to `READY_FOR_REVIEW`.
+Final read-only reviews of exact implementation candidate `5f20532b26d591e79ef974bb95c9c3a613203d18`:
+
+- Specification/acceptance: `PASS`; blockers `NONE`; high findings `NONE`.
+- Architecture/technical/security: `PASS`; blockers `NONE`; high findings `NONE`.
+- Both reviewers confirmed the verification ledger, zero real generation requests, default production flag false, stable invalid-input behavior, and absence of tracked sensitive evidence.
