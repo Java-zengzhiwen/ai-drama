@@ -17,6 +17,8 @@ import { hasStoredModelTest, ModelTestDialog } from "./ModelTestDialog";
 import { toManagementError, type ManagementError } from "./managementErrors";
 
 const CAPABILITY_LABEL = { text: "文本", image: "图片", video: "视频" } as const;
+const REASONING_LABELS = { low: "低", medium: "中", high: "高" } as const;
+type ReasoningEffort = keyof typeof REASONING_LABELS;
 
 function modelTestDisabledReason(
   supplier: SupplierRead,
@@ -106,7 +108,47 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
   function definition(): Record<string, unknown> {
     const value = JSON.parse(draft.definition || "{}");
     if (!value || Array.isArray(value) || typeof value !== "object") throw new Error("definition");
+    if (supplier.slug === "aixora" && draft.capability === "text") {
+      const constraints = value.constraints;
+      value.constraints = {
+        ...(constraints && !Array.isArray(constraints) && typeof constraints === "object"
+          ? constraints as Record<string, unknown>
+          : {}),
+        reasoning_effort: draftReasoningEffort(),
+      };
+    }
     return value;
+  }
+
+  function draftReasoningEffort(): ReasoningEffort {
+    try {
+      const value = JSON.parse(draft.definition || "{}") as Record<string, unknown>;
+      const constraints = value.constraints;
+      const effort = constraints && !Array.isArray(constraints) && typeof constraints === "object"
+        ? (constraints as Record<string, unknown>).reasoning_effort
+        : undefined;
+      return effort === "low" || effort === "high" ? effort : "medium";
+    } catch {
+      return "medium";
+    }
+  }
+
+  function setDraftReasoningEffort(reasoningEffort: ReasoningEffort) {
+    try {
+      const value = JSON.parse(draft.definition || "{}") as Record<string, unknown>;
+      if (!value || Array.isArray(value) || typeof value !== "object") throw new Error("definition");
+      const constraints = value.constraints;
+      value.constraints = {
+        ...(constraints && !Array.isArray(constraints) && typeof constraints === "object"
+          ? constraints as Record<string, unknown>
+          : {}),
+        reasoning_effort: reasoningEffort,
+      };
+      setDraft((current) => ({ ...current, definition: JSON.stringify(value, null, 2) }));
+      setError(null);
+    } catch {
+      setError({ code: "INVALID_DEFINITION", message: "请先修复模式与约束 JSON，再调整默认思考深度。" });
+    }
   }
 
   async function create(event: FormEvent) {
@@ -221,6 +263,9 @@ export function SupplierModelsPanel({ supplier }: { supplier: SupplierRead }) {
       <label><span>显示名称</span><Input aria-label="显示名称" value={draft.displayName} onChange={(event) => setDraft((current) => ({ ...current, displayName: event.target.value }))} /></label>
       <label><span>供应商模型名</span><Input aria-label="供应商模型名" value={draft.providerName} onChange={(event) => setDraft((current) => ({ ...current, providerName: event.target.value }))} /></label>
       <label><span>能力</span><select aria-label="能力" value={draft.capability} onChange={(event) => setDraft((current) => ({ ...current, capability: event.target.value as SupplierModelCapability }))}><option value="text">文本</option><option value="image">图片</option><option value="video">视频</option></select></label>
+      {supplier.slug === "aixora" && draft.capability === "text" ? (
+        <label><span>默认思考深度</span><select aria-label="默认思考深度" value={draftReasoningEffort()} onChange={(event) => setDraftReasoningEffort(event.target.value as ReasoningEffort)}><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select></label>
+      ) : null}
       <label><span>模式与约束 JSON</span><textarea aria-label="模式与约束 JSON" value={draft.definition} onChange={(event) => setDraft((current) => ({ ...current, definition: event.target.value }))} /></label>
       {mode === "edit" && editing?.binding_count ? <Checkbox checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)}>我已确认将影响 {editing.binding_count} 处项目绑定</Checkbox> : null}
       {error ? (

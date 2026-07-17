@@ -58,11 +58,11 @@ const models = [
   },
 ];
 
-function renderPanel() {
+function renderPanel(currentSupplier = supplier) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <SupplierModelsPanel supplier={supplier} />
+      <SupplierModelsPanel supplier={currentSupplier} />
     </QueryClientProvider>,
   );
 }
@@ -198,6 +198,42 @@ describe("supplier models panel", () => {
       expect.objectContaining({ display_name: "Text Model Renamed", acknowledged_binding_count: 2 }),
       { headers: { "If-Match": '"model-stable-base-text-2", "model-catalog-4"' } },
     );
+  });
+
+  test("edits AIXORA text reasoning without clobbering advanced definition", async () => {
+    const aixora = { ...supplier, slug: "aixora", display_name: "AIXORA" } as SupplierRead;
+    const aixoraModels = [
+      {
+        ...models[0],
+        binding_count: 0,
+        definition: {
+          modes: ["responses"],
+          limits: { context: 128000 },
+          constraints: { reasoning_effort: "low", temperature: 0.2 },
+        },
+      },
+    ];
+    get.mockImplementation((url: string) => Promise.resolve(
+      url === "/model-tests/status"
+        ? { data: { enabled: true }, headers: {} }
+        : { data: aixoraModels, headers: { etag: '"model-catalog-4"' } },
+    ));
+    patch.mockResolvedValue({ data: aixoraModels[0], headers: {} });
+
+    renderPanel(aixora);
+    await screen.findByRole("cell", { name: "Text Model" });
+    fireEvent.click(screen.getByRole("button", { name: "编辑 Text Model" }));
+
+    expect(screen.getByLabelText("默认思考深度")).toHaveValue("low");
+    fireEvent.change(screen.getByLabelText("默认思考深度"), { target: { value: "high" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存新版本" }));
+
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1].definition).toEqual({
+      modes: ["responses"],
+      limits: { context: 128000 },
+      constraints: { reasoning_effort: "high", temperature: 0.2 },
+    });
   });
 
   test("separates disable and physical-delete rules", async () => {

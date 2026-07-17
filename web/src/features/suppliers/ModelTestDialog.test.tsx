@@ -27,11 +27,15 @@ const model = {
   enabled: 1,
 } as SupplierModelRead;
 
-function renderDialog(open = true) {
+function renderDialog(
+  open = true,
+  currentSupplier: SupplierRead = supplier,
+  currentModel: SupplierModelRead = model,
+) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <ModelTestDialog supplier={supplier} model={model} open={open} onClose={vi.fn()} />
+      <ModelTestDialog supplier={currentSupplier} model={currentModel} open={open} onClose={vi.fn()} />
     </QueryClientProvider>,
   );
 }
@@ -77,12 +81,81 @@ describe("model test dialog", () => {
     expect(api.createModelTest).toHaveBeenCalledWith(
       model.supplier_model_id,
       "一只白色陶瓷杯放在木桌上，柔和自然光，简洁写实，无文字",
+      null,
       '"model-image-model-1-2"',
       "model-test-key-1",
     );
     expect(await screen.findByText("image/png")).toBeInTheDocument();
     expect(screen.getByText("1 KB")).toBeInTheDocument();
     expect(screen.getByText("800 ms")).toBeInTheDocument();
+  });
+
+  test("submits and displays a text reasoning override", async () => {
+    const textSupplier = { ...supplier, slug: "aixora", display_name: "AIXORA" } as SupplierRead;
+    const textModel = {
+      ...model,
+      supplier_model_id: "text-model-1",
+      display_name: "GPT-5.6",
+      provider_model_name: "gpt-5.6",
+      capability: "text",
+      definition: { constraints: { reasoning_effort: "medium" } },
+    } as SupplierModelRead;
+    api.createModelTest.mockResolvedValue({
+      test_run_id: "run-text-1",
+      supplier_model_id: textModel.supplier_model_id,
+      capability: "text",
+      status: "completed",
+      output: "连接测试成功",
+      reasoning_effort: "high",
+      elapsed_ms: 420,
+      created_at: "2026-07-17T00:00:00Z",
+    });
+
+    renderDialog(true, textSupplier, textModel);
+    expect(screen.getByLabelText("本次思考深度")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("本次思考深度"), { target: { value: "high" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认并测试" }));
+
+    await waitFor(() => expect(api.createModelTest).toHaveBeenCalledWith(
+      textModel.supplier_model_id,
+      "请只回复：连接测试成功",
+      "high",
+      '"model-text-model-1-2"',
+      "model-test-key-1",
+    ));
+    expect(await screen.findByText("实际思考深度：高")).toBeInTheDocument();
+  });
+
+  test("restores and locks the reasoning override with the idempotent request", async () => {
+    const textModel = {
+      ...model,
+      supplier_model_id: "text-model-recovery",
+      capability: "text",
+      definition: { constraints: { reasoning_effort: "medium" } },
+    } as SupplierModelRead;
+    sessionStorage.setItem(
+      `ai-drama:model-test:${textModel.supplier_model_id}`,
+      JSON.stringify({
+        idempotencyKey: "stored-text-key",
+        testRunId: "run-text-stored",
+        reasoningEffort: "high",
+      }),
+    );
+    api.getModelTest.mockResolvedValue({
+      test_run_id: "run-text-stored",
+      supplier_model_id: textModel.supplier_model_id,
+      capability: "text",
+      status: "queued",
+      reasoning_effort: "high",
+      created_at: "2026-07-17T00:00:00Z",
+    });
+
+    renderDialog(true, supplier, textModel);
+
+    const select = await screen.findByLabelText("本次思考深度");
+    expect(select).toHaveValue("high");
+    expect(select).toBeDisabled();
+    expect(api.createModelTest).not.toHaveBeenCalled();
   });
 
   test("resumes a queued run from session storage and polls to completion", async () => {

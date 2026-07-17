@@ -7,6 +7,7 @@ import {
   newIdempotencyKey,
   recoverModelTest,
   type ModelTestRead,
+  type ReasoningEffort,
   type SupplierModelRead,
   type SupplierRead,
 } from "./api";
@@ -23,7 +24,26 @@ type Props = {
   onClose: () => void;
 };
 
-type StoredRun = { idempotencyKey: string; testRunId?: string };
+type StoredRun = {
+  idempotencyKey: string;
+  testRunId?: string;
+  reasoningEffort?: ReasoningEffort | null;
+};
+
+const REASONING_LABELS: Record<ReasoningEffort, string> = {
+  low: "低",
+  medium: "中",
+  high: "高",
+};
+
+function modelReasoningEffort(model: SupplierModelRead): ReasoningEffort {
+  const constraints = model.definition?.constraints;
+  if (constraints && !Array.isArray(constraints) && typeof constraints === "object") {
+    const value = (constraints as Record<string, unknown>).reasoning_effort;
+    if (value === "low" || value === "high") return value;
+  }
+  return "medium";
+}
 
 export function modelTestStorageKey(modelId: string): string {
   return `ai-drama:model-test:${modelId}`;
@@ -45,6 +65,7 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
   const storedRunPresent = open && hasStoredModelTest(model.supplier_model_id);
   const [prompt, setPrompt] = useState(model.capability === "image" ? DEFAULT_IMAGE_PROMPT : DEFAULT_TEXT_PROMPT);
   const [run, setRun] = useState<ModelTestRead | null>(null);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [recovering, setRecovering] = useState(storedRunPresent);
   const [error, setError] = useState("");
@@ -81,6 +102,7 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
     if (!open) return;
     setPrompt(model.capability === "image" ? DEFAULT_IMAGE_PROMPT : DEFAULT_TEXT_PROMPT);
     setRun(null);
+    setReasoningEffort(null);
     setError("");
     setPollAttempt(0);
     const raw = sessionStorage.getItem(modelTestStorageKey(model.supplier_model_id));
@@ -100,6 +122,7 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
       setRecovering(false);
       return;
     }
+    setReasoningEffort(stored.reasoningEffort ?? null);
     let cancelled = false;
     let retryTimer: number | undefined;
     const recover = async () => {
@@ -144,20 +167,22 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
     setSubmitting(true);
     setError("");
     const idempotencyKey = newIdempotencyKey("model-test");
+    const selectedReasoningEffort = model.capability === "text" ? reasoningEffort : null;
     sessionStorage.setItem(
       modelTestStorageKey(model.supplier_model_id),
-      JSON.stringify({ idempotencyKey }),
+      JSON.stringify({ idempotencyKey, reasoningEffort: selectedReasoningEffort }),
     );
     try {
       const created = await createModelTest(
         model.supplier_model_id,
         prompt.trim(),
+        selectedReasoningEffort,
         modelEtag(model),
         idempotencyKey,
       );
       sessionStorage.setItem(
         modelTestStorageKey(model.supplier_model_id),
-        JSON.stringify({ idempotencyKey, testRunId: created.test_run_id }),
+        JSON.stringify({ idempotencyKey, testRunId: created.test_run_id, reasoningEffort: selectedReasoningEffort }),
       );
       await acceptRun(created);
     } catch (caught) {
@@ -173,7 +198,7 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
         const recovered = await recoverModelTest(model.supplier_model_id, idempotencyKey);
         sessionStorage.setItem(
           modelTestStorageKey(model.supplier_model_id),
-          JSON.stringify({ idempotencyKey, testRunId: recovered.test_run_id }),
+          JSON.stringify({ idempotencyKey, testRunId: recovered.test_run_id, reasoningEffort: selectedReasoningEffort }),
         );
         await acceptRun(recovered);
       } catch {
@@ -219,6 +244,24 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
             disabled={recovering || submitting || Boolean(run && ACTIVE_STATUSES.has(run.status))}
           />
         </label>
+        {model.capability === "text" ? (
+          <label className="model-test-prompt">
+            <span>本次思考深度</span>
+            <select
+              aria-label="本次思考深度"
+              value={reasoningEffort ?? ""}
+              onChange={(event) => setReasoningEffort(
+                event.target.value ? event.target.value as ReasoningEffort : null,
+              )}
+              disabled={locked}
+            >
+              <option value="">跟随模型默认（当前：{REASONING_LABELS[modelReasoningEffort(model)]}）</option>
+              <option value="low">低</option>
+              <option value="medium">中</option>
+              <option value="high">高</option>
+            </select>
+          </label>
+        ) : null}
         <Alert type="warning" showIcon message="将向真实供应商提交 1 次生成请求，可能产生费用。" />
         {run && ACTIVE_STATUSES.has(run.status) ? (
           <div className="model-test-progress"><Spin size="small" /><span>供应商正在处理，测试编号 {run.test_run_id}</span></div>
@@ -232,6 +275,7 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
               {run.byte_size ? <div><dt>文件大小</dt><dd>{formatBytes(run.byte_size)}</dd></div> : null}
               <div><dt>耗时</dt><dd>{run.elapsed_ms ?? 0} ms</dd></div>
               {run.usage && Object.keys(run.usage).length ? <div><dt>Token</dt><dd>{JSON.stringify(run.usage)}</dd></div> : null}
+              {run.capability === "text" && run.reasoning_effort && run.reasoning_effort in REASONING_LABELS ? <div><dt>思考深度</dt><dd>实际思考深度：{REASONING_LABELS[run.reasoning_effort as ReasoningEffort]}</dd></div> : null}
             </dl>
           </div>
         ) : null}

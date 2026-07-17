@@ -110,7 +110,10 @@ export type ModelTestRead = {
   elapsed_ms?: number;
   error_code?: string;
   error_message?: string;
+  reasoning_effort?: string;
 };
+
+export type ReasoningEffort = "low" | "medium" | "high";
 
 function withEtag<T>(response: AxiosResponse<T>): WithEtag<T> {
   return { data: response.data, etag: String(response.headers?.etag ?? "") };
@@ -279,12 +282,15 @@ export async function getModelTestFeatureStatus(): Promise<{ enabled: boolean }>
 export async function createModelTest(
   modelId: string,
   prompt: string,
+  reasoningEffort: ReasoningEffort | null,
   modelEtag: string,
   idempotencyKey: string,
 ): Promise<ModelTestRead> {
+  const body: { prompt: string; reasoning_effort?: ReasoningEffort } = { prompt };
+  if (reasoningEffort !== null) body.reasoning_effort = reasoningEffort;
   const response = await apiClient.post<ModelTestRead>(
     `/models/${modelId}/tests`,
-    { prompt },
+    body,
     { headers: { "Idempotency-Key": idempotencyKey, "If-Match": modelEtag } },
   );
   return response.data;
