@@ -13,9 +13,9 @@
  * 信任边界：网页保存的 adapter 属于 trusted local code。VM 与 Node permission model
  * 限制常规 API、宿主文件、子进程和线程访问，但不是恶意脚本沙箱；不要保存来源不明代码。
  *
- * AIXORA 当前冻结范围：五个 GPT 文本模型。已验证的 /v1/models 目录未提供图片模型，
- * 因此当前 manifest 不声明 GPT Image 2；历史模型、修订和测试记录由宿主归档保留。
- * 本文件不声明 Grok 或视频能力，也不会猜测或替换图片/视频模型。
+ * AIXORA 当前冻结范围：五个 GPT 文本模型和 GPT Image 2 图片模型。/v1/models
+ * 目录可能不列出图片模型，但 /v1/images/generations 已通过同账号真实调用验证可用。
+ * 本文件不声明 Grok 或视频能力，也不会猜测或替换其它图片/视频模型。
  */
 
 type SupplierPayload = {
@@ -91,6 +91,14 @@ export const vendor = {
       displayName: "GPT-5.6 Terra",
       capability: "text",
       constraints: { reasoning_effort: "medium" },
+    },
+    {
+      supplierModelId: "e7dc2c3c5a205726ad2b44b583e3aeb9",
+      providerModelName: "gpt-image-2",
+      displayName: "GPT Image 2",
+      capability: "image",
+      default_size: "1024x1024",
+      constraints: {},
     },
   ],
 };
@@ -248,7 +256,9 @@ export async function imageRequest(payload: SupplierPayload, helpers: SupplierHe
     method: "POST",
     url: `${baseUrl(payload)}/images/generations`,
     headers: authorization(payload),
-    body: { ...fields, n: 1, response_format: "b64_json" },
+    // AIXORA supports OpenAI-compatible URL results. Prefer URL over b64_json
+    // so the Worker does not need to move multi-megabyte JSON through the VM.
+    body: { ...fields, n: 1, response_format: "url" },
   });
   return normalizedImage(raw, helpers);
 }

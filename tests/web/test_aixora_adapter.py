@@ -102,6 +102,7 @@ def test_manifest_is_exact_and_stable(artifact):
         ("gpt-5.6-sol", "text"),
         ("gpt-5.6-luna", "text"),
         ("gpt-5.6-terra", "text"),
+        ("gpt-image-2", "image"),
     ]
     assert [item["key"] for item in artifact.vendor["inputs"]] == ["base_url", "reasoning_effort"]
     assert artifact.vendor["inputValues"] == {
@@ -109,9 +110,12 @@ def test_manifest_is_exact_and_stable(artifact):
         "reasoning_effort": "medium",
     }
     assert artifact.vendor["models"][1]["supplierModelId"] == "07c95486e414569bb18f694431f3ad4f"
+    image_model = next(model for model in artifact.vendor["models"] if model["capability"] == "image")
+    assert image_model["default_size"] == "1024x1024"
     assert all(
         model["constraints"]["reasoning_effort"] == "medium"
         for model in artifact.vendor["models"]
+        if model["capability"] == "text"
     )
 
 
@@ -224,7 +228,7 @@ def test_text_to_image_accepts_base64_and_url_results(artifact):
 
     assert base64_result["ok"] is True
     assert base64_result["calls"][0]["url"].endswith("/images/generations")
-    assert base64_result["calls"][0]["body"]["response_format"] == "b64_json"
+    assert base64_result["calls"][0]["body"]["response_format"] == "url"
     assert base64_result["calls"][1]["mediaOperation"] == "decodeBase64"
     assert url_result["calls"][1] == {
         "method": "GET",
