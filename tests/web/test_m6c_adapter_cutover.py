@@ -370,6 +370,50 @@ def test_m6_text_execution_persists_snapshot_before_invocation_and_sanitizes_evi
     assert result["usage"] == {"input_tokens": 2, "output_tokens": 3}
 
 
+def test_m6_text_execution_normalizes_runtime_request_into_model_messages(tmp_path):
+    runtime, store, project, _supplier, gateway, coordinator = _coordinator_fixture(tmp_path, "text")
+    runtime_request = {
+        "request_format_version": "runtime-request-v1",
+        "system_instruction": "Return only the requested script.",
+        "skill": {"skill_id": "script-adaptation"},
+        "inputs": [
+            {
+                "logical_type": "source_chapter",
+                "relative_path": "web-inputs/source_chapter.md",
+                "content": "chapter text",
+            }
+        ],
+        "context_files": [],
+        "output_contract": {"format": "markdown"},
+        "runtime_config": {"provider": "supplier", "model": ""},
+    }
+
+    result = coordinator.execute_text(
+        project_id=project.project_id,
+        operation_key="script_adaptation",
+        idempotency_key="runtime-request-text",
+        request=runtime_request,
+    )
+
+    outbound = gateway.calls[0][2]
+    assert outbound == {
+        "messages": [
+            {"role": "system", "content": "Return only the requested script."},
+            {
+                "role": "user",
+                "content": json.dumps(
+                    runtime_request,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+            },
+        ]
+    }
+    run = store.get_supplier_text_run(result["run_id"])
+    assert json.loads(runtime.read_text(run["request_object_id"])) == outbound
+
+
 def test_active_legacy_agnes_backfill_is_idempotent_and_preserves_video_id(tmp_path):
     runtime = RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects")
     store = ProductStore(runtime)

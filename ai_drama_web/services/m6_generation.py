@@ -15,6 +15,39 @@ class M6GenerationError(RuntimeError):
         self.code = code
 
 
+def _normalize_text_request(request):
+    """Convert an internal RuntimeRequest into the provider-neutral text contract.
+
+    Model-level tests and direct callers already provide ``prompt`` or ``messages``.
+    Workflow execution instead passes the complete, versioned RuntimeRequest used by
+    the legacy OpenAI-compatible path. Preserve that exact payload as the user
+    message so supplier adapters never receive an empty prompt and the request stays
+    deterministic and auditable.
+    """
+    if not isinstance(request, dict):
+        raise M6GenerationError("SUPPLIER_TEXT_REQUEST_INVALID")
+    if request.get("prompt") is not None or request.get("messages") is not None:
+        return request
+    if request.get("request_format_version") != "runtime-request-v1":
+        return request
+    messages = []
+    system_instruction = request.get("system_instruction")
+    if system_instruction:
+        messages.append({"role": "system", "content": str(system_instruction)})
+    messages.append(
+        {
+            "role": "user",
+            "content": json.dumps(
+                request,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        }
+    )
+    return {"messages": messages}
+
+
 class M6GenerationCoordinator:
     def __init__(self, store, runtime_store, credential_store, gateway, checkpoint=None):
         self.store = store
@@ -107,6 +140,7 @@ class M6GenerationCoordinator:
         )
 
     def execute_text(self, *, project_id, operation_key, idempotency_key, request):
+        request = _normalize_text_request(request)
         snapshot = self._resolve_snapshot(project_id, operation_key)
         run, created = self.store.enqueue_text_run_with_snapshot(
             project_id=project_id,
