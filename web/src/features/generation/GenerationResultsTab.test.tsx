@@ -156,6 +156,7 @@ describe("GenerationResultsTab", () => {
     const preview = await screen.findByLabelText("video result preview");
     expect(within(preview).getByText("Job job-1")).toBeInTheDocument();
     expect(preview.querySelector("video")).toHaveAttribute("src", "/api/results/result-1/content");
+    expect(preview.querySelector("video")).not.toHaveAttribute("autoplay");
 
     fireEvent.click(screen.getByText("v2"));
     expect(within(preview).getByText("Job job-2")).toBeInTheDocument();
@@ -194,5 +195,30 @@ describe("GenerationResultsTab", () => {
         mode: "std",
       });
     });
+  });
+
+  test("renders rerun as a non-modal region at compact widths", async () => {
+    const originalMatchMedia = window.matchMedia;
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === "(max-width: 1180px)",
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
+    try {
+      renderWithQueryClient(<GenerationResultsTab chapter={chapter} />);
+      const preview = await screen.findByLabelText("video result preview");
+      fireEvent.click(within(preview).getByRole("button", { name: "创建重跑" }));
+
+      expect(await screen.findByRole("region", { name: "创建 Agnes 重跑" })).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "创建 Agnes 重跑" })).not.toBeInTheDocument();
+    } finally {
+      window.matchMedia = originalMatchMedia;
+    }
   });
 });

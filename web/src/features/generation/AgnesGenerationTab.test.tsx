@@ -104,6 +104,8 @@ describe("AgnesGenerationTab", () => {
     renderWithQueryClient(<AgnesGenerationTab chapter={chapter} revision={revision} />);
 
     expect(await screen.findByLabelText("自动轮询状态")).toHaveTextContent("自动轮询已开启");
+    const generationTable = screen.getByRole("table", { name: "Agnes generation table" });
+    expect(within(generationTable).getByRole("row", { name: /SHOT_001/ })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByLabelText("选择 SHOT_002")).toBeDisabled();
     fireEvent.click(screen.getByLabelText("选择 SHOT_001"));
     expect(screen.getByText(/已选择 ready 镜头 1 个/)).toBeInTheDocument();
@@ -120,6 +122,7 @@ describe("AgnesGenerationTab", () => {
     expect(await screen.findByText(/提交完成：created 1/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "SHOT_002" }));
+    expect(within(generationTable).getByRole("row", { name: /SHOT_002/ })).toHaveAttribute("aria-selected", "true");
     const preview = screen.getByLabelText("Agnes request preview");
     expect(within(preview).getByText("Blocked prompt")).toBeInTheDocument();
   });

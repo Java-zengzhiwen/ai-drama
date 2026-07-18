@@ -271,8 +271,8 @@ export function StoryboardTab({ chapter, status }: StoryboardTabProps) {
   }
 
   return (
-    <section aria-label="分镜工作台" style={{ display: "grid", gap: 16 }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+    <section aria-label="分镜工作台" className="production-workbench storyboard-workbench">
+      <div className="production-command-bar">
         <Button
           disabled={!canGenerateStoryboard}
           loading={generateMutation.isPending}
@@ -352,9 +352,9 @@ export function StoryboardTab({ chapter, status }: StoryboardTabProps) {
       {revisions.length === 0 ? (
         <Typography.Text type="secondary">暂无分镜。确认剧本后生成分镜。</Typography.Text>
       ) : (
-        <div style={{ display: "grid", gap: 16, gridTemplateColumns: "minmax(0, 1.4fr) minmax(300px, 0.6fr)" }}>
-          <div style={{ display: "grid", gap: 12, minWidth: 0 }}>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <div className="storyboard-layout">
+          <div className="storyboard-table-column">
+            <div className="revision-strip">
               {revisions.map((revision) => (
                 <Button
                   disabled={isDraftDirty || isStoryboardMutating}
@@ -377,6 +377,7 @@ export function StoryboardTab({ chapter, status }: StoryboardTabProps) {
 
           <aside
             aria-label="分镜 inspector"
+            className="production-inspector storyboard-inspector"
             style={{
               border: "1px solid #d9dee8",
               borderRadius: 6,
@@ -489,7 +490,11 @@ function ShotTable({
         </thead>
         <tbody>
           {shots.map((shot) => (
-            <tr key={shot.shot_id} style={shot.shot_id === selectedShotId ? selectedRowStyle : undefined}>
+            <tr
+              aria-selected={shot.shot_id === selectedShotId}
+              key={shot.shot_id}
+              style={shot.shot_id === selectedShotId ? selectedRowStyle : undefined}
+            >
               <td style={tableCellStyle}>
                 <Button disabled={disabled} onClick={() => onSelect(shot.shot_id)} size="small" type="link">
                   {shot.shot_id}

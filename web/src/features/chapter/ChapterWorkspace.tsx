@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { Alert, Button, Skeleton, Tabs, Tag, Typography } from "antd";
+import { Alert, Button, Skeleton, Tabs, Typography } from "antd";
 import { useMemo, useState } from "react";
+import { Link, useInRouterContext } from "react-router-dom";
 import { ProfilesAssetsTab } from "../assets/ProfilesAssetsTab";
 import { AgnesGenerationTab } from "../generation/AgnesGenerationTab";
 import { GenerationResultsTab } from "../generation/GenerationResultsTab";
@@ -31,8 +32,10 @@ const storyboardBlockedReason = "未确认剧本，不允许生成分镜。";
 const productionBlockedReason = "未确认分镜，不允许进入后续生产步骤。";
 const agnesBlockedReason = "请先生成或选择当前 Shot Prompt revision。";
 const resultsBlockedReason = "已有 GenerationJob 后可查看结果与重跑。";
+const workflowTabKeys = ["source", "script", "storyboard", "assets", "shot-prompt", "agnes", "results"];
 
 export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps) {
+  const inRouterContext = useInRouterContext();
   const [activeTab, setActiveTab] = useState("source");
   const chapterQuery = useQuery({
     enabled: Boolean(chapterId),
@@ -75,33 +78,44 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
   const chapter = chapterQuery.data;
 
   return (
-    <section aria-labelledby="chapter-workspace-title" style={{ display: "grid", gap: 18 }}>
-      <div>
+    <section aria-labelledby="chapter-workspace-title" className="chapter-workspace">
+      <header className="chapter-heading">
+        <div className="chapter-breadcrumb">
+          {inRouterContext ? (
+            <Link to={`/projects/${projectId}`}>返回项目</Link>
+          ) : (
+            <a href={`/projects/${projectId}`}>返回项目</a>
+          )}
+          <span aria-hidden="true">/</span>
+          <span>章节 {chapter?.position ?? "-"}</span>
+        </div>
         <Typography.Title id="chapter-workspace-title" level={1} style={{ fontSize: 22, margin: 0 }}>
           {chapter?.title ?? "章节工作区"}
         </Typography.Title>
-        <Typography.Text type="secondary">
-          Project {projectId} / Chapter {chapterId}
-        </Typography.Text>
-      </div>
+        <Typography.Text type="secondary">从原文到生成结果的单章制作工作台</Typography.Text>
+      </header>
 
       <div
         aria-label="workflow rail"
-        style={{
-          background: "#ffffff",
-          border: "1px solid #d9dee8",
-          borderRadius: 6,
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 8,
-          padding: 12,
-        }}
+        className="workflow-rail"
+        role="list"
       >
-        {rail.map((item) => (
-          <Tag color={item.color} key={item.label}>
-            {item.label}
-            {item.reason ? `：${item.reason}` : ""}
-          </Tag>
+        {rail.map((item, index) => (
+          <div
+            aria-label={item.label}
+            className="workflow-step"
+            data-active={workflowTabKeys[index] === activeTab}
+            data-reason={item.reason || undefined}
+            data-tone={item.color}
+            key={item.label}
+            role="listitem"
+          >
+            <span className="workflow-step-index">{String(index + 1).padStart(2, "0")}</span>
+            <span className="workflow-step-copy">
+              <strong aria-hidden="true">{item.label}</strong>
+              <small aria-hidden="true">{item.reason ? "查看阻断原因" : "已完成"}</small>
+            </span>
+          </div>
         ))}
       </div>
 
@@ -113,7 +127,9 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
         />
       ) : null}
 
-      <LockedReasons status={status} />
+      <div className={activeTab === "source" ? "visually-hidden" : undefined}>
+        <LockedReasons agnesOpen={agnesOpen} status={status} />
+      </div>
 
       {chapterQuery.isLoading || !chapter ? (
         <Tabs
@@ -132,11 +148,12 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
         />
       ) : (
         <Tabs
+          className="chapter-tabs"
           activeKey={activeTab}
           onChange={setActiveTab}
           items={[
             {
-              children: <SourceTab chapter={chapter} />,
+              children: <SourceTab chapter={chapter} onOpenScript={() => setActiveTab("script")} />,
               key: "source",
               label: "原文",
             },
@@ -310,7 +327,7 @@ function getApiErrorDetails(error: unknown, fallbackMessage: string) {
   };
 }
 
-function LockedReasons({ status }: { status?: ChapterStatus }) {
+function LockedReasons({ agnesOpen, status }: { agnesOpen: boolean; status?: ChapterStatus }) {
   const storyboardReason = storyboardLockReason(status);
   const productionReason = productionLockReason(status);
 
@@ -319,7 +336,12 @@ function LockedReasons({ status }: { status?: ChapterStatus }) {
       {!storyboardUnlocked(status) ? (
         <Alert message="分镜已锁定" description={storyboardReason} showIcon type="info" />
       ) : null}
-      <Alert message="后续生产步骤已锁定" description={productionReason} showIcon type="info" />
+      {!assetsUnlocked(status) ? (
+        <Alert message="后续生产步骤已锁定" description={productionReason} showIcon type="info" />
+      ) : null}
+      {assetsUnlocked(status) && !agnesOpen ? (
+        <Alert message="Agnes 生成已锁定" description={agnesBlockedReason} showIcon type="info" />
+      ) : null}
     </div>
   );
 }

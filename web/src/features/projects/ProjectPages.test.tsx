@@ -29,6 +29,9 @@ describe("project pages", () => {
       if (url === "/projects") {
         return { data: [] };
       }
+      if (url === "/projects/project-1/chapters") {
+        return { data: [] };
+      }
       throw new Error(`unexpected GET ${url}`);
     });
     mockedPost.mockImplementation(async (url: string, payload: ProjectCreate) => {
@@ -53,6 +56,9 @@ describe("project pages", () => {
     render(<App />);
 
     await screen.findByText("暂无项目。创建项目后开始章节制作。");
+    expect(screen.queryByLabelText("项目名称")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "新建项目" }));
+    expect(screen.getByRole("dialog", { name: "新建项目" })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("项目名称"), { target: { value: "生死" } });
     fireEvent.change(screen.getByLabelText("项目描述"), { target: { value: "古装重生短剧" } });
     fireEvent.change(screen.getByLabelText("系列设定"), { target: { value: "明代商贾世界" } });
@@ -75,8 +81,110 @@ describe("project pages", () => {
       "href",
       "/projects/project-1",
     );
-    expect(screen.getByText("未加载")).toBeInTheDocument();
-    expect(screen.queryByText("待添加章节")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "新建项目" })).not.toBeInTheDocument());
+    expect(await screen.findByText("尚未添加章节")).toBeInTheDocument();
+  });
+
+  test("focuses the newest project and filters the remaining production queue", async () => {
+    mockedGet.mockImplementation(async (url: string) => {
+      if (url === "/projects") {
+        return {
+          data: [
+            {
+              project_id: "project-older",
+              name: "M2 Verification",
+              description: "古装重生短剧",
+              series_canon: "",
+              characters_context: "",
+              production_brief: "",
+              created_at: "2026-07-17T10:00:00Z",
+              updated_at: "2026-07-17T10:00:00Z",
+            },
+            {
+              project_id: "project-active",
+              name: "生死",
+              description: "古装重生短剧",
+              series_canon: "",
+              characters_context: "",
+              production_brief: "",
+              created_at: "2026-07-18T06:00:00Z",
+              updated_at: "2026-07-18T06:32:00Z",
+            },
+          ],
+        };
+      }
+      if (url === "/projects/project-active/chapters") {
+        return {
+          data: [
+            {
+              chapter_id: "chapter-active",
+              project_id: "project-active",
+              title: "第一章",
+              position: 1,
+              current_source_revision_id: "source-1",
+              created_at: "2026-07-18T06:10:00Z",
+              updated_at: "2026-07-18T06:32:00Z",
+              source_text: "正文",
+            },
+          ],
+        };
+      }
+      if (url === "/chapters/chapter-active/status") {
+        return {
+          data: {
+            status: "script_draft",
+            blocking_reason: "",
+            next_action: "approve_script",
+          },
+        };
+      }
+      if (url === "/projects/project-older/chapters") {
+        return {
+          data: [
+            {
+              chapter_id: "chapter-older",
+              project_id: "project-older",
+              title: "第一章",
+              position: 1,
+              current_source_revision_id: "source-2",
+              created_at: "2026-07-17T10:00:00Z",
+              updated_at: "2026-07-17T10:00:00Z",
+              source_text: "正文",
+            },
+          ],
+        };
+      }
+      if (url === "/chapters/chapter-older/status") {
+        return {
+          data: {
+            status: "missing_source",
+            blocking_reason: "chapter source revision is required",
+            next_action: "add_source",
+          },
+        };
+      }
+      throw new Error(`unexpected GET ${url}`);
+    });
+    window.history.replaceState({}, "", "/projects");
+
+    render(<App />);
+
+    const focusRegion = await screen.findByRole("region", { name: "继续制作" });
+    expect(focusRegion).toHaveTextContent("生死");
+    expect(focusRegion).toHaveTextContent("剧本待确认");
+    expect(screen.getByRole("link", { name: "继续剧本" })).toHaveAttribute(
+      "href",
+      "/projects/project-active/chapters/chapter-active",
+    );
+    expect(await screen.findByRole("link", { name: "M2 Verification" })).toBeInTheDocument();
+    expect(screen.getByText("待添加原文")).toBeInTheDocument();
+    expect(screen.queryByText("chapter source revision is required")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole("searchbox", { name: "搜索项目" }), {
+      target: { value: "不存在" },
+    });
+    expect(screen.queryByRole("link", { name: "M2 Verification" })).not.toBeInTheDocument();
+    expect(screen.getByText("没有匹配的其他项目")).toBeInTheDocument();
   });
 
   test("loads a project dashboard with persisted chapters from the API", async () => {

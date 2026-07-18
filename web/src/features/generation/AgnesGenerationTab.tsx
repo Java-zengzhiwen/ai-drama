@@ -95,7 +95,7 @@ export function AgnesGenerationTab({ chapter, revision }: AgnesGenerationTabProp
   }
 
   return (
-    <section aria-label="Agnes 生成工作台" style={{ display: "grid", gap: 16 }}>
+    <section aria-label="Agnes 生成工作台" className="production-workbench generation-workbench">
       <div style={headerStyle}>
         <Typography.Title level={2} style={titleStyle}>
           Agnes 生成
@@ -120,8 +120,8 @@ export function AgnesGenerationTab({ chapter, revision }: AgnesGenerationTabProp
         <Alert message="Agnes 生成操作失败" showIcon type="error" />
       ) : null}
 
-      <div style={workspaceGridStyle}>
-        <section aria-label="Agnes generation rows" style={panelStyle}>
+      <div className="generation-layout" style={workspaceGridStyle}>
+        <section aria-label="Agnes generation rows" className="production-panel generation-table-panel" style={panelStyle}>
           <div style={toolbarStyle}>
             <Checkbox
               aria-label="全选 ready 镜头"
@@ -140,7 +140,8 @@ export function AgnesGenerationTab({ chapter, revision }: AgnesGenerationTabProp
             <Button onClick={() => void jobsQuery.refetch()}>手动刷新</Button>
             <Typography.Text type="secondary">RPM 限制：queued 任务会按后端节流提交。</Typography.Text>
           </div>
-          <table style={tableStyle}>
+          <div className="dense-table-scroll">
+          <table aria-label="Agnes generation table" className="dense-table" style={tableStyle}>
             <thead>
               <tr>
                 <th style={thStyle}>选择</th>
@@ -158,6 +159,7 @@ export function AgnesGenerationTab({ chapter, revision }: AgnesGenerationTabProp
                 const ready = readiness === "ready";
                 return (
                   <tr
+                    aria-selected={shot.shot_id === selectedShot?.shot_id}
                     key={shot.shot_id}
                     onClick={(event) => {
                       if ((event.target as HTMLElement).closest("button,input,label")) {
@@ -214,9 +216,10 @@ export function AgnesGenerationTab({ chapter, revision }: AgnesGenerationTabProp
               })}
             </tbody>
           </table>
+          </div>
         </section>
 
-        <section aria-label="Agnes request preview" style={panelStyle}>
+        <section aria-label="Agnes request preview" className="production-panel production-inspector" style={panelStyle}>
           <Typography.Title level={3} style={sectionTitleStyle}>
             请求预览
           </Typography.Title>

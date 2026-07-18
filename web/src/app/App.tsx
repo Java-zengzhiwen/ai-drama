@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Layout, Typography } from "antd";
 import { useState } from "react";
-import { BrowserRouter, Link, Navigate, Route, Routes, useParams } from "react-router-dom";
+import { BrowserRouter, Navigate, NavLink, Route, Routes, useParams } from "react-router-dom";
 import { ChapterWorkspace } from "../features/chapter/ChapterWorkspace";
 import { ProjectDashboardPage } from "../features/projects/ProjectDashboardPage";
 import { ProjectListPage } from "../features/projects/ProjectListPage";
@@ -21,13 +21,17 @@ function AppShell() {
   return (
     <Layout className="app-shell">
       <Layout.Header className="app-header">
-        <Typography.Text className="app-brand">AI 剧集制作</Typography.Text>
+        <div className="app-brand-lockup">
+          <Typography.Text className="app-brand">AI Drama</Typography.Text>
+          <Typography.Text className="app-brand-context">制作工作台</Typography.Text>
+        </div>
         <nav className="app-nav" aria-label="主导航">
-          <Link to="/projects">
+          <NavLink to="/projects">
             项目
-          </Link>
-          <Link to="/suppliers">模型供应商</Link>
+          </NavLink>
+          <NavLink to="/suppliers">模型供应商</NavLink>
         </nav>
+        <Typography.Text className="app-local-state">本地工作区</Typography.Text>
       </Layout.Header>
       <Layout.Content className="app-content">
         <Routes>

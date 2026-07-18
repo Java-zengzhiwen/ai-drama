@@ -217,7 +217,7 @@ export function ShotPromptTab({ chapter, onOpenAssets }: ShotPromptTabProps) {
   }
 
   return (
-    <section aria-label="Shot Prompt 工作台" style={{ display: "grid", gap: 16 }}>
+    <section aria-label="Shot Prompt 工作台" className="production-workbench prompt-workbench">
       <div style={headerStyle}>
         <Typography.Title level={2} style={{ fontSize: 18, margin: 0 }}>
           Shot Prompt
@@ -254,7 +254,7 @@ export function ShotPromptTab({ chapter, onOpenAssets }: ShotPromptTabProps) {
         />
       ) : null}
 
-      <section style={panelStyle}>
+      <section className="production-panel" style={panelStyle}>
         <div style={toolbarStyle}>
           <div>
             <Typography.Title level={2} style={sectionTitleStyle}>
@@ -297,6 +297,7 @@ export function ShotPromptTab({ chapter, onOpenAssets }: ShotPromptTabProps) {
               {
                 children: (
                   <div
+                    className="prompt-layout"
                     style={{
                       display: "grid",
                       gap: 16,
@@ -324,7 +325,7 @@ export function ShotPromptTab({ chapter, onOpenAssets }: ShotPromptTabProps) {
                       />
                     </div>
 
-                    <aside aria-label="Shot Prompt inspector" style={panelStyle}>
+                    <aside aria-label="Shot Prompt inspector" className="production-inspector prompt-inspector" style={panelStyle}>
                       <PromptGateSummary reason={gateSummary} status={selectedStatus} />
                       <ShotPromptEditor
                         disabled={isMutating}
@@ -738,8 +739,8 @@ function ShotPromptTable({
   }
 
   return (
-    <div style={{ overflowX: "auto" }}>
-      <table aria-label="Shot prompt rows" style={tableStyle}>
+    <div className="dense-table-scroll">
+      <table aria-label="Shot prompt rows" className="dense-table" style={tableStyle}>
         <thead style={{ background: "#f9fafc" }}>
           <tr>
             <th style={tableHeaderStyle}>shot_id</th>

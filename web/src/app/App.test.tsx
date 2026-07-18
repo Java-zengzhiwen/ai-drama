@@ -29,8 +29,9 @@ describe("App routes", () => {
 
     render(<App />);
 
-    expect(screen.getByRole("heading", { name: "项目列表" })).toBeInTheDocument();
-    expect(screen.getByText("项目")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "项目" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "项目" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("link", { name: "模型供应商" })).not.toHaveAttribute("aria-current");
   });
 
   test("unknown routes redirect to /projects", async () => {
@@ -39,7 +40,7 @@ describe("App routes", () => {
     render(<App />);
 
     await waitFor(() => expect(window.location.pathname).toBe("/projects"));
-    expect(screen.getByRole("heading", { name: "项目列表" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "项目" })).toBeInTheDocument();
   });
 
   test("/suppliers renders the local supplier management destination", async () => {
@@ -52,5 +53,6 @@ describe("App routes", () => {
       "href",
       "/suppliers",
     );
+    expect(screen.getByRole("link", { name: "模型供应商" })).toHaveAttribute("aria-current", "page");
   });
 });
