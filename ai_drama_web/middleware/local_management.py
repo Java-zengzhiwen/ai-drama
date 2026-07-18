@@ -11,6 +11,7 @@ def is_management_path(path):
     return (
         path.startswith("/api/suppliers")
         or path.startswith("/api/models")
+        or path.startswith("/api/model-tests")
         or path == "/api/settings/agnes"
         or bool(PROJECT_MANAGEMENT_PATH.match(path))
     )

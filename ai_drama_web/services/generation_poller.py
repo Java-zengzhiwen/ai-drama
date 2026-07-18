@@ -6,6 +6,7 @@ from ai_drama_web.providers.base import GenerationBackend
 from ai_drama_web.services.generation_execution import GenerationExecutionService
 from ai_drama_web.store import ProductStore
 from ai_drama_web.suppliers.snapshots import load_snapshot, SupplierRuntimeUnavailable
+from ai_drama_web.suppliers.rate_limits import SupplierRateLimiter
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class GenerationPoller:
         rpm: int,
         poll_interval_seconds: float,
         execution_service: GenerationExecutionService | None = None,
+        rate_limiter: SupplierRateLimiter | None = None,
     ) -> None:
         if rpm <= 0:
             raise ValueError("rpm must be positive")
@@ -41,6 +43,7 @@ class GenerationPoller:
             runtime_store,
             backend,
         )
+        self.rate_limiter = rate_limiter or SupplierRateLimiter(rpm)
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
@@ -104,7 +107,7 @@ class GenerationPoller:
         return eligible, len(jobs) - len(eligible)
 
     def _rate_limited_jobs(self, jobs, *, mutate_unavailable=True):
-        counts = {}
+        legacy_counts = {}
         selected = []
         for job in jobs:
             bucket = "legacy:%s" % job.provider
@@ -119,9 +122,13 @@ class GenerationPoller:
                         )
                         continue
                     bucket = "unavailable:%s" % job.snapshot_hash
-            if counts.get(bucket, 0) >= self.rpm:
-                continue
-            counts[bucket] = counts.get(bucket, 0) + 1
+            if job.snapshot_hash:
+                if not self.rate_limiter.acquire(bucket, rpm=self.rpm):
+                    continue
+            else:
+                if legacy_counts.get(bucket, 0) >= self.rpm:
+                    continue
+                legacy_counts[bucket] = legacy_counts.get(bucket, 0) + 1
             selected.append(job)
         return selected
 

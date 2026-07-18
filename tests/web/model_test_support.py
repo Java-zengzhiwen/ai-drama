@@ -20,9 +20,16 @@ def install_test_supplier_runtime(store, supplier, *, rate_bucket="test-bucket")
 export const vendor = {{
   id: "test-runtime", version: "1", name: "Test Runtime", author: "Test",
   adapterContractVersion: "ai-drama-supplier-v1",
-  helperApiVersion: "ai-drama-helper-v1",
+  helperApiVersion: "ai-drama-helper-v2",
   rateLimitBucketKey: "{rate_bucket}", inputs: [], inputValues: {{}}, models: []
 }};
+export async function textRequest(payload) {{ return {{ output: String(payload.request?.prompt || ""), usage: {{ total_tokens: 1 }} }}; }}
+export async function imageRequest(_payload, helpers) {{
+  return helpers.media.decodeBase64(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=",
+    "image/png"
+  );
+}}
 """
     artifact = compile_supplier(source, runtime_store=store.runtime)
     store.replace_supplier_version(

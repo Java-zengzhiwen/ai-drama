@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import "../../../worker/src/network-denial.mjs";
 
 if (!window.matchMedia) {
   window.matchMedia = () => ({

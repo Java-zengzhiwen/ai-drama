@@ -27,6 +27,23 @@ M6 planning is docs-only. Implementation begins only after the governance contra
 
 No M6 implementation or verification may send a real provider request. Real-provider tests require a later provider-and-capability-specific authorization defined by an approved execution contract; the historical M5 Agnes token does not authorize M6 work.
 
+### Post-M6 Model Test Boundary
+
+The approved model-level test increment is governed by:
+
+```text
+docs/superpowers/specs/2026-07-14-model-level-provider-tests-design.md
+docs/superpowers/plans/2026-07-14-model-level-provider-tests.md
+```
+
+- `AI_DRAMA_MODEL_TESTS_ENABLED` defaults to false.
+- All model-test status, create, recovery, read, and content APIs are application-layer loopback-only.
+- `校验并保存` remains local and network-disabled.
+- A local user's `确认并测试` click authorizes exactly one real generation submission for the selected text or image model and any required bounded result download.
+- One confirmation never authorizes retry, fallback, batch work, video tests, project generation, or another model.
+- Codex, automated tests, CI, verifiers, and reviewers must use fake providers and keep all real request counters at zero unless the user separately requests a provider-and-capability-specific real test after implementation review.
+- Model-test records, media, provider evidence, credentials, databases, and `runtime-data` never enter Git.
+
 ### M6 Stage Order
 
 ```text

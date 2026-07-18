@@ -99,6 +99,8 @@ class SupplierModelRecord:
     source: str
     enabled: int
     revision: int
+    archived_at: str
+    archive_reason: str
     created_at: str
     updated_at: str
 

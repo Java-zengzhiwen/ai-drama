@@ -15,8 +15,10 @@ class Settings(BaseSettings):
     agnes_video_model: str = "agnes-video-v2.0"
     agnes_timeout_seconds: float = 60.0
     agnes_video_rpm: int = 1
+    supplier_request_rpm: int = 60
     agnes_poll_interval_seconds: float = 5.0
     m6_supplier_execution_enabled: bool = False
+    model_tests_enabled: bool = False
     public_base_url: str = ""
     trusted_management_proxy_cidrs: str = ""
     model_config = SettingsConfigDict(env_prefix="AI_DRAMA_", extra="ignore")

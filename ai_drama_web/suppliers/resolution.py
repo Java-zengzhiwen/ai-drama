@@ -86,6 +86,8 @@ class ModelBindingService:
         model = self.store.get_supplier_model(supplier_model_id)
         if model is None:
             raise BindingError("MODEL_NOT_FOUND")
+        if model.archived_at:
+            raise BindingError("MODEL_ARCHIVED")
         revision = self.store.get_supplier_model_revision(model.current_model_revision_id)
         if revision.capability != expected:
             raise BindingError("MODEL_CAPABILITY_MISMATCH")
@@ -110,6 +112,8 @@ class ModelResolver:
         model = self.store.get_supplier_model(model_id)
         if model is None:
             raise ModelResolutionError("MODEL_BINDING_MISSING")
+        if model.archived_at:
+            raise ModelResolutionError("MODEL_ARCHIVED")
         revision = self.store.get_supplier_model_revision(model.current_model_revision_id)
         if revision is None or revision.capability != capability:
             raise ModelResolutionError("MODEL_CAPABILITY_MISMATCH")

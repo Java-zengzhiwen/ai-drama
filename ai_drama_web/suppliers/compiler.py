@@ -84,6 +84,7 @@ def compile_supplier(source, *, runtime_store, worker_root=None):
 
 
 def _reject_forbidden_source(source):
+    executable_source = _without_comments(source)
     checks = (
         ("FORBIDDEN_IMPORT", re.compile(r"\bimport\s*(?:\(|[\s\w{*])"), "import"),
         ("FORBIDDEN_GLOBAL", re.compile(r"\brequire\s*\("), "require"),
@@ -92,15 +93,71 @@ def _reject_forbidden_source(source):
         ("FORBIDDEN_GLOBAL", re.compile(r"\bWebSocket\b"), "WebSocket"),
     )
     for code, pattern, label in checks:
-        match = pattern.search(source)
+        match = pattern.search(executable_source)
         if match:
-            line, column = _line_column(source, match.start())
+            line, column = _line_column(executable_source, match.start())
             raise SupplierCompileError(
                 code,
                 "supplier source uses forbidden construct: %s" % label,
                 line=line,
                 column=column,
             )
+
+
+def _without_comments(source):
+    """Blank JavaScript comments while preserving offsets and quoted URL text."""
+    output = list(source)
+    state = "code"
+    quote = ""
+    index = 0
+    while index < len(source):
+        char = source[index]
+        following = source[index + 1] if index + 1 < len(source) else ""
+        if state == "line_comment":
+            if char == "\n":
+                state = "code"
+            else:
+                output[index] = " "
+            index += 1
+            continue
+        if state == "block_comment":
+            if char == "*" and following == "/":
+                output[index] = " "
+                output[index + 1] = " "
+                state = "code"
+                index += 2
+                continue
+            if char != "\n":
+                output[index] = " "
+            index += 1
+            continue
+        if state == "quoted":
+            if char == "\\":
+                index += 2
+                continue
+            if char == quote:
+                state = "code"
+            index += 1
+            continue
+        if char in {"'", '"', "`"}:
+            state = "quoted"
+            quote = char
+            index += 1
+            continue
+        if char == "/" and following == "/":
+            output[index] = " "
+            output[index + 1] = " "
+            state = "line_comment"
+            index += 2
+            continue
+        if char == "/" and following == "*":
+            output[index] = " "
+            output[index + 1] = " "
+            state = "block_comment"
+            index += 2
+            continue
+        index += 1
+    return "".join(output)
 
 
 def _line_column(source, offset):

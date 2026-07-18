@@ -3,6 +3,7 @@ import pytest
 import hashlib
 import tempfile
 import subprocess
+import threading
 from pathlib import Path
 
 from ai_drama_runtime.store import RuntimeStore
@@ -22,10 +23,16 @@ from ai_drama_web.services.m6_generation import M6GenerationCoordinator, M6Gener
 from ai_drama_web.services.legacy_agnes_backfill import LegacyAgnesBackfill, _legacy_source
 from ai_drama_web.suppliers.compiler import compile_supplier
 from ai_drama_web.secrets import LocalSecretStore
-from ai_drama_web.suppliers.builtin_adapters import install_builtin_adapters
-from ai_drama_web.suppliers.execution import SnapshotExecutionGateway
+from ai_drama_web.suppliers.builtin_adapters import OPENAI_SOURCE, install_builtin_adapters
+from ai_drama_web.suppliers.execution import SnapshotExecutionGateway, SupplierExecutionError
 from ai_drama_web.suppliers.worker import SupplierInvocationResult, WorkerLimits
 from ai_drama_web.suppliers.snapshots import SupplierRuntimeUnavailable
+from ai_drama_web.suppliers.rate_limits import SupplierRateLimiter
+from ai_drama_web.suppliers.model_catalog import ModelCatalogService
+from ai_drama_web.suppliers.reasoning import (
+    ReasoningEffortError,
+    resolve_reasoning_effort,
+)
 
 
 def test_feature_flag_defaults_off():
@@ -414,6 +421,170 @@ def test_m6_text_execution_normalizes_runtime_request_into_model_messages(tmp_pa
     assert json.loads(runtime.read_text(run["request_object_id"])) == outbound
 
 
+@pytest.mark.parametrize(
+    ("request_value", "definition", "config", "expected"),
+    [
+        (
+            {"parameters": {"reasoning_effort": "high"}},
+            {"constraints": {"reasoning_effort": "low"}},
+            {"reasoning_effort": "medium"},
+            "high",
+        ),
+        (
+            {},
+            {"constraints": {"reasoning_effort": "low"}},
+            {"reasoning_effort": "high"},
+            "low",
+        ),
+        ({}, {}, {"reasoning_effort": "high"}, "high"),
+        ({}, {}, {}, "medium"),
+    ],
+)
+def test_reasoning_resolution_precedence(request_value, definition, config, expected):
+    assert resolve_reasoning_effort(
+        request=request_value,
+        model_definition=definition,
+        supplier_config=config,
+    ) == expected
+
+
+@pytest.mark.parametrize("value", ["turbo", [], {"nested": "bad"}])
+def test_reasoning_resolution_rejects_unexposed_value(value):
+    with pytest.raises(ReasoningEffortError, match="INVALID_REASONING_EFFORT"):
+        resolve_reasoning_effort(
+            request={"parameters": {"reasoning_effort": value}},
+            model_definition={},
+            supplier_config={},
+        )
+
+
+@pytest.mark.parametrize(
+    ("request_value", "expected"),
+    [({"prompt": "adapt"}, "low"), ({"prompt": "adapt", "parameters": {"reasoning_effort": "high"}}, "high")],
+)
+def test_m6_text_execution_freezes_effective_reasoning_in_snapshot(tmp_path, request_value, expected):
+    _runtime, store, project, supplier, gateway, coordinator = _coordinator_fixture(
+        tmp_path, "text"
+    )
+    resolved = ModelResolver(store).resolve(project.project_id, "script_adaptation")
+    ModelCatalogService(store).revise_model(
+        resolved.model.supplier_model_id,
+        provider_model_name=resolved.revision.provider_model_name,
+        display_name=resolved.revision.display_name,
+        capability="text",
+        definition={"constraints": {"profile": "fake-text", "reasoning_effort": "low"}},
+        expected_catalog_revision=supplier.model_catalog_revision,
+        expected_model_revision=resolved.model.revision,
+        acknowledged_binding_count=1,
+    )
+
+    coordinator.execute_text(
+        project_id=project.project_id,
+        operation_key="script_adaptation",
+        idempotency_key=f"reasoning-{expected}",
+        request=request_value,
+    )
+
+    snapshot = load_snapshot(store, gateway.calls[0][0])
+    assert snapshot.resolved_constraints == {"reasoning_effort": expected}
+
+
+def test_m6_text_idempotent_replay_does_not_consume_or_require_rate_limit(tmp_path):
+    _runtime, _store, project, _supplier, gateway, coordinator = _coordinator_fixture(
+        tmp_path, "text"
+    )
+    coordinator.rate_limiter = SupplierRateLimiter(rpm=1)
+    first = coordinator.execute_text(
+        project_id=project.project_id,
+        operation_key="script_adaptation",
+        idempotency_key="rate-replay",
+        request={"prompt": "adapt"},
+    )
+
+    replay = coordinator.execute_text(
+        project_id=project.project_id,
+        operation_key="script_adaptation",
+        idempotency_key="rate-replay",
+        request={"prompt": "adapt"},
+    )
+
+    assert replay == first
+    assert [call[1] for call in gateway.calls] == ["textRequest"]
+
+
+def test_m6_image_idempotent_replay_does_not_consume_or_require_rate_limit(tmp_path):
+    _runtime, _store, project, _supplier, gateway, coordinator = _coordinator_fixture(
+        tmp_path, "image"
+    )
+    coordinator.rate_limiter = SupplierRateLimiter(rpm=1)
+    chapter = _store.create_chapter(project.project_id, title="Chapter", position=1)
+    request = {
+        "prompt": "frame",
+        "size": "1024x768",
+        "asset_type": "shot_keyframe",
+        "name": "Frame",
+    }
+    first = coordinator.generate_image(
+        project_id=project.project_id,
+        chapter_id=chapter.chapter_id,
+        idempotency_key="image-rate-replay",
+        request=request,
+    )
+
+    replay = coordinator.generate_image(
+        project_id=project.project_id,
+        chapter_id=chapter.chapter_id,
+        idempotency_key="image-rate-replay",
+        request=request,
+    )
+
+    assert replay == first
+    assert [call[1] for call in gateway.calls] == ["imageRequest"]
+
+
+def test_image_submission_claim_allows_one_concurrent_gateway_call(tmp_path):
+    _runtime, store, project, snapshot = _snapshot_fixture(tmp_path, "image")
+    request = {"prompt": "frame"}
+    job, _ = store.enqueue_generation_job_with_snapshot(
+        supplier_id=snapshot.supplier_id,
+        capability="image",
+        provider=f"m6:{snapshot.supplier_id}:image",
+        job_type="image",
+        project_id=project.project_id,
+        chapter_id="chapter",
+        shot_id="shot",
+        prompt_revision_id="",
+        idempotency_key="concurrent-image",
+        request=request,
+        snapshot=snapshot,
+    )
+    barrier = threading.Barrier(2)
+    gateway = _SnapshotGateway()
+    errors = []
+
+    def claim_and_call():
+        try:
+            local_runtime = RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects")
+            local_store = ProductStore(local_runtime)
+            barrier.wait(timeout=5)
+            claimed = local_store.claim_generation_submission(job.job_id)
+            if claimed is not None:
+                gateway.invoke(job.snapshot_hash, "imageRequest", request)
+        except Exception as exc:  # pragma: no cover - reported by the assertion below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=claim_and_call) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert errors == []
+    assert [call[1] for call in gateway.calls] == ["imageRequest"]
+    assert store.get_generation_job(job.job_id).internal_status == "submitting"
+    assert store.get_submission_attempt(job.job_id)["state"] == "submitting"
+
+
 def test_active_legacy_agnes_backfill_is_idempotent_and_preserves_video_id(tmp_path):
     runtime = RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects")
     store = ProductStore(runtime)
@@ -581,12 +752,97 @@ def test_builtin_openai_and_agnes_adapters_install_as_immutable_worker_artifacts
         version = store.get_supplier_version(supplier.current_supplier_version_id)
         assert version.worker_runtime_version.startswith("v")
         assert runtime.read_text(version.compiled_artifact_object_id)
+        source = runtime.read_text(version.source_object_id)
+        assert "AI 生成适配代码步骤" in source
+        assert "不要提供真实 API Key" in source
+        assert "helpers.http.request" in source
+        if slug == "agnes":
+            assert "必须使用 video_id 查询" in source
+            assert "不得使用 task_id" in source
         actual = {
             store.get_supplier_model_revision(model.current_model_revision_id).capability
             for model in store.list_supplier_models(supplier.supplier_id) if model.enabled
         }
         assert actual == capabilities
+    version_count = runtime.conn.execute(
+        "SELECT COUNT(*) FROM supplier_versions"
+    ).fetchone()[0]
     assert install_builtin_adapters(store) == 0
+    assert runtime.conn.execute(
+        "SELECT COUNT(*) FROM supplier_versions"
+    ).fetchone()[0] == version_count
+
+
+def test_builtin_comment_revision_advances_once_without_deleting_history(tmp_path):
+    runtime = RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects")
+    store = ProductStore(runtime)
+    assert install_builtin_adapters(store) == 2
+    supplier = next(item for item in store.list_suppliers() if item.slug == "openai")
+    documented_version = store.get_supplier_version(supplier.current_supplier_version_id)
+    old_source = OPENAI_SOURCE.replace("m6c-2-comments", "m6c-1")
+    old = compile_supplier(old_source, runtime_store=runtime)
+    legacy_version = store.replace_supplier_version(
+        supplier.supplier_id,
+        source_object_id=old.source_object_id,
+        source_hash=old.source_hash,
+        compiled_artifact_object_id=old.compiled_artifact_object_id,
+        compiled_artifact_hash=old.compiled_artifact_hash,
+        manifest_hash=old.manifest_hash,
+        manifest=old.vendor,
+        adapter_contract_version=old.adapter_contract_version,
+        worker_protocol_version="1",
+        worker_runtime_version=old.worker_runtime_version,
+        compiler_name=old.compiler_name,
+        compiler_version=old.compiler_version,
+        compiler_options_hash=old.compiler_options_hash,
+        helper_api_version=old.helper_api_version,
+        rate_limit_bucket_key=old.vendor["rateLimitBucketKey"],
+        expected_revision=supplier.revision,
+        built_in=True,
+    )
+
+    assert install_builtin_adapters(store) == 1
+    advanced = store.get_supplier(
+        supplier.supplier_id
+    ).current_supplier_version_id
+    assert advanced not in {
+        documented_version.supplier_version_id,
+        legacy_version.supplier_version_id,
+    }
+    assert store.get_supplier_version(legacy_version.supplier_version_id)
+    assert install_builtin_adapters(store) == 0
+    assert store.get_supplier(supplier.supplier_id).current_supplier_version_id == advanced
+
+
+def test_builtin_comment_install_does_not_replace_user_edited_current_version(tmp_path):
+    runtime = RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects")
+    store = ProductStore(runtime)
+    assert install_builtin_adapters(store) == 2
+    supplier = next(item for item in store.list_suppliers() if item.slug == "openai")
+    user_source = OPENAI_SOURCE.replace("m6c-2-comments", "user-edited-1")
+    user = compile_supplier(user_source, runtime_store=runtime)
+    user_version = store.replace_supplier_version(
+        supplier.supplier_id,
+        source_object_id=user.source_object_id,
+        source_hash=user.source_hash,
+        compiled_artifact_object_id=user.compiled_artifact_object_id,
+        compiled_artifact_hash=user.compiled_artifact_hash,
+        manifest_hash=user.manifest_hash,
+        manifest=user.vendor,
+        adapter_contract_version=user.adapter_contract_version,
+        worker_protocol_version="1",
+        worker_runtime_version=user.worker_runtime_version,
+        compiler_name=user.compiler_name,
+        compiler_version=user.compiler_version,
+        compiler_options_hash=user.compiler_options_hash,
+        helper_api_version=user.helper_api_version,
+        rate_limit_bucket_key=user.vendor["rateLimitBucketKey"],
+        expected_revision=supplier.revision,
+        built_in=False,
+    )
+
+    assert install_builtin_adapters(store) == 0
+    assert store.get_supplier(supplier.supplier_id).current_supplier_version_id == user_version.supplier_version_id
 
 
 def test_media_result_larger_than_protocol_output_uses_bounded_local_reference(tmp_path):
@@ -596,13 +852,13 @@ def test_media_result_larger_than_protocol_output_uses_bounded_local_reference(t
     )
     directory = Path(tempfile.mkdtemp(prefix="ai-drama-worker-media-"))
     local_file = directory / "result.bin"
-    data = b"x" * (5 * 1024 * 1024)
+    data = b"\x89PNG\r\n\x1a\n" + b"x" * (5 * 1024 * 1024)
     local_file.write_bytes(data)
 
     class Worker:
         def invoke(self, artifact, operation, payload, **_kwargs):
             return SupplierInvocationResult(
-                value={"local_file": str(local_file), "sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "media_type": "video/mp4"},
+                value={"local_file": str(local_file), "sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "media_type": "image/png"},
                 worker_protocol_version="1", helper_api_version=artifact.helper_api_version,
                 worker_runtime_version=artifact.worker_runtime_version,
             )
@@ -611,6 +867,56 @@ def test_media_result_larger_than_protocol_output_uses_bounded_local_reference(t
     result = gateway.invoke(snapshot_record.snapshot_hash, "imageRequest", {"prompt": "fake"})
     assert result["bytes"] == data
     assert not local_file.exists()
+
+
+def test_gateway_rejects_non_image_media_type_for_image_operation(tmp_path):
+    _runtime, store, project, _supplier, _gateway, coordinator = _coordinator_fixture(tmp_path, "image")
+    snapshot_record = persist_snapshot(
+        store, coordinator._resolve_snapshot(project.project_id, "storyboard_keyframe_image")
+    )
+    directory = Path(tempfile.mkdtemp(prefix="ai-drama-worker-media-"))
+    local_file = directory / "result.bin"
+    data = b"\x89PNG\r\n\x1a\nfixture"
+    local_file.write_bytes(data)
+
+    class Worker:
+        def invoke(self, artifact, operation, payload, **_kwargs):
+            return SupplierInvocationResult(
+                value={"local_file": str(local_file), "sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "media_type": "application/octet-stream"},
+                worker_protocol_version="1", helper_api_version=artifact.helper_api_version,
+                worker_runtime_version=artifact.worker_runtime_version,
+            )
+
+    gateway = SnapshotExecutionGateway(store, coordinator.credentials, worker=Worker())
+    with pytest.raises(SupplierExecutionError, match="PROVIDER_RESPONSE_MALFORMED"):
+        gateway.invoke(snapshot_record.snapshot_hash, "imageRequest", {"prompt": "fake"})
+    assert not local_file.exists()
+    assert not directory.exists()
+
+
+def test_gateway_rejects_malformed_image_magic_and_cleans_worker_file(tmp_path):
+    _runtime, store, project, _supplier, _gateway, coordinator = _coordinator_fixture(tmp_path, "image")
+    snapshot_record = persist_snapshot(
+        store, coordinator._resolve_snapshot(project.project_id, "storyboard_keyframe_image")
+    )
+    directory = Path(tempfile.mkdtemp(prefix="ai-drama-worker-media-"))
+    local_file = directory / "result.bin"
+    data = b"not-a-png"
+    local_file.write_bytes(data)
+
+    class Worker:
+        def invoke(self, artifact, operation, payload, **_kwargs):
+            return SupplierInvocationResult(
+                value={"local_file": str(local_file), "sha256": hashlib.sha256(data).hexdigest(), "size": len(data), "media_type": "image/png"},
+                worker_protocol_version="1", helper_api_version=artifact.helper_api_version,
+                worker_runtime_version=artifact.worker_runtime_version,
+            )
+
+    gateway = SnapshotExecutionGateway(store, coordinator.credentials, worker=Worker())
+    with pytest.raises(SupplierExecutionError, match="PROVIDER_RESPONSE_MALFORMED"):
+        gateway.invoke(snapshot_record.snapshot_hash, "imageRequest", {"prompt": "fake"})
+    assert not local_file.exists()
+    assert not directory.exists()
 
 
 def test_gateway_rebuilds_worker_limits_from_snapshot_and_rejects_override(tmp_path):

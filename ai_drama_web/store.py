@@ -321,6 +321,8 @@ class ProductStore:
               source TEXT NOT NULL CHECK (source IN ('built_in','overlay')),
               enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
               revision INTEGER NOT NULL DEFAULT 1,
+              archived_at TEXT NOT NULL DEFAULT '',
+              archive_reason TEXT NOT NULL DEFAULT '',
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
             );
@@ -361,6 +363,37 @@ class ProductStore:
               model_revision_id TEXT NOT NULL REFERENCES supplier_model_revisions(model_revision_id) ON DELETE RESTRICT,
               created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS supplier_model_test_runs (
+              test_run_id TEXT PRIMARY KEY,
+              supplier_id TEXT NOT NULL REFERENCES suppliers(supplier_id) ON DELETE RESTRICT,
+              supplier_model_id TEXT NOT NULL REFERENCES supplier_models(supplier_model_id) ON DELETE RESTRICT,
+              credential_version_id TEXT NOT NULL,
+              snapshot_hash TEXT NOT NULL REFERENCES execution_snapshots(snapshot_hash) ON DELETE RESTRICT,
+              snapshot_object_id TEXT NOT NULL,
+              capability TEXT NOT NULL CHECK (capability IN ('text','image')),
+              idempotency_key TEXT NOT NULL,
+              request_hash TEXT NOT NULL,
+              request_object_id TEXT NOT NULL,
+              status TEXT NOT NULL CHECK (status IN ('queued','submitting','completed','failed','submission_outcome_unknown')),
+              attempt_count INTEGER NOT NULL DEFAULT 0,
+              lease_owner TEXT NOT NULL DEFAULT '',
+              lease_expires_at TEXT NOT NULL DEFAULT '',
+              normalized_result_object_id TEXT NOT NULL DEFAULT '',
+              sanitized_evidence_object_id TEXT NOT NULL DEFAULT '',
+              content_object_id TEXT NOT NULL DEFAULT '',
+              media_type TEXT NOT NULL DEFAULT '',
+              byte_size INTEGER NOT NULL DEFAULT 0,
+              error_code TEXT NOT NULL DEFAULT '',
+              error_message TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              started_at TEXT NOT NULL DEFAULT '',
+              finished_at TEXT NOT NULL DEFAULT '',
+              UNIQUE(supplier_model_id, capability, idempotency_key)
+            );
+            CREATE INDEX IF NOT EXISTS supplier_model_test_runs_status_idx
+              ON supplier_model_test_runs(status, created_at, test_run_id);
+            CREATE INDEX IF NOT EXISTS supplier_model_test_runs_credential_idx
+              ON supplier_model_test_runs(credential_version_id, status);
             CREATE TABLE IF NOT EXISTS model_creation_requests (
               supplier_id TEXT NOT NULL REFERENCES suppliers(supplier_id) ON DELETE RESTRICT,
               idempotency_key TEXT NOT NULL,
@@ -394,6 +427,8 @@ class ProductStore:
         self._ensure_column("supplier_versions", "manifest_object_id", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("supplier_versions", "rate_limit_bucket_key", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("suppliers", "model_catalog_revision", "INTEGER NOT NULL DEFAULT 0")
+        self._ensure_column("supplier_models", "archived_at", "TEXT NOT NULL DEFAULT ''")
+        self._ensure_column("supplier_models", "archive_reason", "TEXT NOT NULL DEFAULT ''")
         self._backfill_asset_binding_scope()
         self._normalize_current_asset_bindings()
         self.conn.execute("DROP INDEX IF EXISTS asset_bindings_current_role_idx")
@@ -965,9 +1000,11 @@ class ProductStore:
         ).fetchone()
         return None if row is None else CredentialVersionRecord(**dict(row))
 
-    def list_supplier_models(self, supplier_id):
+    def list_supplier_models(self, supplier_id, *, include_archived=False):
+        archived_filter = "" if include_archived else " AND archived_at = ''"
         rows = self.conn.execute(
-            "SELECT * FROM supplier_models WHERE supplier_id = ? ORDER BY created_at, supplier_model_id",
+            "SELECT * FROM supplier_models WHERE supplier_id = ?%s ORDER BY created_at, supplier_model_id"
+            % archived_filter,
             (supplier_id,),
         ).fetchall()
         return [SupplierModelRecord(**dict(row)) for row in rows]
@@ -1125,6 +1162,13 @@ class ProductStore:
         ).fetchone()
         return int(row["n"])
 
+    def count_model_history_references(self, supplier_model_id):
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS n FROM execution_snapshots WHERE supplier_model_id = ?",
+            (supplier_model_id,),
+        ).fetchone()
+        return int(row["n"])
+
     def count_project_binding_references(self, supplier_model_id):
         row = self.conn.execute(
             """
@@ -1178,6 +1222,127 @@ class ProductStore:
         except Exception:
             self.conn.rollback()
             raise
+
+    def remove_supplier_model_atomically(
+        self, supplier_model_id, *, expected_catalog_revision, expected_model_revision
+    ):
+        """Reject, archive, or physically delete from one locked decision."""
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            model = self.get_supplier_model(supplier_model_id)
+            if model is None:
+                raise NotFound("model not found: %s" % supplier_model_id)
+            supplier = self.get_supplier(model.supplier_id)
+            if (
+                model.revision != expected_model_revision
+                or supplier.model_catalog_revision != expected_catalog_revision
+            ):
+                raise RevisionConflict("model revision conflict")
+            if model.archived_at:
+                self.conn.commit()
+                return model
+            if self.count_project_binding_references(supplier_model_id):
+                raise ModelReferenced("MODEL_REFERENCED")
+
+            changed_at = now_iso()
+            if self.count_model_history_references(supplier_model_id):
+                cursor = self.conn.execute(
+                    """
+                    UPDATE supplier_models
+                    SET enabled = 0, revision = revision + 1,
+                        archived_at = ?, archive_reason = 'historical_snapshot', updated_at = ?
+                    WHERE supplier_model_id = ? AND revision = ? AND archived_at = ''
+                    """,
+                    (changed_at, changed_at, supplier_model_id, expected_model_revision),
+                )
+                if cursor.rowcount != 1:
+                    raise RevisionConflict("model revision conflict")
+            else:
+                self.conn.execute(
+                    "DELETE FROM model_creation_requests WHERE supplier_model_id = ?",
+                    (supplier_model_id,),
+                )
+                self.conn.execute(
+                    "DELETE FROM supplier_model_revisions WHERE supplier_model_id = ?",
+                    (supplier_model_id,),
+                )
+                cursor = self.conn.execute(
+                    "DELETE FROM supplier_models WHERE supplier_model_id = ? AND revision = ?",
+                    (supplier_model_id, expected_model_revision),
+                )
+                if cursor.rowcount != 1:
+                    raise RevisionConflict("model revision conflict")
+            supplier_cursor = self.conn.execute(
+                """
+                UPDATE suppliers
+                SET model_catalog_revision = model_catalog_revision + 1, updated_at = ?
+                WHERE supplier_id = ? AND model_catalog_revision = ?
+                """,
+                (changed_at, model.supplier_id, expected_catalog_revision),
+            )
+            if supplier_cursor.rowcount != 1:
+                raise RevisionConflict("model revision conflict")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return self.get_supplier_model(supplier_model_id)
+
+    def archive_supplier_model(
+        self,
+        supplier_model_id,
+        *,
+        expected_catalog_revision,
+        expected_model_revision,
+        archive_reason,
+    ):
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            model = self.get_supplier_model(supplier_model_id)
+            if model is None:
+                raise NotFound("model not found: %s" % supplier_model_id)
+            supplier = self.get_supplier(model.supplier_id)
+            if (
+                model.revision != expected_model_revision
+                or supplier.model_catalog_revision != expected_catalog_revision
+            ):
+                raise RevisionConflict("model revision conflict")
+            if model.archived_at:
+                self.conn.commit()
+                return model
+            if self.count_project_binding_references(supplier_model_id):
+                raise ModelReferenced("MODEL_REFERENCED")
+            archived_at = now_iso()
+            model_cursor = self.conn.execute(
+                """
+                UPDATE supplier_models
+                SET enabled = 0, revision = revision + 1,
+                    archived_at = ?, archive_reason = ?, updated_at = ?
+                WHERE supplier_model_id = ? AND revision = ? AND archived_at = ''
+                """,
+                (
+                    archived_at,
+                    str(archive_reason),
+                    archived_at,
+                    supplier_model_id,
+                    expected_model_revision,
+                ),
+            )
+            supplier_cursor = self.conn.execute(
+                """
+                UPDATE suppliers
+                SET model_catalog_revision = model_catalog_revision + 1, updated_at = ?
+                WHERE supplier_id = ? AND model_catalog_revision = ?
+                """,
+                (archived_at, model.supplier_id, expected_catalog_revision),
+            )
+            if model_cursor.rowcount != 1 or supplier_cursor.rowcount != 1:
+                raise RevisionConflict("model revision conflict")
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return self.get_supplier_model(supplier_model_id)
 
     def get_project_model_binding(self, project_id):
         row = self.conn.execute(
@@ -1505,7 +1670,7 @@ class ProductStore:
         self.conn.commit()
 
     def create_supplier_idempotent(
-        self, *, slug, display_name, idempotency_key, request_hash
+        self, *, slug, display_name, idempotency_key, request_hash, initial_version=None
     ):
         self.conn.execute("BEGIN IMMEDIATE")
         try:
@@ -1541,6 +1706,55 @@ class ProductStore:
                 """,
                 (config_revision_id, supplier_id, created_at),
             )
+            if initial_version:
+                supplier_version_id = uuid.uuid4().hex
+                manifest = initial_version["manifest"]
+                manifest_text = json.dumps(
+                    manifest,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                )
+                manifest_object_id = self.runtime.write_text_object(manifest_text)
+                self.conn.execute(
+                    """
+                    INSERT INTO supplier_versions
+                    (supplier_version_id, supplier_id, revision, source_object_id,
+                     source_hash, compiled_artifact_object_id, compiled_artifact_hash,
+                     manifest_hash, manifest_object_id, rate_limit_bucket_key,
+                     adapter_contract_version, worker_protocol_version,
+                     worker_runtime_version, compiler_name, compiler_version,
+                     compiler_options_hash, helper_api_version, built_in, created_at)
+                    VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+                    """,
+                    (
+                        supplier_version_id,
+                        supplier_id,
+                        initial_version["source_object_id"],
+                        initial_version["source_hash"],
+                        initial_version["compiled_artifact_object_id"],
+                        initial_version["compiled_artifact_hash"],
+                        initial_version["manifest_hash"],
+                        manifest_object_id,
+                        initial_version["rate_limit_bucket_key"],
+                        initial_version["adapter_contract_version"],
+                        initial_version["worker_protocol_version"],
+                        initial_version["worker_runtime_version"],
+                        initial_version["compiler_name"],
+                        initial_version["compiler_version"],
+                        initial_version["compiler_options_hash"],
+                        initial_version["helper_api_version"],
+                        created_at,
+                    ),
+                )
+                self.conn.execute(
+                    """
+                    UPDATE suppliers SET current_supplier_version_id = ?
+                    WHERE supplier_id = ?
+                    """,
+                    (supplier_version_id, supplier_id),
+                )
             self.conn.execute(
                 """
                 INSERT INTO supplier_creation_requests
@@ -2167,6 +2381,211 @@ class ProductStore:
             raise
         return self.get_generation_job(job_id), True
 
+    def get_supplier_idempotency_record(self, supplier_id, capability, idempotency_key):
+        row = self.conn.execute(
+            """
+            SELECT * FROM supplier_idempotency_records
+            WHERE supplier_id = ? AND capability = ? AND idempotency_key = ?
+            """,
+            (supplier_id, capability, idempotency_key),
+        ).fetchone()
+        return None if row is None else dict(row)
+
+    def create_supplier_model_test_run(
+        self, *, test_run_id, supplier_id, supplier_model_id, credential_version_id,
+        snapshot, capability, idempotency_key, request_hash, request_object_id,
+    ):
+        from .suppliers.snapshots import _validate_snapshot, canonical_snapshot_json, snapshot_hash
+
+        _validate_snapshot(self, snapshot)
+        snapshot_raw = canonical_snapshot_json(snapshot)
+        digest = snapshot_hash(snapshot)
+        snapshot_object_id = self.runtime.write_text_object(snapshot_raw)
+        created_at = now_iso()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            replay = self.conn.execute(
+                """
+                SELECT * FROM supplier_model_test_runs
+                WHERE supplier_model_id = ? AND capability = ? AND idempotency_key = ?
+                """,
+                (supplier_model_id, capability, idempotency_key),
+            ).fetchone()
+            if replay is not None:
+                if replay["request_hash"] != request_hash:
+                    raise RevisionConflict("IDEMPOTENCY_CONFLICT")
+                self.conn.commit()
+                return dict(replay), False
+            self.conn.execute(
+                """
+                INSERT OR IGNORE INTO execution_snapshots
+                (snapshot_hash, snapshot_object_id, supplier_id, supplier_model_id,
+                 model_revision_id, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    digest,
+                    snapshot_object_id,
+                    snapshot.supplier_id,
+                    snapshot.supplier_model_id,
+                    snapshot.model_revision_id,
+                    snapshot.created_at,
+                ),
+            )
+            self.conn.execute(
+                """
+                INSERT INTO supplier_model_test_runs
+                (test_run_id, supplier_id, supplier_model_id, credential_version_id,
+                 snapshot_hash, snapshot_object_id, capability, idempotency_key,
+                 request_hash, request_object_id, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)
+                """,
+                (
+                    test_run_id,
+                    supplier_id,
+                    supplier_model_id,
+                    credential_version_id,
+                    digest,
+                    snapshot_object_id,
+                    capability,
+                    idempotency_key,
+                    request_hash,
+                    request_object_id,
+                    created_at,
+                ),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return self.get_supplier_model_test_run(test_run_id), True
+
+    def get_supplier_model_test_run(self, test_run_id):
+        row = self.conn.execute(
+            "SELECT * FROM supplier_model_test_runs WHERE test_run_id = ?",
+            (test_run_id,),
+        ).fetchone()
+        return None if row is None else dict(row)
+
+    def get_supplier_model_test_run_by_key(self, supplier_model_id, idempotency_key):
+        row = self.conn.execute(
+            """
+            SELECT * FROM supplier_model_test_runs
+            WHERE supplier_model_id = ? AND idempotency_key = ?
+            ORDER BY created_at, test_run_id LIMIT 1
+            """,
+            (supplier_model_id, idempotency_key),
+        ).fetchone()
+        return None if row is None else dict(row)
+
+    def claim_supplier_model_test_run(self, test_run_id, *, lease_owner, lease_expires_at):
+        started_at = now_iso()
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                UPDATE supplier_model_test_runs
+                SET status = 'submitting', attempt_count = 1, lease_owner = ?,
+                    lease_expires_at = ?, started_at = ?
+                WHERE test_run_id = ? AND status = 'queued' AND attempt_count = 0
+                """,
+                (lease_owner, lease_expires_at, started_at, test_run_id),
+            )
+        return self.get_supplier_model_test_run(test_run_id) if cursor.rowcount == 1 else None
+
+    def complete_supplier_model_test_run(
+        self, test_run_id, *, normalized_result_object_id,
+        sanitized_evidence_object_id, content_object_id="", media_type="", byte_size=0,
+    ):
+        finished_at = now_iso()
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                UPDATE supplier_model_test_runs
+                SET status = 'completed', normalized_result_object_id = ?,
+                    sanitized_evidence_object_id = ?, content_object_id = ?,
+                    media_type = ?, byte_size = ?, lease_owner = '',
+                    lease_expires_at = '', finished_at = ?
+                WHERE test_run_id = ? AND status = 'submitting' AND attempt_count = 1
+                """,
+                (
+                    normalized_result_object_id,
+                    sanitized_evidence_object_id,
+                    content_object_id,
+                    media_type,
+                    int(byte_size),
+                    finished_at,
+                    test_run_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RevisionConflict("MODEL_TEST_NOT_SUBMITTING")
+        return self.get_supplier_model_test_run(test_run_id)
+
+    def fail_supplier_model_test_run(
+        self, test_run_id, *, error_code, error_message,
+        sanitized_evidence_object_id="", unknown=False,
+    ):
+        finished_at = now_iso()
+        status = "submission_outcome_unknown" if unknown else "failed"
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                UPDATE supplier_model_test_runs
+                SET status = ?, error_code = ?, error_message = ?,
+                    sanitized_evidence_object_id = ?, lease_owner = '',
+                    lease_expires_at = '', finished_at = ?
+                WHERE test_run_id = ? AND status = 'submitting' AND attempt_count = 1
+                """,
+                (
+                    status,
+                    error_code,
+                    str(error_message)[:299],
+                    sanitized_evidence_object_id,
+                    finished_at,
+                    test_run_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RevisionConflict("MODEL_TEST_NOT_SUBMITTING")
+        return self.get_supplier_model_test_run(test_run_id)
+
+    def mark_interrupted_model_tests_unknown(self):
+        finished_at = now_iso()
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                UPDATE supplier_model_test_runs
+                SET status = 'submission_outcome_unknown',
+                    error_code = 'SUBMISSION_OUTCOME_UNKNOWN',
+                    error_message = 'model test submission outcome is unknown',
+                    lease_owner = '', lease_expires_at = '', finished_at = ?
+                WHERE status = 'submitting' AND attempt_count = 1
+                """,
+                (finished_at,),
+            )
+        return cursor.rowcount
+
+    def list_queued_supplier_model_tests(self, limit=20):
+        rows = self.conn.execute(
+            """
+            SELECT * FROM supplier_model_test_runs
+            WHERE status = 'queued' AND attempt_count = 0
+            ORDER BY created_at, test_run_id LIMIT ?
+            """,
+            (int(limit),),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def count_active_model_tests_for_credential(self, credential_version_id):
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS n FROM supplier_model_test_runs
+            WHERE credential_version_id = ? AND status IN ('queued','submitting')
+            """,
+            (credential_version_id,),
+        ).fetchone()
+        return int(row["n"])
+
     def enqueue_text_run_with_snapshot(self, *, project_id, operation_key, supplier_id,
                                        idempotency_key, request, snapshot):
         from .suppliers.idempotency import SupplierIdempotencyConflict, canonical_request_hash
@@ -2372,6 +2791,51 @@ class ProductStore:
         self.conn.commit()
         row = self.conn.execute("SELECT * FROM generation_submission_attempts WHERE job_id = ?", (job_id,)).fetchone()
         return None if row is None else dict(row)
+
+    def claim_generation_submission(self, job_id):
+        """Atomically claim a prepared job before any external submission occurs."""
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            job = self.conn.execute(
+                "SELECT * FROM generation_jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            attempt = self.conn.execute(
+                "SELECT * FROM generation_submission_attempts WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if (
+                job is None
+                or attempt is None
+                or job["internal_status"] != "queued"
+                or attempt["state"] != "prepared"
+            ):
+                self.conn.commit()
+                return None
+            updated_at = now_iso()
+            job_update = self.conn.execute(
+                """
+                UPDATE generation_jobs
+                SET internal_status = 'submitting', submitted_at = ?, updated_at = ?
+                WHERE job_id = ? AND internal_status = 'queued'
+                """,
+                (updated_at, updated_at, job_id),
+            )
+            attempt_update = self.conn.execute(
+                """
+                UPDATE generation_submission_attempts
+                SET state = 'submitting', updated_at = ?
+                WHERE job_id = ? AND state = 'prepared'
+                """,
+                (updated_at, job_id),
+            )
+            if job_update.rowcount != 1 or attempt_update.rowcount != 1:
+                self.conn.rollback()
+                return None
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return self.get_generation_job(job_id)
 
     def commit_accepted_submission(self, job_id):
         self.conn.execute("BEGIN IMMEDIATE")

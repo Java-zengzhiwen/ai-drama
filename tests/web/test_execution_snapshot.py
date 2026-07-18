@@ -4,7 +4,7 @@ import pytest
 
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_web.store import ProductStore
-from ai_drama_web.suppliers.resolution import ModelBindingService, ModelResolver
+from ai_drama_web.suppliers.resolution import BindingError, ModelBindingService, ModelResolver
 from ai_drama_web.suppliers.model_catalog import ModelCatalogError, ModelCatalogService
 from ai_drama_web.suppliers.snapshots import (
     SnapshotBuilder,
@@ -14,6 +14,9 @@ from ai_drama_web.suppliers.snapshots import (
     persist_snapshot,
     snapshot_hash,
 )
+from ai_drama_web.suppliers.execution import SnapshotExecutionGateway
+from ai_drama_web.suppliers.worker import SupplierInvocationResult
+from ai_drama_web.suppliers.credentials import SupplierCredentialStore
 from tests.web.model_test_support import create_model, install_test_supplier_runtime
 
 
@@ -117,7 +120,7 @@ def test_historical_snapshot_keeps_old_model_revision_and_missing_object_fails_c
         load_snapshot(store, record.snapshot_hash)
 
 
-def test_snapshotted_model_cannot_be_physically_deleted(tmp_path):
+def test_snapshotted_model_is_archived_after_project_is_unbound(tmp_path):
     _runtime, store, resolved = _resolved(tmp_path)
     snapshot = SnapshotBuilder(store).build(
         resolved,
@@ -128,12 +131,57 @@ def test_snapshotted_model_cannot_be_physically_deleted(tmp_path):
         created_at="2026-07-13T00:00:00.000000Z",
     )
     persist_snapshot(store, snapshot)
-    with pytest.raises(ModelCatalogError, match="MODEL_REFERENCED"):
-        ModelCatalogService(store).delete_overlay(
-            resolved.model.supplier_model_id,
-            expected_catalog_revision=1,
-            expected_model_revision=1,
+    store.replace_project_model_bindings(
+        resolved.project_id,
+        defaults={"text": "", "image": "", "video": ""},
+        overrides={},
+        expected_revision=1,
+    )
+
+    archived = ModelCatalogService(store).delete_overlay(
+        resolved.model.supplier_model_id,
+        expected_catalog_revision=1,
+        expected_model_revision=1,
+    )
+
+    assert archived.archived_at
+    assert store.get_supplier_model_revision(snapshot.model_revision_id) is not None
+
+
+def test_archived_model_cannot_be_rebound_or_resolved(tmp_path):
+    _runtime, store, resolved = _resolved(tmp_path)
+    store.replace_project_model_bindings(
+        resolved.project_id,
+        defaults={"text": "", "image": "", "video": ""},
+        overrides={},
+        expected_revision=1,
+    )
+    archived = store.archive_supplier_model(
+        resolved.model.supplier_model_id,
+        expected_catalog_revision=1,
+        expected_model_revision=1,
+        archive_reason="historical_snapshot",
+    )
+
+    with pytest.raises(BindingError, match="MODEL_ARCHIVED"):
+        ModelBindingService(store).replace(
+            resolved.project_id,
+            defaults={"text": archived.supplier_model_id, "image": "", "video": ""},
+            overrides={},
+            expected_revision=2,
         )
+
+    store.conn.execute(
+        """
+        UPDATE project_model_bindings
+        SET default_text_model_id = ?, binding_set_revision = 3
+        WHERE project_id = ?
+        """,
+        (archived.supplier_model_id, resolved.project_id),
+    )
+    store.conn.commit()
+    with pytest.raises(BindingError, match="MODEL_ARCHIVED"):
+        ModelResolver(store).resolve(resolved.project_id, "script_adaptation")
 
 
 def test_snapshot_does_not_inflate_affected_project_binding_acknowledgement(tmp_path):
@@ -200,3 +248,39 @@ def test_snapshot_rejects_forged_immutable_fields_and_unknown_credential(tmp_pat
     for candidate in forged:
         with pytest.raises(SupplierRuntimeUnavailable, match="SUPPLIER_RUNTIME_UNAVAILABLE"):
             persist_snapshot(store, candidate)
+
+
+def test_snapshot_gateway_passes_frozen_constraints_to_worker(tmp_path):
+    _runtime, store, resolved = _resolved(tmp_path)
+    snapshot = SnapshotBuilder(store).build(
+        resolved,
+        credential_resolution_mode="current",
+        resolved_credential_version_id="",
+        resolved_constraints={"reasoning_effort": "high"},
+        worker_limits={"timeout_seconds": 30},
+    )
+    record = persist_snapshot(store, snapshot)
+
+    class RecordingWorker:
+        def __init__(self):
+            self.payload = None
+
+        def invoke(self, _artifact, _operation, payload, *, mode, limits):
+            self.payload = payload
+            return SupplierInvocationResult(
+                value={"output": "ok", "usage": {}},
+                worker_protocol_version="1",
+                helper_api_version="ai-drama-helper-v2",
+                worker_runtime_version="v25.5.0",
+            )
+
+    worker = RecordingWorker()
+    gateway = SnapshotExecutionGateway(
+        store,
+        SupplierCredentialStore(store, tmp_path / "credentials"),
+        worker=worker,
+    )
+
+    gateway.invoke(record.snapshot_hash, "textRequest", {"prompt": "hello"})
+
+    assert worker.payload["constraints"] == {"reasoning_effort": "high"}

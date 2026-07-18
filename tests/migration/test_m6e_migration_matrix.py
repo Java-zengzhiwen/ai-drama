@@ -67,6 +67,35 @@ def test_fresh_and_replayed_m6_store_is_deterministic(tmp_path):
     assert len(migrations) == len(set(migrations))
 
 
+def test_supplier_model_archive_columns_are_additive_and_replay_safe(tmp_path):
+    root = tmp_path / "m6d-archive"
+    M6EStoreFactory(root).intermediate("m6d")
+    runtime = RuntimeStore(root / "runtime.db", root / "objects")
+
+    upgraded = ProductStore(runtime)
+    columns = {
+        row["name"]
+        for row in runtime.conn.execute("PRAGMA table_info(supplier_models)").fetchall()
+    }
+    assert {"archived_at", "archive_reason"} <= columns
+    assert all(
+        model.archived_at == "" and model.archive_reason == ""
+        for supplier in upgraded.list_suppliers()
+        for model in upgraded.list_supplier_models(supplier.supplier_id, include_archived=True)
+    )
+
+    replayed = ProductStore(runtime)
+    assert {
+        row["name"]
+        for row in runtime.conn.execute("PRAGMA table_info(supplier_models)").fetchall()
+    } == columns
+    assert all(
+        model.archived_at == "" and model.archive_reason == ""
+        for supplier in replayed.list_suppliers()
+        for model in replayed.list_supplier_models(supplier.supplier_id, include_archived=True)
+    )
+
+
 def test_real_m5_schema_upgrades_without_rewriting_history(tmp_path):
     runtime, expected = M6EStoreFactory(tmp_path).m5()
 

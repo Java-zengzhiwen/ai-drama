@@ -46,6 +46,15 @@ def test_compile_supplier_is_deterministic_and_persists_immutable_artifacts(tmp_
     assert "credential" not in first.compiled_code.lower()
 
 
+def test_compiler_accepts_media_helper_v2_without_changing_legacy_v1(tmp_path):
+    upgraded = compile_supplier(
+        VALID_SOURCE.replace("ai-drama-helper-v1", "ai-drama-helper-v2"),
+        runtime_store=_runtime(tmp_path),
+    )
+
+    assert upgraded.helper_api_version == "ai-drama-helper-v2"
+
+
 @pytest.mark.parametrize(
     "source,code",
     [

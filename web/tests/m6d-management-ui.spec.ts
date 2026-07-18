@@ -1,4 +1,10 @@
-import { expect, type APIRequestContext, type Page, test } from "@playwright/test";
+import {
+  expect,
+  NETWORK_GUARD_PROBE_URL,
+  type APIRequestContext,
+  type Page,
+  test,
+} from "./network-test";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,7 +25,7 @@ function sourceFor(version: string, marker: string) {
   name: "M6D Local",
   author: "Playwright",
   adapterContractVersion: "ai-drama-supplier-v1",
-  helperApiVersion: "ai-drama-helper-v1",
+  helperApiVersion: "ai-drama-helper-v2",
   rateLimitBucketKey: "m6d-local",
   inputs: [{ key: "base_url", label: "Base URL", type: "url", required: true }],
   inputValues: { base_url: "https://fake.invalid/v1" },
@@ -27,6 +33,12 @@ function sourceFor(version: string, marker: string) {
 };
 export async function textRequest(request: { prompt: string }) {
   return { output: "# ${marker}\\n\\nruntime_model: local-fake\\nsource_basis: browser-e2e\\n\\n## Scene: 1-1\\n\\n【画面】本地假供应商完成确定性剧本输出。\\n\\n【动作】角色检查模型版本。\\n\\n【台词】角色：${marker}。", usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } };
+}
+export async function imageRequest(_request: unknown, helpers: any) {
+  return helpers.media.decodeBase64(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=",
+    "image/png"
+  );
 }`;
 }
 
@@ -36,6 +48,19 @@ if (runningInVitest) {
   const { test: vitestTest } = await import("vitest");
   vitestTest.skip("M6D Playwright management UI runs through npm run test:e2e", () => undefined);
 } else {
+  test("blocks non-loopback browser transport before a request leaves the context", async ({ page }) => {
+    const result = await page.evaluate(async (url) => {
+      try {
+        await fetch(url);
+        return "sent";
+      } catch {
+        return "blocked";
+      }
+    }, NETWORK_GUARD_PROBE_URL);
+
+    expect(result).toBe("blocked");
+  });
+
   test("M6D manages supplier code, config, write-only secret, models, and project bindings", async ({
     page,
     request,
@@ -116,6 +141,24 @@ if (runningInVitest) {
     await expect(page.getByRole("row", { name: /Local Text/ })).toContainText("已启用");
     await page.getByRole("row", { name: /Local Text/ }).getByRole("button", { name: "查看 Local Text" }).click();
     await expect(page.getByRole("complementary", { name: "模型检查器" })).toContainText("supplier_model_id");
+
+    await page.getByRole("row", { name: /Local Text/ }).getByRole("button", { name: "测试 Local Text" }).click();
+    await expect(page.getByRole("dialog", { name: "测试模型连接" })).toContainText("可能产生费用");
+    await page.getByRole("button", { name: "确认并测试" }).click();
+    await expect(page.getByRole("dialog", { name: "测试模型连接" })).toContainText("M6D_BROWSER_VERSION_1");
+    await page.getByRole("button", { name: /取\s*消/ }).click();
+
+    await page.getByRole("button", { name: "新增模型" }).click();
+    await page.getByLabel("显示名称").fill("Local Image");
+    await page.getByLabel("供应商模型名").fill("local-image-v1");
+    await page.getByLabel("能力", { exact: true }).selectOption("image");
+    await page.getByRole("button", { name: "保存新模型" }).click();
+    const localImageRow = page.getByRole("row", { name: /Local Image/ });
+    await localImageRow.getByRole("button", { name: "测试 Local Image" }).click();
+    await page.getByRole("button", { name: "确认并测试" }).click();
+    await expect(page.getByRole("img", { name: "Local Image 测试结果" })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "测试模型连接" })).toContainText("image/png");
+    await page.getByRole("button", { name: /取\s*消/ }).click();
 
     await page.getByRole("button", { name: "新增模型" }).click();
     await page.getByLabel("显示名称").fill("Disposable Image");
