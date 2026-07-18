@@ -57,6 +57,10 @@ def test_reverse_proxy_cannot_reach_any_management_surface(tmp_path):
         "/api/suppliers/example/secret",
         "/api/suppliers/example/models",
         "/api/models/example",
+        "/api/models/example/tests",
+        "/api/model-tests/status",
+        "/api/model-tests/example",
+        "/api/model-tests/example/content",
         "/api/projects/project-1/model-bindings",
         "/api/projects/project-1/model-resolution/source_segmentation",
     )

@@ -56,8 +56,8 @@ export function AssetGrid({
         onClose={() => setInspectedAsset(null)}
       />
       <Drawer
+        className="asset-metadata-drawer"
         destroyOnClose
-        getContainer={false}
         onClose={() => setMetadataAsset(null)}
         open={Boolean(metadataAsset)}
         title={metadataAsset ? `${metadataAsset.name} metadata` : "metadata"}
@@ -269,22 +269,22 @@ function AssetInspector({
   const relatedAssets = asset ? assets.filter((candidate) => sameVersionFamily(candidate, asset)) : [];
   return (
     <Drawer
+      className="asset-detail-drawer"
       destroyOnClose
-      getContainer={false}
       onClose={onClose}
       open={Boolean(asset)}
       title={asset ? `资产详情：${asset.name}` : "资产详情"}
       width={520}
     >
       {asset ? (
-        <div style={{ display: "grid", gap: 16 }}>
-          <div style={largePreviewWrapStyle}>
+        <div className="asset-detail-layout">
+          <section aria-label="资产主预览" className="asset-main-preview" style={largePreviewWrapStyle}>
             <img
               alt={`${asset.name} 大图预览`}
               src={`/api/assets/${asset.asset_id}/content`}
               style={largePreviewStyle}
             />
-          </div>
+          </section>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             <Tag>{asset.asset_type}</Tag>
             <Tag color={statusColor(asset.status)}>{asset.status}</Tag>
@@ -295,9 +295,9 @@ function AssetInspector({
             <Typography.Title level={2} style={{ fontSize: 16, margin: 0 }}>
               版本与采用
             </Typography.Title>
-            <div style={versionStripStyle}>
+            <div aria-label="资产版本历史" className="asset-version-strip" role="list" style={versionStripStyle}>
               {relatedAssets.map((candidate) => (
-                <div aria-label={`版本 ${candidate.name}`} key={candidate.asset_id} style={versionItemStyle}>
+                <div aria-label={`版本 ${candidate.name}`} key={candidate.asset_id} role="listitem" style={versionItemStyle}>
                   <img
                     alt={`${candidate.name} 版本缩略图`}
                     src={`/api/assets/${candidate.asset_id}/content`}

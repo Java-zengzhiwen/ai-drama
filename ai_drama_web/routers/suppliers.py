@@ -16,6 +16,7 @@ from ai_drama_web.schemas.suppliers import (
 from ai_drama_web.suppliers.compiler import SupplierCompileError, compile_supplier
 from ai_drama_web.suppliers.credentials import CredentialInUse
 from ai_drama_web.suppliers.models import RevisionConflict
+from ai_drama_web.suppliers.templates import custom_supplier_template
 
 
 router = APIRouter(prefix="/api/suppliers")
@@ -39,11 +40,36 @@ async def create_supplier(
     body_hash = _hash(payload.model_dump())
     store = request.app.state.product_store
     try:
+        replay = store.get_supplier_creation_request(idempotency_key)
+        if replay:
+            if replay["request_hash"] != body_hash:
+                raise RevisionConflict("supplier creation idempotency conflict")
+            supplier = store.get_supplier(replay["supplier_id"])
+            response.status_code = 200
+            return _supplier_read(request, supplier)
+        source = custom_supplier_template(payload.slug, payload.display_name)
+        artifact = compile_supplier(source, runtime_store=request.app.state.runtime_store)
         supplier, created = store.create_supplier_idempotent(
             slug=payload.slug,
             display_name=payload.display_name,
             idempotency_key=idempotency_key,
             request_hash=body_hash,
+            initial_version={
+                "source_object_id": artifact.source_object_id,
+                "source_hash": artifact.source_hash,
+                "compiled_artifact_object_id": artifact.compiled_artifact_object_id,
+                "compiled_artifact_hash": artifact.compiled_artifact_hash,
+                "manifest_hash": artifact.manifest_hash,
+                "manifest": artifact.vendor,
+                "adapter_contract_version": artifact.adapter_contract_version,
+                "worker_protocol_version": "1",
+                "worker_runtime_version": artifact.worker_runtime_version,
+                "compiler_name": artifact.compiler_name,
+                "compiler_version": artifact.compiler_version,
+                "compiler_options_hash": artifact.compiler_options_hash,
+                "helper_api_version": artifact.helper_api_version,
+                "rate_limit_bucket_key": artifact.vendor["rateLimitBucketKey"],
+            },
         )
     except RevisionConflict as exc:
         raise HTTPException(409, detail={"error_code": "IDEMPOTENCY_CONFLICT"}) from exc
@@ -410,6 +436,10 @@ def _credential_active_job_count(request, supplier):
         return 0
     return len(
         request.app.state.supplier_credential_store.active_job_references(
+            supplier.current_credential_version_id
+        )
+    ) + len(
+        request.app.state.supplier_credential_store.active_model_test_references(
             supplier.current_credential_version_id
         )
     )

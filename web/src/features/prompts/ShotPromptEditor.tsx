@@ -21,14 +21,14 @@ export function ShotPromptEditor({
   }
 
   return (
-    <section aria-label="shot prompt inspector" style={{ display: "grid", gap: 12 }}>
+    <section aria-label="shot prompt inspector" className="prompt-editor" style={{ display: "grid", gap: 12 }}>
       <div>
         <Typography.Text strong>{shot.shot_id}</Typography.Text>
         <br />
         <Typography.Text type="secondary">编辑后保存会提交完整 canonical JSON。</Typography.Text>
       </div>
 
-      <label style={fieldLayoutStyle}>
+      <label className="prompt-field prompt-field-positive" style={fieldLayoutStyle}>
         <span>positive_prompt</span>
         <Input.TextArea
           aria-label="positive_prompt"
@@ -39,7 +39,7 @@ export function ShotPromptEditor({
         />
       </label>
 
-      <label style={fieldLayoutStyle}>
+      <label className="prompt-field prompt-field-negative" style={fieldLayoutStyle}>
         <span>negative_prompt</span>
         <Input.TextArea
           aria-label="negative_prompt"

@@ -476,9 +476,9 @@ describe("shot prompt workspace", () => {
 
     const rail = screen.getByLabelText("workflow rail");
     expect(within(rail).getByText("资料与资产")).toBeInTheDocument();
-    expect(within(rail).getByText("Shot Prompt 待生成：等待资产需求 ready")).toBeInTheDocument();
-    expect(within(rail).getByText("Agnes 生成已锁定：请先生成或选择当前 Shot Prompt revision。")).toBeInTheDocument();
-    expect(within(rail).getByText("结果与重跑已锁定：已有 GenerationJob 后可查看结果与重跑。")).toBeInTheDocument();
+    expect(within(rail).getByRole("listitem", { name: "Shot Prompt 待生成" })).toHaveAttribute("data-reason", "等待资产需求 ready");
+    expect(within(rail).getByRole("listitem", { name: "Agnes 生成已锁定" })).toHaveAttribute("data-reason", "请先生成或选择当前 Shot Prompt revision。");
+    expect(within(rail).getByRole("listitem", { name: "结果与重跑已锁定" })).toHaveAttribute("data-reason", "已有 GenerationJob 后可查看结果与重跑。");
 
     expect(await screen.findByText("资产需求")).toBeInTheDocument();
     const requirementsTable = screen.getByRole("table", { name: "Asset requirement rows" });
@@ -517,9 +517,14 @@ describe("shot prompt workspace", () => {
     expect(await screen.findByRole("heading", { name: "第一章" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "分镜" })).not.toHaveAttribute("aria-disabled", "true");
     const rail = screen.getByLabelText("workflow rail");
-    expect(within(rail).getByText(shotPromptRailText)).toBeInTheDocument();
-    expect(within(rail).getByText("Agnes 生成已锁定：请先生成或选择当前 Shot Prompt revision。")).toBeInTheDocument();
-    expect(within(rail).getByText("结果与重跑已锁定：已有 GenerationJob 后可查看结果与重跑。")).toBeInTheDocument();
+    const [shotPromptLabel, shotPromptReason] = shotPromptRailText.split("：");
+    const shotPromptStep = within(rail).getByRole("listitem", { name: shotPromptLabel });
+    expect(shotPromptStep).toBeInTheDocument();
+    if (shotPromptReason) {
+      expect(shotPromptStep).toHaveAttribute("data-reason", shotPromptReason);
+    }
+    expect(within(rail).getByRole("listitem", { name: "Agnes 生成已锁定" })).toHaveAttribute("data-reason", "请先生成或选择当前 Shot Prompt revision。");
+    expect(within(rail).getByRole("listitem", { name: "结果与重跑已锁定" })).toHaveAttribute("data-reason", "已有 GenerationJob 后可查看结果与重跑。");
     expect(screen.getByRole("tab", { name: /Agnes 生成/ })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("tab", { name: /结果与重跑/ })).toHaveAttribute("aria-disabled", "true");
   });

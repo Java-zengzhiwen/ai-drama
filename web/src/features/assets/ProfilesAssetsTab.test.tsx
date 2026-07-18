@@ -252,13 +252,16 @@ describe("profiles and assets workspace", () => {
 
     expect(await screen.findByRole("heading", { name: "第一章" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /资料与资产/ })).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByText("未确认分镜，不允许进入后续生产步骤。")).toBeInTheDocument();
+    expect(screen.getAllByText("未确认分镜，不允许进入后续生产步骤。").length).toBeGreaterThan(0);
   });
 
   test("unlocks after storyboard approval and shows empty profile and asset states", async () => {
     setupWorkspaceMocks();
 
     renderWithQueryClient(<ChapterWorkspace chapterId="chapter-1" projectId="project-1" />);
+    const workflow = await screen.findByRole("list", { name: "workflow rail" });
+    await waitFor(() => expect(within(workflow).getAllByRole("listitem")).toHaveLength(7));
+    expect(screen.queryByText("后续生产步骤已锁定")).not.toBeInTheDocument();
     await openAssetsTab();
 
     expect(await screen.findByText("暂无生产资料。创建角色、场景、道具或风格资料后会显示在这里。")).toBeInTheDocument();
@@ -362,6 +365,8 @@ describe("profiles and assets workspace", () => {
     fireEvent.click(within(card).getByRole("button", { name: "查看大图" }));
 
     const inspector = await screen.findByRole("dialog", { name: "资产详情：旧账房参考" });
+    expect(within(inspector).getByRole("region", { name: "资产主预览" })).toBeInTheDocument();
+    expect(within(inspector).getByRole("list", { name: "资产版本历史" })).toBeInTheDocument();
     expect(within(inspector).getByRole("img", { name: "旧账房参考 大图预览" })).toHaveAttribute(
       "src",
       "/api/assets/asset-2/content",

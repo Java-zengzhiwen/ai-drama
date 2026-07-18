@@ -3,6 +3,7 @@ import json
 import uuid
 
 from .models import ModelNameConflict, ModelReferenced, RevisionConflict
+from .reasoning import ReasoningEffortError, validate_reasoning_definition
 
 
 class ModelCatalogError(ValueError):
@@ -29,6 +30,7 @@ class ModelCatalogService:
         expected_catalog_revision,
         idempotency_key,
     ):
+        self._validate_reasoning(definition, capability)
         body = {
             "provider_model_name": provider_model_name,
             "display_name": display_name,
@@ -80,6 +82,7 @@ class ModelCatalogService:
         acknowledged_binding_count,
     ):
         model = self._model(supplier_model_id)
+        self._validate_reasoning(definition, capability)
         if model.enabled:
             self._reject_active_duplicate(
                 model.supplier_id, capability, provider_model_name, exclude_id=supplier_model_id
@@ -127,13 +130,11 @@ class ModelCatalogService:
     def delete_overlay(
         self, supplier_model_id, *, expected_catalog_revision, expected_model_revision
     ):
-        model = self._model(supplier_model_id)
+        model = self._model(supplier_model_id, allow_archived=True)
         if model.source == "built_in":
             raise ModelCatalogError("BUILT_IN_MODEL_DELETE_FORBIDDEN")
-        if self.store.count_model_references(supplier_model_id):
-            raise ModelCatalogError("MODEL_REFERENCED")
         try:
-            self.store.delete_supplier_model(
+            return self.store.remove_supplier_model_atomically(
                 supplier_model_id,
                 expected_catalog_revision=expected_catalog_revision,
                 expected_model_revision=expected_model_revision,
@@ -141,10 +142,12 @@ class ModelCatalogService:
         except ModelReferenced as exc:
             raise ModelCatalogError("MODEL_REFERENCED") from exc
 
-    def _model(self, supplier_model_id):
+    def _model(self, supplier_model_id, *, allow_archived=False):
         model = self.store.get_supplier_model(supplier_model_id)
         if model is None:
             raise ModelCatalogError("MODEL_NOT_FOUND")
+        if model.archived_at and not allow_archived:
+            raise ModelCatalogError("MODEL_ARCHIVED")
         return model
 
     def _reject_active_duplicate(
@@ -154,3 +157,12 @@ class ModelCatalogService:
             supplier_id, capability, provider_model_name, exclude_id=exclude_id
         ):
             raise ModelCatalogError("MODEL_NAME_CONFLICT")
+
+    def _validate_reasoning(self, definition, capability):
+        try:
+            validate_reasoning_definition(
+                definition=definition,
+                capability=capability,
+            )
+        except ReasoningEffortError as exc:
+            raise ModelCatalogError(exc.code) from exc

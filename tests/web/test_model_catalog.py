@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_web.store import ProductStore
@@ -43,6 +44,25 @@ def test_overlay_revision_keeps_stable_identity_and_old_revision(tmp_path):
     assert revised.current_model_revision_id != old_revision.model_revision_id
     assert store.get_supplier_model_revision(old_revision.model_revision_id).provider_model_name == "text-v1"
     assert store.get_supplier_model_revision(revised.current_model_revision_id).provider_model_name == "text-v2"
+
+
+@pytest.mark.parametrize("effort", ["turbo", "none", "", 7, [], {"nested": "bad"}])
+def test_catalog_rejects_invalid_reasoning_definition_before_persistence(tmp_path, effort):
+    _runtime, store, catalog = _catalog(tmp_path)
+    supplier = store.list_suppliers()[0]
+
+    with pytest.raises(ModelCatalogError, match="INVALID_REASONING_EFFORT"):
+        catalog.create_overlay(
+            supplier.supplier_id,
+            provider_model_name="invalid-reasoning",
+            display_name="Invalid Reasoning",
+            capability="text",
+            definition={"constraints": {"reasoning_effort": effort}},
+            expected_catalog_revision=0,
+            idempotency_key="invalid-reasoning",
+        )
+
+    assert store.list_supplier_models(supplier.supplier_id) == []
 
 
 def test_active_duplicate_name_is_rejected_but_disabled_model_allows_reuse(tmp_path):
@@ -214,6 +234,43 @@ def test_unreferenced_overlay_can_be_deleted_with_history(tmp_path):
     assert store.get_supplier_model_revision(model.current_model_revision_id) is None
 
 
+def test_archived_overlay_is_hidden_but_retained_and_replay_is_idempotent(tmp_path):
+    _, store, catalog = _catalog(tmp_path)
+    supplier = store.list_suppliers()[0]
+    model, _ = catalog.create_overlay(
+        supplier.supplier_id,
+        provider_model_name="historical",
+        display_name="Historical",
+        capability="text",
+        definition={},
+        expected_catalog_revision=0,
+        idempotency_key="historical",
+    )
+
+    archived = store.archive_supplier_model(
+        model.supplier_model_id,
+        expected_catalog_revision=1,
+        expected_model_revision=1,
+        archive_reason="historical_snapshot",
+    )
+    replayed = store.archive_supplier_model(
+        model.supplier_model_id,
+        expected_catalog_revision=2,
+        expected_model_revision=2,
+        archive_reason="historical_snapshot",
+    )
+
+    assert archived.archived_at
+    assert archived.archive_reason == "historical_snapshot"
+    assert archived.enabled == 0
+    assert archived.revision == 2
+    assert replayed == archived
+    assert store.list_supplier_models(supplier.supplier_id) == []
+    assert store.list_supplier_models(supplier.supplier_id, include_archived=True) == [archived]
+    assert store.get_supplier_model_revision(model.current_model_revision_id) is not None
+    assert store.get_supplier(supplier.supplier_id).model_catalog_revision == 2
+
+
 def test_model_and_idempotency_record_commit_atomically(tmp_path):
     _, store, catalog = _catalog(tmp_path)
     supplier = store.list_suppliers()[0]
@@ -265,3 +322,28 @@ def test_store_transaction_rejects_active_duplicate_without_service_precheck(tmp
             idempotency_key="race-second",
             request_hash="race-second-hash",
         )
+
+
+def test_catalog_removal_delegates_reference_decision_to_one_store_transaction():
+    model = SimpleNamespace(source="overlay", archived_at="")
+
+    class AtomicStore:
+        called = None
+
+        def get_supplier_model(self, _model_id):
+            return model
+
+        def remove_supplier_model_atomically(self, model_id, **preconditions):
+            self.called = (model_id, preconditions)
+            return None
+
+    store = AtomicStore()
+
+    ModelCatalogService(store).delete_overlay(
+        "model-id", expected_catalog_revision=7, expected_model_revision=3
+    )
+
+    assert store.called == (
+        "model-id",
+        {"expected_catalog_revision": 7, "expected_model_revision": 3},
+    )

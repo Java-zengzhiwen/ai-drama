@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Checkbox, Drawer, Form, Input, Select, Skeleton, Tag, Typography } from "antd";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listAssets } from "../assets/api";
 import type { ChapterRead } from "../projects/api";
 import {
@@ -25,6 +25,7 @@ export function GenerationResultsTab({ chapter }: GenerationResultsTabProps) {
   const jobsQueryKey = ["generation-jobs", chapter.chapter_id];
   const [previewResultId, setPreviewResultId] = useState("");
   const [rerunResult, setRerunResult] = useState<GenerationResultRead | undefined>();
+  const rerunReturnFocusRef = useRef<HTMLElement | null>(null);
   const resultsQuery = useQuery({
     queryKey: resultsQueryKey,
     queryFn: () => listGenerationResults(chapter.chapter_id),
@@ -56,6 +57,7 @@ export function GenerationResultsTab({ chapter }: GenerationResultsTabProps) {
       rerunGenerationJob(jobId, payload),
     onSuccess: () => {
       setRerunResult(undefined);
+      queueMicrotask(() => rerunReturnFocusRef.current?.focus());
       void queryClient.invalidateQueries({ queryKey: resultsQueryKey });
       void queryClient.invalidateQueries({ queryKey: jobsQueryKey });
     },
@@ -74,7 +76,7 @@ export function GenerationResultsTab({ chapter }: GenerationResultsTabProps) {
   }
 
   return (
-    <section aria-label="结果与重跑工作台" style={{ display: "grid", gap: 16 }}>
+    <section aria-label="结果与重跑工作台" className="production-workbench results-workbench">
       <div style={headerStyle}>
         <Typography.Title level={2} style={titleStyle}>
           结果与重跑
@@ -87,13 +89,11 @@ export function GenerationResultsTab({ chapter }: GenerationResultsTabProps) {
       ) : null}
       {jobsQuery.isError ? <Alert message="生成任务加载失败，演练可视化不可用。" showIcon type="error" /> : null}
 
-      <RehearsalVisibilityPanel jobs={jobsQuery.data ?? []} resultGroups={groups} />
-
       {groups.length === 0 ? (
         <Alert message="暂无视频结果。提交 Agnes 生成后会显示结果版本。" showIcon type="info" />
       ) : (
-        <div style={workspaceGridStyle}>
-          <section aria-label="shot result rows" style={panelStyle}>
+        <div className="results-layout" style={workspaceGridStyle}>
+          <section aria-label="shot result rows" className="production-panel result-table-panel" style={panelStyle}>
             {groups.map((group) => (
               <ResultGroup
                 group={group}
@@ -105,7 +105,7 @@ export function GenerationResultsTab({ chapter }: GenerationResultsTabProps) {
               />
             ))}
           </section>
-          <section aria-label="video result preview" style={panelStyle}>
+          <section aria-label="video result preview" className="production-panel production-inspector result-preview" style={panelStyle}>
             <Typography.Title level={3} style={sectionTitleStyle}>
               视频预览
             </Typography.Title>
@@ -114,7 +114,10 @@ export function GenerationResultsTab({ chapter }: GenerationResultsTabProps) {
                 result={selectedResult}
                 reviewing={reviewMutation.isPending}
                 onReview={(payload) => reviewMutation.mutate({ resultId: selectedResult.result_id, payload })}
-                onRerun={() => setRerunResult(selectedResult)}
+                onRerun={() => {
+                  rerunReturnFocusRef.current = document.activeElement as HTMLElement | null;
+                  setRerunResult(selectedResult);
+                }}
               />
             ) : (
               <Typography.Text type="secondary">选择一个结果后预览。</Typography.Text>
@@ -125,7 +128,10 @@ export function GenerationResultsTab({ chapter }: GenerationResultsTabProps) {
             job={sourceJobQuery.data}
             loading={sourceJobQuery.isLoading || rerunMutation.isPending}
             open={Boolean(rerunResult)}
-            onClose={() => setRerunResult(undefined)}
+            onClose={() => {
+              setRerunResult(undefined);
+              queueMicrotask(() => rerunReturnFocusRef.current?.focus());
+            }}
             onSubmit={(values) => {
               if (!rerunResult) {
                 return;
@@ -145,6 +151,9 @@ export function GenerationResultsTab({ chapter }: GenerationResultsTabProps) {
           />
         </div>
       )}
+      <div className="rehearsal-evidence">
+        <RehearsalVisibilityPanel jobs={jobsQuery.data ?? []} resultGroups={groups} />
+      </div>
     </section>
   );
 }
@@ -179,6 +188,7 @@ function ResultGroup({
         <tbody>
           {group.results.map((result) => (
             <tr
+              aria-selected={result.result_id === selectedResultId}
               key={result.result_id}
               onClick={(event) => {
                 if ((event.target as HTMLElement).closest("button")) {
@@ -196,7 +206,7 @@ function ResultGroup({
                   {result.source_url_state}
                 </Tag>
               </td>
-              <td style={tdStyle}>{result.source_url}</td>
+              <td style={tdStyle}>{formatSourceLocation(result.source_url)}</td>
               <td style={tdStyle}>
                 <Button
                   aria-label={`采用 ${result.result_id}`}
@@ -270,6 +280,24 @@ function RerunDrawer({
   onClose: () => void;
   onSubmit: (values: { prompt?: string; negative_prompt?: string; asset_ids?: string[]; duration_seconds?: number; mode?: "std" | "pro" }) => void;
 }) {
+  const compact = useCompactRerun();
+
+  if (!open) {
+    return null;
+  }
+
+  if (compact) {
+    return (
+      <section aria-label="创建 Agnes 重跑" className="rerun-inline-panel" role="region">
+        <div className="rerun-inline-heading">
+          <Typography.Title level={3} style={sectionTitleStyle}>创建重跑</Typography.Title>
+          <Button autoFocus onClick={onClose} size="small">关闭</Button>
+        </div>
+        <RerunForm assets={assets} job={job} loading={loading} onSubmit={onSubmit} />
+      </section>
+    );
+  }
+
   return (
     <Drawer
       aria-label="创建 Agnes 重跑"
@@ -280,62 +308,104 @@ function RerunDrawer({
       width={360}
     >
       <section aria-label="创建 Agnes 重跑" aria-modal="true" role="dialog">
-        <Form
-          key={job?.request.prompt ?? "loading"}
-          disabled={loading}
-          layout="vertical"
-          onFinish={onSubmit}
-          initialValues={{
-            prompt: job?.request.prompt,
-            negative_prompt: job?.request.negative_prompt,
-            asset_ids: job?.request.asset_ids,
-            duration_seconds: job?.request.duration_seconds,
-            mode: job?.request.parameters.mode,
-          }}
-        >
-          <Typography.Paragraph type="secondary">
-            当前资产：{job?.request.asset_ids.join(", ") || "-"}
-          </Typography.Paragraph>
-          <Form.Item label="Prompt override" name="prompt">
-            <Input.TextArea rows={4} />
-          </Form.Item>
-          <Form.Item label="Negative prompt override" name="negative_prompt">
-            <Input.TextArea rows={3} />
-          </Form.Item>
-          <Form.Item label="Asset override" name="asset_ids">
-            <Checkbox.Group style={{ display: "grid", gap: 8 }}>
-              {assets.map((asset) => (
-                <Checkbox key={asset.asset_id} value={asset.asset_id}>
-                  {asset.name} / {asset.asset_type} / {asset.asset_id}
-                </Checkbox>
-              ))}
-            </Checkbox.Group>
-          </Form.Item>
-          <Form.Item label="Duration override" name="duration_seconds">
-            <Select
-              allowClear
-              options={[
-                { label: "5 seconds", value: 5 },
-                { label: "10 seconds", value: 10 },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item label="Mode override" name="mode">
-            <Select
-              allowClear
-              options={[
-                { label: "std", value: "std" },
-                { label: "pro", value: "pro" },
-              ]}
-            />
-          </Form.Item>
-          <Button htmlType="submit" loading={loading} type="primary">
-            创建重跑
-          </Button>
-        </Form>
+        <RerunForm assets={assets} job={job} loading={loading} onSubmit={onSubmit} />
       </section>
     </Drawer>
   );
+}
+
+function RerunForm({
+  assets,
+  job,
+  loading,
+  onSubmit,
+}: {
+  assets: Array<{ asset_id: string; name: string; asset_type: string }>;
+  job?: { request: { prompt: string; negative_prompt: string; asset_ids: string[]; duration_seconds: number; parameters: Record<string, unknown> } };
+  loading: boolean;
+  onSubmit: (values: { prompt?: string; negative_prompt?: string; asset_ids?: string[]; duration_seconds?: number; mode?: "std" | "pro" }) => void;
+}) {
+  return (
+    <Form
+      key={job?.request?.prompt ?? "loading"}
+      disabled={loading}
+      layout="vertical"
+      onFinish={onSubmit}
+      initialValues={{
+        prompt: job?.request?.prompt,
+        negative_prompt: job?.request?.negative_prompt,
+        asset_ids: job?.request?.asset_ids,
+        duration_seconds: job?.request?.duration_seconds,
+        mode: job?.request?.parameters.mode,
+      }}
+    >
+      <Typography.Paragraph type="secondary">
+        当前资产：{job?.request?.asset_ids.join(", ") || "-"}
+      </Typography.Paragraph>
+      <Form.Item label="Prompt override" name="prompt">
+        <Input.TextArea rows={4} />
+      </Form.Item>
+      <Form.Item label="Negative prompt override" name="negative_prompt">
+        <Input.TextArea rows={3} />
+      </Form.Item>
+      <Form.Item label="Asset override" name="asset_ids">
+        <Checkbox.Group style={{ display: "grid", gap: 8 }}>
+          {assets.map((asset) => (
+            <Checkbox key={asset.asset_id} value={asset.asset_id}>
+              {asset.name} / {asset.asset_type} / {asset.asset_id}
+            </Checkbox>
+          ))}
+        </Checkbox.Group>
+      </Form.Item>
+      <Form.Item label="Duration override" name="duration_seconds">
+        <Select
+          allowClear
+          options={[
+            { label: "5 seconds", value: 5 },
+            { label: "10 seconds", value: 10 },
+          ]}
+        />
+      </Form.Item>
+      <Form.Item label="Mode override" name="mode">
+        <Select
+          allowClear
+          options={[
+            { label: "std", value: "std" },
+            { label: "pro", value: "pro" },
+          ]}
+        />
+      </Form.Item>
+      <Button htmlType="submit" loading={loading} type="primary">
+        创建重跑
+      </Button>
+    </Form>
+  );
+}
+
+function useCompactRerun() {
+  const query = "(max-width: 1180px)";
+  const [compact, setCompact] = useState(() => window.matchMedia(query).matches);
+
+  useEffect(() => {
+    const media = window.matchMedia(query);
+    const onChange = (event: MediaQueryListEvent) => setCompact(event.matches);
+    setCompact(media.matches);
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, []);
+
+  return compact;
+}
+
+function formatSourceLocation(value: string) {
+  try {
+    const source = new URL(value);
+    const parts = source.pathname.split("/").filter(Boolean);
+    const file = parts[parts.length - 1];
+    return file ? `${source.hostname}/…/${file}` : source.hostname;
+  } catch {
+    return value ? "已记录来源" : "-";
+  }
 }
 
 const headerStyle = { display: "grid", gap: 4 };

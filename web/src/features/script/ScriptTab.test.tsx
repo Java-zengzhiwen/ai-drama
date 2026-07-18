@@ -106,8 +106,86 @@ function sourceReadyChapter(): ChapterRead {
 function setupWorkspaceMocks() {
   let chapter: ChapterRead = { ...baseChapter };
   let revisions: ScriptRevisionRead[] = [];
+  let bindingRevision = 1;
+  let bindings = {
+    defaults: { text: "model-sol", image: "", video: "" },
+    operation_overrides: { script_adaptation: "model-sol" } as Record<string, string>,
+  };
 
   mockedGet.mockImplementation(async (url: string) => {
+    if (url === "/projects/project-1/chapters") {
+      return {
+        data: [
+          chapter,
+          {
+            ...baseChapter,
+            chapter_id: "chapter-2",
+            title: "第二章",
+            position: 2,
+            current_source_revision_id: "source-2",
+            source_text: "第二章正文。",
+          },
+        ],
+      };
+    }
+    if (url === "/projects/project-1/model-resolution/script_adaptation") {
+      return {
+        data: {
+          project_id: "project-1",
+          operation_key: "script_adaptation",
+          capability: "text",
+          binding_source: "operation_override",
+          supplier_id: "supplier-aixora",
+          supplier_model_id: "model-sol",
+          model_revision_id: "model-sol-r1",
+          provider_model_name: "gpt-5.6-sol",
+        },
+      };
+    }
+    if (url === "/projects/project-1/model-bindings") {
+      return {
+        data: {
+          project_id: "project-1",
+          ...bindings,
+          binding_set_revision: bindingRevision,
+        },
+        headers: { etag: `\"binding-set-${bindingRevision}\"` },
+      };
+    }
+    if (url === "/suppliers") {
+      return {
+        data: [
+          {
+            supplier_id: "supplier-aixora",
+            display_name: "aixora",
+            enabled: 1,
+          },
+        ],
+      };
+    }
+    if (url === "/suppliers/supplier-aixora/models") {
+      return {
+        data: [
+          {
+            supplier_model_id: "model-sol",
+            supplier_id: "supplier-aixora",
+            display_name: "GPT-5.6 Sol",
+            provider_model_name: "gpt-5.6-sol",
+            capability: "text",
+            enabled: 1,
+          },
+          {
+            supplier_model_id: "model-terra",
+            supplier_id: "supplier-aixora",
+            display_name: "GPT-5.6 Terra",
+            provider_model_name: "gpt-5.6-terra",
+            capability: "text",
+            enabled: 1,
+          },
+        ],
+        headers: { etag: "\"model-catalog-1\"" },
+      };
+    }
     if (url === "/chapters/chapter-1") {
       return { data: chapter };
     }
@@ -166,6 +244,19 @@ function setupWorkspaceMocks() {
   });
 
   mockedPut.mockImplementation(async (url: string, payload?: unknown) => {
+    if (url === "/projects/project-1/model-bindings") {
+      const next = payload as typeof bindings;
+      bindings = next;
+      bindingRevision += 1;
+      return {
+        data: {
+          project_id: "project-1",
+          ...bindings,
+          binding_set_revision: bindingRevision,
+        },
+        headers: { etag: `\"binding-set-${bindingRevision}\"` },
+      };
+    }
     if (url === "/script-revisions/script-1") {
       const update = payload as { content: string };
       revisions = [{ ...generatedScript }, { ...editedScript, content: update.content }];
@@ -191,16 +282,16 @@ describe("chapter source and script workspace tabs", () => {
   test("saves source as a new revision and shows the current source text", async () => {
     render(<App />);
 
-    expect(await screen.findByRole("heading", { name: "第一章" })).toBeInTheDocument();
-    expect(within(screen.getByLabelText("workflow rail")).getByText("原文完成：暂无小说原文")).toBeInTheDocument();
-    expect(within(screen.getByLabelText("workflow rail")).getByText("分镜待确认：未确认剧本，不允许生成分镜。")).toBeInTheDocument();
-    expect(screen.getByText("未确认剧本，不允许生成分镜。")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "第一章" })).toBeInTheDocument();
+    expect(within(screen.getByLabelText("workflow rail")).getByRole("listitem", { name: "原文完成" })).toHaveAttribute("data-reason", "暂无小说原文");
+    expect(within(screen.getByLabelText("workflow rail")).getByRole("listitem", { name: "分镜待确认" })).toHaveAttribute("data-reason", "未确认剧本，不允许生成分镜。");
+    expect(screen.getByText("分镜阶段将在生成并确认剧本后解锁")).toBeInTheDocument();
     expect(screen.getByText("暂无小说原文。粘贴正文后才能生成剧本。")).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText("小说原文"), {
       target: { value: "第一章正文。沈清荷醒来。" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存原文" }));
+    fireEvent.click(screen.getByRole("button", { name: "仅保存原文" }));
 
     await waitFor(() =>
       expect(mockedPost).toHaveBeenCalledWith("/chapters/chapter-1/source-revisions", {
@@ -217,7 +308,7 @@ describe("chapter source and script workspace tabs", () => {
     fireEvent.change(await screen.findByLabelText("小说原文"), {
       target: { value: "第一章正文。沈清荷醒来。" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存原文" }));
+    fireEvent.click(screen.getByRole("button", { name: "仅保存原文" }));
     await screen.findByText("原文已保存为新版本。");
 
     fireEvent.click(screen.getByRole("tab", { name: "剧本" }));
@@ -259,6 +350,81 @@ describe("chapter source and script workspace tabs", () => {
     expect(within(screen.getByLabelText("workflow rail")).getByText("剧本已确认")).toBeInTheDocument();
   });
 
+  test("renders the approved source workbench and saves before generating a script", async () => {
+    render(<App />);
+
+    expect(await screen.findByRole("navigation", { name: "章节导航" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "原文转剧本" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: /第二章/ })).toHaveAttribute(
+      "href",
+      "/projects/project-1/chapters/chapter-2",
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "文本模型" })).toHaveValue("model-sol"),
+    );
+
+    fireEvent.change(screen.getByLabelText("小说原文"), {
+      target: { value: "第一章正文。沈清荷醒来。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存并生成剧本" }));
+
+    await waitFor(() =>
+      expect(mockedPost.mock.calls.slice(0, 2)).toEqual([
+        ["/chapters/chapter-1/source-revisions", { content: "第一章正文。沈清荷醒来。" }],
+        ["/chapters/chapter-1/script/generate"],
+      ]),
+    );
+    expect(await screen.findByText("script_markdown_contract")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "剧本" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  test("saves a changed script model binding before source and script generation", async () => {
+    const callOrder: string[] = [];
+    const originalPut = mockedPut.getMockImplementation();
+    const originalPost = mockedPost.getMockImplementation();
+    mockedPut.mockImplementation(async (...args: unknown[]) => {
+      callOrder.push("binding");
+      return originalPut?.(...args);
+    });
+    mockedPost.mockImplementation(async (...args: unknown[]) => {
+      callOrder.push(String(args[0]).endsWith("/source-revisions") ? "source" : "script");
+      return originalPost?.(...args);
+    });
+
+    render(<App />);
+
+    const modelSelect = await screen.findByRole("combobox", { name: "文本模型" });
+    await waitFor(() => expect(modelSelect).toHaveValue("model-sol"));
+    fireEvent.change(modelSelect, { target: { value: "model-terra" } });
+    fireEvent.change(screen.getByLabelText("小说原文"), {
+      target: { value: "第一章正文。沈清荷醒来。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存并生成剧本" }));
+
+    await waitFor(() => expect(callOrder.slice(0, 3)).toEqual(["binding", "source", "script"]));
+    expect(mockedPut).toHaveBeenCalledWith(
+      "/projects/project-1/model-bindings",
+      {
+        defaults: { text: "model-sol", image: "", video: "" },
+        operation_overrides: { script_adaptation: "model-terra" },
+      },
+      { headers: { "If-Match": "\"binding-set-1\"" } },
+    );
+    expect(screen.getByRole("tab", { name: "剧本" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  test("save-only persists the source without generating a script", async () => {
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("小说原文"), {
+      target: { value: "第一章正文。沈清荷醒来。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "仅保存原文" }));
+
+    await screen.findByText("原文已保存为新版本。");
+    expect(mockedPost).not.toHaveBeenCalledWith("/chapters/chapter-1/script/generate");
+  });
+
   test("shows backend error codes when script generation fails", async () => {
     mockedPost.mockImplementation(async (url: string, payload?: unknown) => {
       if (url === "/chapters/chapter-1/source-revisions") {
@@ -292,7 +458,7 @@ describe("chapter source and script workspace tabs", () => {
     fireEvent.change(await screen.findByLabelText("小说原文"), {
       target: { value: "第一章正文。沈清荷醒来。" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存原文" }));
+    fireEvent.click(screen.getByRole("button", { name: "仅保存原文" }));
     await screen.findByText("原文已保存为新版本。");
     fireEvent.click(screen.getByRole("tab", { name: "剧本" }));
     fireEvent.click(await screen.findByRole("button", { name: "生成剧本" }));
@@ -350,7 +516,7 @@ describe("chapter source and script workspace tabs", () => {
     fireEvent.change(await screen.findByLabelText("小说原文"), {
       target: { value: "第一章正文。沈清荷醒来。" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存原文" }));
+    fireEvent.click(screen.getByRole("button", { name: "仅保存原文" }));
 
     expect(await screen.findByText("SOURCE_SAVE_FAILED")).toBeInTheDocument();
     expect(screen.getByText("source save rejected")).toBeInTheDocument();
@@ -383,7 +549,7 @@ describe("chapter source and script workspace tabs", () => {
     fireEvent.change(await screen.findByLabelText("小说原文"), {
       target: { value: "第一章正文。沈清荷醒来。" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存原文" }));
+    fireEvent.click(screen.getByRole("button", { name: "仅保存原文" }));
     await screen.findByText("原文已保存为新版本。");
     fireEvent.click(screen.getByRole("tab", { name: "剧本" }));
     fireEvent.click(await screen.findByRole("button", { name: "生成剧本" }));

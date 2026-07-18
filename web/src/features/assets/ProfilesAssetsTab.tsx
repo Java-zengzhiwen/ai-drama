@@ -110,7 +110,7 @@ export function ProfilesAssetsTab({ chapter }: ProfilesAssetsTabProps) {
   }
 
   return (
-    <section aria-label="资料与资产工作台" style={{ display: "grid", gap: 16 }}>
+    <section aria-label="资料与资产工作台" className="production-workbench assets-workbench">
       <div style={headerStyle}>
         <Typography.Title level={2} style={{ fontSize: 18, margin: 0 }}>
           资料与资产
@@ -129,7 +129,7 @@ export function ProfilesAssetsTab({ chapter }: ProfilesAssetsTabProps) {
         ]}
       />
 
-      <div style={formsGridStyle}>
+      <div className="asset-creation-grid" style={formsGridStyle}>
         <ProfileEditor
           chapterId={chapter.chapter_id}
           disabled={isMutating}
@@ -139,7 +139,7 @@ export function ProfilesAssetsTab({ chapter }: ProfilesAssetsTabProps) {
         <AssetGenerator disabled={isMutating} onSubmit={(payload) => generateMutation.mutate(payload)} />
       </div>
 
-      <section aria-label="生产资料列表" style={panelStyle}>
+      <section aria-label="生产资料列表" className="production-panel" style={panelStyle}>
         <Typography.Title level={2} style={sectionTitleStyle}>
           生产资料
         </Typography.Title>
@@ -157,7 +157,7 @@ export function ProfilesAssetsTab({ chapter }: ProfilesAssetsTabProps) {
         )}
       </section>
 
-      <section aria-label="资产列表" style={panelStyle}>
+      <section aria-label="资产列表" className="production-panel" style={panelStyle}>
         <Typography.Title level={2} style={sectionTitleStyle}>
           资产
         </Typography.Title>

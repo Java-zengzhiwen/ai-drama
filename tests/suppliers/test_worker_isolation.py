@@ -1,5 +1,6 @@
 from dataclasses import replace
 from pathlib import Path
+import tempfile
 
 import pytest
 
@@ -154,6 +155,41 @@ def test_worker_child_environment_is_allowlisted(tmp_path, monkeypatch):
 
     assert result.value == "undefined"
     assert "must-not-cross-boundary" not in repr(result)
+
+
+def test_worker_process_uses_node_permission_model(tmp_path):
+    command = SupplierWorker(worker_entrypoint=tmp_path / "probe.mjs").command()
+
+    assert "--permission" in command
+    assert "--allow-net" in command
+    assert any(item.startswith("--allow-fs-read=") for item in command)
+    assert any(item.startswith("--allow-fs-write=") for item in command)
+    assert "--allow-child-process" not in command
+    assert "--allow-worker" not in command
+
+
+def test_worker_child_uses_same_trusted_temp_root_as_python(tmp_path):
+    probe = tmp_path / "temp-root-probe.mjs"
+    probe.write_text(
+        """
+let input = "";
+process.stdin.on("data", chunk => input += chunk).on("end", () => {
+  const request = JSON.parse(input);
+  process.stdout.write(JSON.stringify({
+    ok: true,
+    value: process.env.TMPDIR,
+    workerProtocolVersion: request.workerProtocolVersion,
+    helperApiVersion: request.helperApiVersion,
+    workerRuntimeVersion: request.workerRuntimeVersion
+  }));
+});
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = SupplierWorker(worker_entrypoint=probe).invoke(_artifact(tmp_path), "textRequest", {})
+
+    assert Path(result.value).resolve() == Path(tempfile.gettempdir()).resolve()
 
 
 @pytest.mark.parametrize(

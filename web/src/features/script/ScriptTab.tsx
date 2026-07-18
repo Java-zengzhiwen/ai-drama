@@ -155,12 +155,12 @@ export function ScriptTab({ chapter }: ScriptTabProps) {
   }
 
   return (
-    <section aria-label="剧本工作台" style={{ display: "grid", gap: 16 }}>
+    <section aria-label="剧本工作台" className="production-workbench script-workbench">
       {!chapter.current_source_revision_id ? (
         <Alert message="暂无剧本。保存原文后生成剧本。" showIcon type="info" />
       ) : null}
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+      <div className="production-command-bar">
         <Button
           disabled={!chapter.current_source_revision_id || isScriptMutating}
           loading={generateMutation.isPending}
@@ -216,8 +216,8 @@ export function ScriptTab({ chapter }: ScriptTabProps) {
       {revisions.length === 0 ? (
         <Typography.Text type="secondary">暂无剧本。保存原文后生成剧本。</Typography.Text>
       ) : (
-        <div style={{ display: "grid", gap: 16 }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <div className="revision-workspace">
+          <div className="revision-strip">
             {revisions.map((revision) => (
               <Button
                 disabled={isScriptMutating}
@@ -231,8 +231,8 @@ export function ScriptTab({ chapter }: ScriptTabProps) {
           </div>
 
           {selectedRevision ? (
-            <form aria-label="剧本编辑" onSubmit={submitEdit} style={{ display: "grid", gap: 12 }}>
-              <label style={{ display: "grid", gap: 6 }}>
+            <form aria-label="剧本编辑" className="script-editor-panel" onSubmit={submitEdit}>
+              <label className="editor-field">
                 <span>剧本内容</span>
                 <Input.TextArea
                   aria-label="剧本内容"
@@ -245,7 +245,7 @@ export function ScriptTab({ chapter }: ScriptTabProps) {
                   value={draft}
                 />
               </label>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              <div className="production-action-footer">
                 <Button disabled={!draft.trim() || isScriptMutating} htmlType="submit" loading={saveMutation.isPending}>
                   保存为新剧本版本
                 </Button>

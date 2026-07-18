@@ -58,11 +58,11 @@ const models = [
   },
 ];
 
-function renderPanel() {
+function renderPanel(currentSupplier = supplier) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <SupplierModelsPanel supplier={supplier} />
+      <SupplierModelsPanel supplier={currentSupplier} />
     </QueryClientProvider>,
   );
 }
@@ -73,7 +73,76 @@ describe("supplier models panel", () => {
     post.mockReset();
     patch.mockReset();
     remove.mockReset();
+    sessionStorage.clear();
     get.mockResolvedValue({ data: models, headers: { etag: '"model-catalog-4"' } });
+  });
+
+  test("shows final model-level test actions only for enabled text and image models", async () => {
+    const video = {
+      ...models[1],
+      supplier_model_id: "stable-video",
+      current_model_revision_id: "revision-video-1",
+      model_revision_id: "revision-video-1",
+      display_name: "Video Model",
+      provider_model_name: "video-provider-v1",
+      capability: "video",
+    };
+    get.mockImplementation((url: string) => Promise.resolve(
+      url === "/model-tests/status"
+        ? { data: { enabled: true }, headers: {} }
+        : { data: [...models, video], headers: { etag: '"model-catalog-4"' } },
+    ));
+
+    renderPanel();
+
+    expect(await screen.findByRole("button", { name: "测试 Text Model" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "测试 Image Model" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "测试 Video Model" })).not.toBeInTheDocument();
+    const imageRow = screen.getByRole("cell", { name: "Image Model" }).closest("tr");
+    expect(imageRow?.querySelector(".row-actions")?.querySelector("button:last-child")).toHaveAccessibleName("测试 Image Model");
+  });
+
+  test("hides all model test actions while the feature flag is off", async () => {
+    get.mockImplementation((url: string) => Promise.resolve(
+      url === "/model-tests/status"
+        ? { data: { enabled: false }, headers: {} }
+        : { data: models, headers: { etag: '"model-catalog-4"' } },
+    ));
+
+    renderPanel();
+    await screen.findByRole("cell", { name: "Text Model" });
+
+    expect(screen.queryByRole("button", { name: /测试 Text Model/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /测试 Image Model/ })).not.toBeInTheDocument();
+  });
+
+  test("restores and disables a model row with a persisted active run", async () => {
+    sessionStorage.setItem(
+      "ai-drama:model-test:stable-base-text",
+      JSON.stringify({ idempotencyKey: "stored-key", testRunId: "run-active" }),
+    );
+    get.mockImplementation((url: string) => {
+      if (url === "/model-tests/status") return Promise.resolve({ data: { enabled: true }, headers: {} });
+      if (url === "/model-tests/run-active") {
+        return Promise.resolve({
+          data: {
+            test_run_id: "run-active",
+            supplier_model_id: "stable-base-text",
+            capability: "text",
+            status: "queued",
+            created_at: "2026-07-14T00:00:00Z",
+          },
+          headers: {},
+        });
+      }
+      return Promise.resolve({ data: models, headers: { etag: '"model-catalog-4"' } });
+    });
+
+    renderPanel();
+
+    expect(await screen.findByRole("dialog", { name: "测试模型连接" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "测试 Text Model" })).toBeDisabled();
+    expect(await screen.findByText(/测试编号 run-active/)).toBeInTheDocument();
   });
 
   test("renders stable identity table and selected model inspector", async () => {
@@ -131,6 +200,67 @@ describe("supplier models panel", () => {
     );
   });
 
+  test("edits AIXORA text reasoning without clobbering advanced definition", async () => {
+    const aixora = { ...supplier, slug: "aixora", display_name: "AIXORA" } as SupplierRead;
+    const aixoraModels = [
+      {
+        ...models[0],
+        binding_count: 0,
+        definition: {
+          modes: ["responses"],
+          limits: { context: 128000 },
+          constraints: { reasoning_effort: "low", temperature: 0.2 },
+        },
+      },
+    ];
+    get.mockImplementation((url: string) => Promise.resolve(
+      url === "/model-tests/status"
+        ? { data: { enabled: true }, headers: {} }
+        : { data: aixoraModels, headers: { etag: '"model-catalog-4"' } },
+    ));
+    patch.mockResolvedValue({ data: aixoraModels[0], headers: {} });
+
+    renderPanel(aixora);
+    await screen.findByRole("cell", { name: "Text Model" });
+    fireEvent.click(screen.getByRole("button", { name: "编辑 Text Model" }));
+
+    expect(screen.getByLabelText("默认思考深度")).toHaveValue("low");
+    fireEvent.change(screen.getByLabelText("默认思考深度"), { target: { value: "high" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存新版本" }));
+
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    expect(patch.mock.calls[0][1].definition).toEqual({
+      modes: ["responses"],
+      limits: { context: 128000 },
+      constraints: { reasoning_effort: "high", temperature: 0.2 },
+    });
+  });
+
+  test("does not silently replace an invalid AIXORA reasoning value", async () => {
+    const aixora = { ...supplier, slug: "aixora", display_name: "AIXORA" } as SupplierRead;
+    const invalid = [{
+      ...models[0],
+      binding_count: 0,
+      definition: { constraints: { reasoning_effort: "turbo" }, modes: ["responses"] },
+    }];
+    get.mockImplementation((url: string) => Promise.resolve(
+      url === "/model-tests/status"
+        ? { data: { enabled: true }, headers: {} }
+        : { data: invalid, headers: { etag: '"model-catalog-4"' } },
+    ));
+
+    renderPanel(aixora);
+    await screen.findByRole("cell", { name: "Text Model" });
+    fireEvent.click(screen.getByRole("button", { name: "编辑 Text Model" }));
+
+    expect(screen.getByLabelText("默认思考深度")).toHaveValue("");
+    fireEvent.click(screen.getByRole("button", { name: "保存新版本" }));
+
+    expect(await screen.findByText("思考深度只支持低、中、高，请修复模式与约束 JSON。")).toBeInTheDocument();
+    expect(patch).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("模式与约束 JSON") as HTMLTextAreaElement).value).toContain("turbo");
+  });
+
   test("separates disable and physical-delete rules", async () => {
     patch.mockResolvedValue({ data: { ...models[0], enabled: 0, revision: 3 }, headers: {} });
     remove.mockResolvedValue({ data: undefined, headers: {} });
@@ -147,6 +277,7 @@ describe("supplier models panel", () => {
       ),
     );
     fireEvent.click(screen.getByRole("button", { name: "删除 Image Model" }));
+    expect(screen.getByText("没有历史引用的模型会永久删除；已有测试或任务历史的模型会归档并从可选列表隐藏。")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "确认删除模型" }));
     await waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
   });
@@ -192,7 +323,10 @@ describe("supplier models panel", () => {
 
     const reload = await screen.findByRole("button", { name: "重新加载模型" });
     fireEvent.click(reload);
-    await waitFor(() => expect(get).toHaveBeenCalledTimes(2));
+    await waitFor(() => {
+      const modelCatalogCalls = get.mock.calls.filter(([path]) => path === `/suppliers/${supplier.supplier_id}/models`);
+      expect(modelCatalogCalls).toHaveLength(2);
+    });
     expect(screen.getByLabelText("显示名称")).toHaveValue("Text Model Remote");
     expect(screen.getByRole("button", { name: "保存新版本" })).toBeDisabled();
     fireEvent.click(screen.getByLabelText("我已确认将影响 3 处项目绑定"));

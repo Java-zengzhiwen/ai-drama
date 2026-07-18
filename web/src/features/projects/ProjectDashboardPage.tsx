@@ -58,19 +58,20 @@ export function ProjectDashboardPage() {
   const chapters = chaptersQuery.data ?? [];
 
   return (
-    <section aria-labelledby="project-dashboard-title">
-      <div style={{ display: "grid", gap: 20 }}>
-        <div>
+    <section aria-labelledby="project-dashboard-title" className="entry-workbench">
+      <div className="entry-stack">
+        <header className="entry-heading entry-heading-with-action">
+          <div>
           <Typography.Title id="project-dashboard-title" level={1} style={{ fontSize: 22, margin: 0 }}>
             {project.name}
           </Typography.Title>
           <Typography.Text type="secondary">{project.description || "暂无项目描述"}</Typography.Text>
-          <div style={{ marginTop: 12 }}>
-            <Link to={`/projects/${project.project_id}/model-bindings`}>配置项目模型</Link>
           </div>
-        </div>
+          <Link className="secondary-link-action" to={`/projects/${project.project_id}/model-bindings`}>配置项目模型</Link>
+        </header>
 
         <dl
+          className="project-metadata"
           style={{
             background: "#ffffff",
             border: "1px solid #d9dee8",
@@ -89,6 +90,7 @@ export function ProjectDashboardPage() {
 
         <form
           aria-label="添加章节"
+          className="chapter-create-form"
           onSubmit={submitChapter}
           style={{
             alignItems: "end",
@@ -141,8 +143,10 @@ export function ProjectDashboardPage() {
         ) : chapters.length === 0 ? (
           <Typography.Text type="secondary">暂无章节。添加章节后开始制作。</Typography.Text>
         ) : (
-          <div style={{ overflowX: "auto" }}>
+          <div className="dense-table-scroll">
             <table
+              aria-label="章节列表"
+              className="dense-table entry-table"
               style={{
                 background: "#ffffff",
                 border: "1px solid #d9dee8",

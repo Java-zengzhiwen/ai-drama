@@ -5,7 +5,12 @@ import json
 from ai_drama_runtime.store import now_iso
 
 from .models import ExecutionSnapshotRecord
-from .worker import HELPER_API_VERSION, WORKER_PROTOCOL_VERSION, WorkerLimits, current_worker_runtime_version
+from .worker import (
+    SUPPORTED_HELPER_API_VERSIONS,
+    WORKER_PROTOCOL_VERSION,
+    WorkerLimits,
+    current_worker_runtime_version,
+)
 
 
 class SupplierRuntimeUnavailable(RuntimeError):
@@ -248,7 +253,7 @@ def _validate_snapshot(store, snapshot):
             _verify_object(store, config.config_object_id, config.config_hash)
         if snapshot.worker_protocol_version != WORKER_PROTOCOL_VERSION:
             raise ValueError("worker protocol unavailable")
-        if snapshot.helper_api_version != HELPER_API_VERSION:
+        if snapshot.helper_api_version not in SUPPORTED_HELPER_API_VERSIONS:
             raise ValueError("helper API unavailable")
         if snapshot.worker_runtime_version != current_worker_runtime_version():
             raise ValueError("worker runtime unavailable")

@@ -70,6 +70,28 @@ def test_model_crud_uses_stable_ids_etags_and_idempotency(client):
     assert client.get(f"/api/models/{model_id}").status_code == 404
 
 
+def test_model_api_rejects_invalid_reasoning_definition_locally(client):
+    supplier = _supplier(client)
+    response = client.post(
+        f"/api/suppliers/{supplier['supplier_id']}/models",
+        json={
+            "provider_model_name": "invalid-reasoning",
+            "display_name": "Invalid Reasoning",
+            "capability": "text",
+            "definition": {"constraints": {"reasoning_effort": "turbo"}},
+        },
+        headers={
+            "If-None-Match": "*",
+            "If-Match": '"model-catalog-0"',
+            "Idempotency-Key": "invalid-reasoning",
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["error_code"] == "INVALID_REASONING_EFFORT"
+    assert client.get(f"/api/suppliers/{supplier['supplier_id']}/models").json() == []
+
+
 def test_model_reads_include_project_binding_count_without_snapshot_inflation(client):
     supplier = _supplier(client)
     created = client.post(
@@ -112,6 +134,62 @@ def test_model_reads_include_project_binding_count_without_snapshot_inflation(cl
 
     assert listing.json()[0]["binding_count"] == 2
     assert detail.json()["binding_count"] == 2
+
+
+def test_delete_archives_snapshotted_overlay_and_hides_it_from_catalog(client):
+    supplier = _supplier(client)
+    created = client.post(
+        f"/api/suppliers/{supplier['supplier_id']}/models",
+        json={
+            "provider_model_name": "archive-api-text",
+            "display_name": "Archive API Text",
+            "capability": "text",
+            "definition": {},
+        },
+        headers={
+            "If-None-Match": "*",
+            "If-Match": '"model-catalog-0"',
+            "Idempotency-Key": "archive-api-text",
+        },
+    )
+    model_id = created.json()["supplier_model_id"]
+    def persist_project_snapshot():
+        store = client.app.state.product_store
+        model = store.get_supplier_model(model_id)
+        object_id = store.runtime.write_text_object('{"schema":"archive-api-test"}')
+        store.conn.execute(
+            """
+            INSERT INTO execution_snapshots
+            (snapshot_hash, snapshot_object_id, supplier_id, supplier_model_id,
+             model_revision_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "archive-api-snapshot",
+                object_id,
+                supplier["supplier_id"],
+                model_id,
+                model.current_model_revision_id,
+                "2026-07-15T00:00:00Z",
+            ),
+        )
+        store.conn.commit()
+
+    client.portal.call(persist_project_snapshot)
+
+    deleted = client.delete(
+        f"/api/models/{model_id}",
+        headers={"If-Match": f'"model-{model_id}-1", "model-catalog-1"'},
+    )
+    listing = client.get(f"/api/suppliers/{supplier['supplier_id']}/models")
+    historical = client.get(f"/api/models/{model_id}")
+
+    assert deleted.status_code == 204, deleted.text
+    assert listing.json() == []
+    assert historical.status_code == 200
+    assert historical.json()["archived_at"]
+    assert historical.json()["archive_reason"] == "historical_snapshot"
+    assert historical.json()["enabled"] == 0
 
 
 def test_model_create_requires_preconditions_and_conflicts_on_changed_replay(client):
@@ -175,3 +253,52 @@ export async function textRequest() {{ return {{ text: "fake" }}; }}
     assert revised["supplier_model_id"] == model_id
     assert revised["provider_model_name"] == "base-text-v2"
     assert revised["model_revision_id"] != models.json()[0]["model_revision_id"]
+
+
+def test_supplier_code_manifest_disables_removed_builtin_without_deleting_history(client):
+    supplier = _supplier(client)
+    text_id = "11111111-1111-4111-8111-111111111111"
+    image_id = "22222222-2222-4222-8222-222222222222"
+
+    def source(include_image):
+        image = (
+            f', {{ supplierModelId: "{image_id}", providerModelName: "gpt-image-2", '
+                'displayName: "GPT Image 2", capability: "image" }'
+            if include_image
+            else ""
+        )
+        return f"""
+export const vendor = {{
+  id: "archive-manifest", version: "1", name: "Archive Manifest", author: "Test",
+  adapterContractVersion: "ai-drama-supplier-v1",
+  helperApiVersion: "ai-drama-helper-v1",
+  rateLimitBucketKey: "archive-manifest-bucket", inputs: [], inputValues: {{}},
+  models: [{{ supplierModelId: "{text_id}", providerModelName: "gpt-5.6", displayName: "GPT-5.6", capability: "text" }}{image}]
+}};
+export async function textRequest() {{ return {{ output: "fake", usage: {{}} }}; }}
+export async function imageRequest() {{ return {{ media_type: "image/png" }}; }}
+"""
+
+    first = client.put(
+        f"/api/suppliers/{supplier['supplier_id']}/code",
+        json={"source": source(True)},
+        headers={"If-Match": '"supplier-1"'},
+    )
+    assert first.status_code == 200, first.text
+    before = client.get(f"/api/suppliers/{supplier['supplier_id']}/models").json()
+    image_before = next(model for model in before if model["capability"] == "image")
+
+    second = client.put(
+        f"/api/suppliers/{supplier['supplier_id']}/code",
+        json={"source": source(False)},
+        headers={"If-Match": '"supplier-2"'},
+    )
+    assert second.status_code == 200, second.text
+    after = client.get(f"/api/suppliers/{supplier['supplier_id']}/models").json()
+    image_after = next(model for model in after if model["supplier_model_id"] == image_before["supplier_model_id"])
+
+    assert image_after["enabled"] == 0
+    assert image_after["model_revision_id"] == image_before["model_revision_id"]
+    detail = client.get(f"/api/models/{image_before['supplier_model_id']}")
+    assert detail.status_code == 200
+    assert detail.json()["provider_model_name"] == "gpt-image-2"

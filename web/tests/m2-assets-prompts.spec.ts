@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "./network-test";
 
 const backendPort = process.env.AI_DRAMA_PLAYWRIGHT_BACKEND_PORT ?? "18765";
 const frontendPort = process.env.AI_DRAMA_PLAYWRIGHT_FRONTEND_PORT ?? "15173";
@@ -117,7 +117,9 @@ if (runningInVitest) {
 
 async function createApprovedStoryboard(page: Page, unique: string) {
   await page.goto("/projects");
-  await expect(page.getByRole("heading", { name: "项目列表" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "项目", level: 1 })).toBeVisible();
+  await page.getByRole("button", { name: "新建项目" }).click();
+  await expect(page.getByRole("dialog", { name: "新建项目" })).toBeVisible();
   await page.getByLabel("项目名称").fill(`M2 验证项目 ${unique}`);
   await page.getByLabel("项目描述").fill("古装重生短剧");
   await page.getByLabel("系列设定").fill("明代商贾世界");
