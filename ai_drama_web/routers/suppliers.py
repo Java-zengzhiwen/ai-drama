@@ -206,6 +206,7 @@ async def put_supplier_config(
     supplier = _require_supplier(request, supplier_id)
     current_values = _current_config_object(request, supplier)
     current_values.update(payload.values)
+    _validate_config_values(current_values, _current_manifest(request, supplier))
     normalized = json.dumps(current_values, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     object_id = request.app.state.runtime_store.write_text_object(normalized)
     try:
@@ -381,6 +382,32 @@ def _safe_inputs(value):
             }
         )
     return result
+
+
+def _validate_config_values(values, manifest):
+    inputs = manifest.get("inputs") if isinstance(manifest, dict) else []
+    if not isinstance(inputs, list):
+        return
+    for field in inputs:
+        if not isinstance(field, dict) or field.get("type") != "select":
+            continue
+        key = field.get("key") or field.get("name") or field.get("id")
+        if not isinstance(key, str) or key not in values:
+            continue
+        options = field.get("options")
+        allowed = {
+            option.get("value")
+            for option in options
+            if isinstance(option, dict) and isinstance(option.get("value"), str)
+        } if isinstance(options, list) else set()
+        if values[key] not in allowed:
+            raise HTTPException(
+                422,
+                detail={
+                    "error_code": "INVALID_SUPPLIER_CONFIG_VALUE",
+                    "field": key,
+                },
+            )
 
 
 def _safe_string_map(value):

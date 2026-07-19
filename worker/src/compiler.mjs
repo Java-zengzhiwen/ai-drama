@@ -24,7 +24,25 @@ function validateVendor(vendor) {
   if (vendor.adapterContractVersion !== "ai-drama-supplier-v1") return false;
   if (!["ai-drama-helper-v1", "ai-drama-helper-v2"].includes(vendor.helperApiVersion)) return false;
   if (!/^[a-z0-9][a-z0-9._:-]{0,127}$/.test(vendor.rateLimitBucketKey || "")) return false;
-  return Array.isArray(vendor.inputs) && vendor.inputValues && Array.isArray(vendor.models);
+  return Array.isArray(vendor.inputs)
+    && vendor.inputs.every(validateInput)
+    && vendor.inputValues
+    && Array.isArray(vendor.models);
+}
+
+
+function validateInput(input) {
+  if (!input || typeof input !== "object") return false;
+  const identity = input.key || input.name || input.id;
+  if (typeof identity !== "string" || !identity) return false;
+  if (input.type !== "select") return true;
+  if (!Array.isArray(input.options) || input.options.length === 0) return false;
+  const values = input.options.map(option => option?.value);
+  return values.every(value => typeof value === "string" && value.length > 0)
+    && new Set(values).size === values.length
+    && input.options.every(
+      option => typeof option?.label === "string" && option.label.length > 0,
+    );
 }
 
 

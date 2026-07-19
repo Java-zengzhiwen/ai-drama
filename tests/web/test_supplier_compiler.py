@@ -55,6 +55,56 @@ def test_compiler_accepts_media_helper_v2_without_changing_legacy_v1(tmp_path):
     assert upgraded.helper_api_version == "ai-drama-helper-v2"
 
 
+def test_compiler_accepts_manifest_select_with_unique_string_options(tmp_path):
+    source = VALID_SOURCE.replace(
+        "inputs: []",
+        '''inputs: [{
+          key: "reasoning_effort",
+          label: "默认思考深度",
+          type: "select",
+          required: true,
+          options: [
+            { value: "low", label: "低" },
+            { value: "medium", label: "中" },
+            { value: "high", label: "高" }
+          ]
+        }]''',
+    ).replace("inputValues: {}", 'inputValues: { reasoning_effort: "medium" }')
+
+    artifact = compile_supplier(source, runtime_store=_runtime(tmp_path))
+
+    assert artifact.vendor["inputs"][0]["type"] == "select"
+    assert [item["value"] for item in artifact.vendor["inputs"][0]["options"]] == [
+        "low", "medium", "high"
+    ]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        '[{ value: "medium", label: "中" }, { value: "medium", label: "重复" }]',
+        '[{ value: "", label: "空值" }]',
+        '[{ value: "medium", label: "" }]',
+        '[]',
+    ],
+)
+def test_compiler_rejects_malformed_manifest_select_options(tmp_path, options):
+    source = VALID_SOURCE.replace(
+        "inputs: []",
+        f'''inputs: [{{
+          key: "reasoning_effort",
+          label: "默认思考深度",
+          type: "select",
+          options: {options}
+        }}]''',
+    )
+
+    with pytest.raises(SupplierCompileError) as exc_info:
+        compile_supplier(source, runtime_store=_runtime(tmp_path))
+
+    assert exc_info.value.code == "INVALID_VENDOR_MANIFEST"
+
+
 @pytest.mark.parametrize(
     "source,code",
     [

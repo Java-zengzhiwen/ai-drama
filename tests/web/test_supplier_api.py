@@ -186,6 +186,50 @@ def test_supplier_config_secret_and_code_mutations_require_matching_etags(tmp_pa
         assert absent.headers["etag"] == '"credential-2"'
 
 
+def test_supplier_config_rejects_value_outside_manifest_select(tmp_path):
+    select_source = SOURCE.replace(
+        "inputs: []",
+        '''inputs: [{
+          key: "reasoning_effort",
+          label: "默认思考深度",
+          type: "select",
+          options: [
+            { value: "low", label: "低" },
+            { value: "medium", label: "中" },
+            { value: "high", label: "高" }
+          ]
+        }]''',
+    ).replace("inputValues: {}", 'inputValues: { reasoning_effort: "medium" }')
+    with _client(tmp_path) as client:
+        supplier = client.post(
+            "/api/suppliers",
+            json={"slug": "select-config", "display_name": "Select Config"},
+            headers={"If-None-Match": "*", "Idempotency-Key": "select-config"},
+        ).json()
+        saved_code = client.put(
+            f"/api/suppliers/{supplier['supplier_id']}/code",
+            json={"source": select_source},
+            headers={"If-Match": '"supplier-1"'},
+        )
+        assert saved_code.status_code == 200, saved_code.text
+        before = client.get(f"/api/suppliers/{supplier['supplier_id']}").json()
+
+        rejected = client.put(
+            f"/api/suppliers/{supplier['supplier_id']}/config",
+            json={"values": {"reasoning_effort": "turbo"}},
+            headers={"If-Match": f'"config-{before["config_revision"]}"'},
+        )
+        after = client.get(f"/api/suppliers/{supplier['supplier_id']}").json()
+
+    assert rejected.status_code == 422
+    assert rejected.json()["detail"] == {
+        "error_code": "INVALID_SUPPLIER_CONFIG_VALUE",
+        "field": "reasoning_effort",
+    }
+    assert after["current_config_revision_id"] == before["current_config_revision_id"]
+    assert after["config_revision"] == before["config_revision"]
+
+
 def test_supplier_management_projection_exposes_non_secret_manifest_and_config(tmp_path):
     with _client(tmp_path) as client:
         supplier = client.get("/api/suppliers").json()[0]

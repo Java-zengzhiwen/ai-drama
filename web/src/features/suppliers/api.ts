@@ -15,6 +15,11 @@ export type SupplierInput = {
   required?: boolean;
   placeholder?: string;
   description?: string;
+  options?: Array<{
+    value: string;
+    label: string;
+    description?: string;
+  }>;
   [key: string]: unknown;
 };
 

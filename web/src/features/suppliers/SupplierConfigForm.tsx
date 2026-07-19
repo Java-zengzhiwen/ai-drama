@@ -44,6 +44,14 @@ function validate(values: Record<string, string>): ManagementError | null {
   return null;
 }
 
+function selectOptions(field: SupplierInput) {
+  if (field.type !== "select" || !Array.isArray(field.options)) return null;
+  const options = field.options.filter(
+    (option) => option && typeof option.value === "string" && typeof option.label === "string",
+  );
+  return options.length ? options : null;
+}
+
 export function SupplierConfigForm({
   supplier,
   onReload,
@@ -56,6 +64,13 @@ export function SupplierConfigForm({
   const [error, setError] = useState<ManagementError | null>(null);
   const [success, setSuccess] = useState("");
   const fields = configFields(supplier);
+  const invalidSelect = fields.find((field) => {
+    const options = selectOptions(field);
+    if (!options) return false;
+    const key = fieldKey(field);
+    const value = values[key] ?? supplier.input_values[key] ?? "";
+    return !options.some((option) => option.value === value);
+  });
 
   useEffect(() => setValues(supplier.config_values), [supplier.current_config_revision_id]);
 
@@ -98,18 +113,38 @@ export function SupplierConfigForm({
           {fields.map((field) => {
             const key = fieldKey(field);
             const label = fieldLabel(field, key);
+            const options = selectOptions(field);
+            const value = values[key] ?? supplier.input_values[key] ?? "";
             return (
               <label key={key}>
                 <span>{label}</span>
-                <Input
-                  aria-label={label}
-                  required={Boolean(field.required)}
-                  placeholder={typeof field.placeholder === "string" ? field.placeholder : undefined}
-                  value={values[key] ?? supplier.input_values[key] ?? ""}
-                  onChange={(event) =>
-                    setValues((current) => ({ ...current, [key]: event.target.value }))
-                  }
-                />
+                {options ? (
+                  <select
+                    aria-label={label}
+                    required={Boolean(field.required)}
+                    value={value}
+                    onChange={(event) =>
+                      setValues((current) => ({ ...current, [key]: event.target.value }))
+                    }
+                  >
+                    {!options.some((option) => option.value === value) ? (
+                      <option value={value}>{value || "请选择"}</option>
+                    ) : null}
+                    {options.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    aria-label={label}
+                    required={Boolean(field.required)}
+                    placeholder={typeof field.placeholder === "string" ? field.placeholder : undefined}
+                    value={value}
+                    onChange={(event) =>
+                      setValues((current) => ({ ...current, [key]: event.target.value }))
+                    }
+                  />
+                )}
                 {field.description ? <small>{String(field.description)}</small> : null}
               </label>
             );
@@ -129,8 +164,13 @@ export function SupplierConfigForm({
         </div>
       ) : null}
       {success ? <div className="management-success" role="status">{success}</div> : null}
+      {invalidSelect ? (
+        <div className="management-error" role="alert">
+          <strong>{fieldLabel(invalidSelect, fieldKey(invalidSelect))} 的当前值不受支持，请重新选择。</strong>
+        </div>
+      ) : null}
       <div className="management-form-actions">
-        <Button htmlType="submit" type="primary" loading={saving} disabled={!fields.length}>
+        <Button htmlType="submit" type="primary" loading={saving} disabled={!fields.length || Boolean(invalidSelect)}>
           保存配置
         </Button>
       </div>

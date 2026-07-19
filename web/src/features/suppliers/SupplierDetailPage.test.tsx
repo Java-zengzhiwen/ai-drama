@@ -123,6 +123,59 @@ describe("supplier detail page", () => {
     );
   });
 
+  test("renders and saves a manifest-driven select instead of free text", async () => {
+    const selectSupplier = {
+      ...supplier,
+      inputs: [
+        ...supplier.inputs,
+        {
+          key: "reasoning_effort",
+          label: "默认思考深度",
+          type: "select",
+          required: true,
+          options: [
+            { value: "low", label: "低" },
+            { value: "medium", label: "中" },
+            { value: "high", label: "高" },
+          ],
+        },
+      ],
+      config_values: { ...supplier.config_values, reasoning_effort: "medium" },
+    };
+    get.mockImplementation(async (url: string) => {
+      if (url === "/suppliers") return { data: [selectSupplier], headers: {} };
+      if (url === "/suppliers/supplier-1") {
+        return { data: selectSupplier, headers: { etag: '"supplier-2"' } };
+      }
+      if (url === "/suppliers/supplier-1/models") {
+        return { data: [], headers: { etag: '"model-catalog-0"' } };
+      }
+      throw new Error(`unexpected GET ${url}`);
+    });
+    put.mockResolvedValue({ data: { config_revision_id: "config-4", revision: 4 }, headers: {} });
+    render(<App />);
+    await screen.findByRole("heading", { name: "Local Supplier" });
+    fireEvent.click(screen.getByRole("tab", { name: "配置" }));
+
+    const effort = screen.getByRole("combobox", { name: "默认思考深度" });
+    expect(effort).toHaveValue("medium");
+    expect(screen.queryByRole("textbox", { name: "默认思考深度" })).not.toBeInTheDocument();
+    fireEvent.change(effort, { target: { value: "high" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+
+    await waitFor(() => expect(put).toHaveBeenCalledWith(
+      "/suppliers/supplier-1/config",
+      {
+        values: {
+          base_url: "https://api.example.invalid/v1",
+          region: "local",
+          reasoning_effort: "high",
+        },
+      },
+      { headers: { "If-Match": '"config-3"' } },
+    ));
+  });
+
   test("uses the refreshed config ETag for a consecutive save", async () => {
     let detailReads = 0;
     get.mockImplementation(async (url: string) => {
