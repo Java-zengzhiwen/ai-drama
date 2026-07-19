@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Skeleton, Tabs, Typography } from "antd";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useInRouterContext } from "react-router-dom";
 import { ProfilesAssetsTab } from "../assets/ProfilesAssetsTab";
 import { AgnesGenerationTab } from "../generation/AgnesGenerationTab";
@@ -10,7 +10,7 @@ import { getChapterStatus, type ChapterStatus } from "../projects/api";
 import { listShotPromptRevisions } from "../prompts/api";
 import { ShotPromptTab } from "../prompts/ShotPromptTab";
 import { ScriptTab } from "../script/ScriptTab";
-import { getChapter } from "../script/api";
+import { getChapter, type ScriptGenerationRunRead } from "../script/api";
 import { StoryboardTab } from "../storyboard/StoryboardTab";
 import { SourceTab } from "./SourceTab";
 
@@ -37,6 +37,11 @@ const workflowTabKeys = ["source", "script", "storyboard", "assets", "shot-promp
 export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps) {
   const inRouterContext = useInRouterContext();
   const [activeTab, setActiveTab] = useState("source");
+  const [activeScriptRun, setActiveScriptRun] = useState<ScriptGenerationRunRead | null>(null);
+  useEffect(() => {
+    setActiveScriptRun(null);
+    setActiveTab("source");
+  }, [chapterId]);
   const chapterQuery = useQuery({
     enabled: Boolean(chapterId),
     queryKey: ["chapter", chapterId],
@@ -153,12 +158,26 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
           onChange={setActiveTab}
           items={[
             {
-              children: <SourceTab chapter={chapter} onOpenScript={() => setActiveTab("script")} />,
+              children: (
+                <SourceTab
+                  chapter={chapter}
+                  onScriptGenerationStarted={(run) => {
+                    setActiveScriptRun(run);
+                    setActiveTab("script");
+                  }}
+                />
+              ),
               key: "source",
               label: "原文",
             },
             {
-              children: <ScriptTab chapter={chapter} />,
+              children: (
+                <ScriptTab
+                  activeRun={activeScriptRun}
+                  chapter={chapter}
+                  onGenerationCompleted={() => setActiveScriptRun(null)}
+                />
+              ),
               key: "script",
               label: "剧本",
             },

@@ -20,6 +20,35 @@ const mockedGet = apiClient.get as unknown as Mock;
 const mockedPost = apiClient.post as unknown as Mock;
 const mockedPut = apiClient.put as unknown as Mock;
 
+class FakeEventSource {
+  static instances: FakeEventSource[] = [];
+  readonly url: string;
+  onerror: ((event: Event) => void) | null = null;
+  onopen: ((event: Event) => void) | null = null;
+  private listeners = new Map<string, Set<(event: Event) => void>>();
+
+  constructor(url: string | URL) {
+    this.url = String(url);
+    FakeEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: EventListenerOrEventListenerObject) {
+    const callback = typeof listener === "function" ? listener : listener.handleEvent.bind(listener);
+    const listeners = this.listeners.get(type) ?? new Set();
+    listeners.add(callback);
+    this.listeners.set(type, listeners);
+  }
+
+  close() {}
+
+  emit(type: string, payload: Record<string, unknown>) {
+    const event = new MessageEvent(type, { data: JSON.stringify(payload) });
+    for (const listener of this.listeners.get(type) ?? []) {
+      listener(event);
+    }
+  }
+}
+
 type SourceRevisionRead = {
   source_revision_id: string;
   chapter_id: string;
@@ -232,6 +261,19 @@ function setupWorkspaceMocks() {
       revisions = [generatedScript];
       return { data: generatedScript };
     }
+    if (url === "/chapters/chapter-1/script/generations") {
+      revisions = [generatedScript];
+      return {
+        data: {
+          run_id: "stream-run-1",
+          status: "prepared",
+          last_sequence: 0,
+          character_count: 0,
+          revision_id: "",
+          error_code: "",
+        },
+      };
+    }
     if (url === "/script-revisions/script-2/approve") {
       revisions = revisions.map((revision) =>
         revision.revision_id === "script-2"
@@ -272,6 +314,8 @@ describe("chapter source and script workspace tabs", () => {
     mockedPost.mockReset();
     mockedPut.mockReset();
     setupWorkspaceMocks();
+    FakeEventSource.instances = [];
+    vi.stubGlobal("EventSource", FakeEventSource);
     window.history.replaceState({}, "", "/projects/project-1/chapters/chapter-1");
   });
 
@@ -371,14 +415,78 @@ describe("chapter source and script workspace tabs", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "保存并生成剧本" }));
 
-    await waitFor(() =>
-      expect(mockedPost.mock.calls.slice(0, 2)).toEqual([
-        ["/chapters/chapter-1/source-revisions", { content: "第一章正文。沈清荷醒来。" }],
-        ["/chapters/chapter-1/script/generate", { target_duration_minutes: 5 }],
-      ]),
-    );
-    expect(await screen.findByText("script_markdown_contract")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(mockedPost.mock.calls[0]).toEqual([
+        "/chapters/chapter-1/source-revisions",
+        { content: "第一章正文。沈清荷醒来。" },
+      ]);
+      expect(mockedPost.mock.calls[1][0]).toBe("/chapters/chapter-1/script/generations");
+      expect(mockedPost.mock.calls[1][1]).toEqual({ target_duration_minutes: 5 });
+      expect(mockedPost.mock.calls[1][2]).toEqual({
+        headers: { "Idempotency-Key": expect.any(String) },
+      });
+    });
+    expect(await screen.findByRole("region", { name: "实时剧本草稿" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "剧本" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  test("shows streamed script text in the editor and loads the formal revision on completion", async () => {
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("小说原文"), {
+      target: { value: "第一章正文。沈清荷醒来。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存并生成剧本" }));
+    const liveEditor = await screen.findByLabelText("实时剧本内容");
+    const source = FakeEventSource.instances[FakeEventSource.instances.length - 1];
+    expect(source?.url).toContain("/api/script-generation-runs/stream-run-1/events?after_sequence=0");
+
+    act(() => {
+      source?.emit("text_delta", { sequence: 1, text: "# 第一场\n" });
+      source?.emit("text_delta", { sequence: 1, text: "不应重复" });
+      source?.emit("text_delta", { sequence: 2, text: "沈清荷推门入内。" });
+    });
+    expect(liveEditor).toHaveValue("# 第一场\n沈清荷推门入内。");
+    expect(screen.getByText("正在生成")).toBeInTheDocument();
+
+    act(() => {
+      source?.emit("revision_completed", { sequence: 3, revision_id: "script-1" });
+    });
+    await waitFor(() => expect(screen.getByLabelText("剧本内容")).toHaveValue(generatedScript.content));
+    expect(screen.queryByLabelText("实时剧本内容")).not.toBeInTheDocument();
+  });
+
+  test("keeps partial streamed text visible when generation fails", async () => {
+    mockedGet.mockImplementation(async (url: string) => {
+      if (url === "/chapters/chapter-1/script/revisions") {
+        return { data: [] };
+      }
+      throw new Error(`unexpected GET ${url}`);
+    });
+    renderWithQueryClient(
+      <ScriptTab
+        activeRun={{
+          run_id: "stream-run-failed",
+          status: "prepared",
+          last_sequence: 0,
+          character_count: 0,
+          revision_id: "",
+          error_code: "",
+        }}
+        chapter={sourceReadyChapter()}
+      />,
+    );
+    const liveEditor = await screen.findByLabelText("实时剧本内容");
+    const source = FakeEventSource.instances[FakeEventSource.instances.length - 1];
+    act(() => {
+      source?.emit("text_delta", { sequence: 1, text: "已生成的部分剧本" });
+      source?.emit("failed", { sequence: 2, error_code: "PROVIDER_RESPONSE_MALFORMED" });
+    });
+
+    expect(liveEditor).toHaveValue("已生成的部分剧本");
+    expect(screen.getByText("生成中断 · 该内容尚未保存为正式剧本版本")).toBeInTheDocument();
+    expect(screen.getByText("PROVIDER_RESPONSE_MALFORMED")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "确认剧本" })).not.toBeInTheDocument();
   });
 
   test("saves a changed script model binding before source and script generation", async () => {

@@ -37,6 +37,24 @@ export type ScriptRevisionUpdate = {
   content: string;
 };
 
+export type ScriptGenerationStatus =
+  | "prepared"
+  | "submitting"
+  | "streaming"
+  | "finalizing"
+  | "completed"
+  | "failed"
+  | "unknown_outcome";
+
+export type ScriptGenerationRunRead = {
+  run_id: string;
+  status: ScriptGenerationStatus;
+  last_sequence: number;
+  character_count: number;
+  revision_id: string;
+  error_code: string;
+};
+
 export type RevisionDecision = {
   reviewer: string;
   note: string;
@@ -66,6 +84,24 @@ export async function generateScript(
     `/chapters/${chapterId}/script/generate`,
     payload,
   );
+  return response.data;
+}
+
+export async function startScriptGeneration(
+  chapterId: string,
+  payload: { target_duration_minutes: number },
+  idempotencyKey: string,
+): Promise<ScriptGenerationRunRead> {
+  const response = await apiClient.post<ScriptGenerationRunRead>(
+    `/chapters/${chapterId}/script/generations`,
+    payload,
+    { headers: { "Idempotency-Key": idempotencyKey } },
+  );
+  return response.data;
+}
+
+export async function getScriptGenerationRun(runId: string): Promise<ScriptGenerationRunRead> {
+  const response = await apiClient.get<ScriptGenerationRunRead>(`/script-generation-runs/${runId}`);
   return response.data;
 }
 

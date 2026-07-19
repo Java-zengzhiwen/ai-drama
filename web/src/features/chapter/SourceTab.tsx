@@ -24,13 +24,14 @@ import {
 } from "../suppliers/api";
 import {
   createSourceRevision,
-  generateScript,
+  startScriptGeneration,
+  type ScriptGenerationRunRead,
   type SourceRevisionRead,
 } from "../script/api";
 
 type SourceTabProps = {
   chapter: ChapterRead;
-  onOpenScript?: () => void;
+  onScriptGenerationStarted?: (run: ScriptGenerationRunRead) => void;
 };
 
 type ApiError = {
@@ -47,7 +48,7 @@ type TextModelOption = {
   supplier: SupplierRead;
 };
 
-export function SourceTab({ chapter, onOpenScript }: SourceTabProps) {
+export function SourceTab({ chapter, onScriptGenerationStarted }: SourceTabProps) {
   const queryClient = useQueryClient();
   const inRouterContext = useInRouterContext();
   const [draft, setDraft] = useState(chapter.source_text ?? "");
@@ -183,14 +184,14 @@ export function SourceTab({ chapter, onOpenScript }: SourceTabProps) {
       if (!sourceIsSaved) {
         await saveMutation.mutateAsync(normalizedDraft);
       }
-      return generateScript(chapter.chapter_id, {
-        target_duration_minutes: targetDurationMinutes,
-      });
+      return startScriptGeneration(
+        chapter.chapter_id,
+        { target_duration_minutes: targetDurationMinutes },
+        createIdempotencyKey(),
+      );
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["script-revisions", chapter.chapter_id] });
-      void queryClient.invalidateQueries({ queryKey: ["chapter-status", chapter.chapter_id] });
-      onOpenScript?.();
+    onSuccess: (run) => {
+      onScriptGenerationStarted?.(run);
     },
   });
 
@@ -549,4 +550,11 @@ function formatRevisionTime(value: string) {
     timeStyle: "short",
     hour12: false,
   }).format(date);
+}
+
+function createIdempotencyKey() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `script-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }

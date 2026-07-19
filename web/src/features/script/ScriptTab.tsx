@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Input, Skeleton, Tag, Typography } from "antd";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { ChapterRead } from "../projects/api";
 import {
   approveScriptRevision,
@@ -8,12 +8,16 @@ import {
   listScriptRevisions,
   rejectScriptRevision,
   updateScriptRevision,
+  type ScriptGenerationRunRead,
   type ScriptRevisionRead,
   type ValidationResultRead,
 } from "./api";
+import { useScriptGenerationStream } from "./useScriptGenerationStream";
 
 type ScriptTabProps = {
+  activeRun?: ScriptGenerationRunRead | null;
   chapter: ChapterRead;
+  onGenerationCompleted?: () => void;
 };
 
 type ApiError = {
@@ -30,12 +34,13 @@ type ScriptEditInput = {
   revisionId: string;
 };
 
-export function ScriptTab({ chapter }: ScriptTabProps) {
+export function ScriptTab({ activeRun = null, chapter, onGenerationCompleted }: ScriptTabProps) {
   const queryClient = useQueryClient();
   const [selectedRevisionId, setSelectedRevisionId] = useState("");
   const [draft, setDraft] = useState("");
   const [loadedRevisionId, setLoadedRevisionId] = useState("");
   const [isDraftDirty, setIsDraftDirty] = useState(false);
+  const stream = useScriptGenerationStream(activeRun);
 
   const revisionsQuery = useQuery({
     enabled: Boolean(chapter.chapter_id),
@@ -71,6 +76,31 @@ export function ScriptTab({ chapter }: ScriptTabProps) {
       setIsDraftDirty(false);
     }
   }, [isDraftDirty, loadedRevisionId, revisions, selectedRevision]);
+
+  useEffect(() => {
+    if (stream.revisionId) {
+      void queryClient.invalidateQueries({ queryKey: ["script-revisions", chapter.chapter_id] });
+      void queryClient.invalidateQueries({ queryKey: ["chapter-status", chapter.chapter_id] });
+    }
+  }, [chapter.chapter_id, queryClient, stream.revisionId]);
+
+  useEffect(() => {
+    if (!stream.revisionId) {
+      return;
+    }
+    const completedRevision = revisions.find(
+      (revision) => revision.revision_id === stream.revisionId,
+    );
+    if (!completedRevision) {
+      return;
+    }
+    setSelectedRevisionId(completedRevision.revision_id);
+    setDraft(completedRevision.content);
+    setLoadedRevisionId(completedRevision.revision_id);
+    setIsDraftDirty(false);
+    stream.clear();
+    onGenerationCompleted?.();
+  }, [onGenerationCompleted, revisions, stream.clear, stream.revisionId]);
 
   const generateMutation = useMutation({
     mutationFn: () => generateScript(chapter.chapter_id),
@@ -117,6 +147,7 @@ export function ScriptTab({ chapter }: ScriptTabProps) {
   });
 
   const isScriptMutating =
+    stream.active ||
     generateMutation.isPending ||
     saveMutation.isPending ||
     approveMutation.isPending ||
@@ -140,11 +171,11 @@ export function ScriptTab({ chapter }: ScriptTabProps) {
     setIsDraftDirty(false);
   }
 
-  if (revisionsQuery.isLoading) {
+  if (revisionsQuery.isLoading && !stream.active) {
     return <Skeleton active paragraph={{ rows: 6 }} />;
   }
 
-  if (revisionsQuery.isError) {
+  if (revisionsQuery.isError && !stream.active) {
     return (
       <WorkflowErrorAlert
         error={revisionsQuery.error}
@@ -171,6 +202,8 @@ export function ScriptTab({ chapter }: ScriptTabProps) {
         </Button>
         {selectedRevision ? <StatusChip status={selectedRevision.approval_status} /> : null}
       </div>
+
+      {stream.active ? <LiveScriptDraft stream={stream} /> : null}
 
       {generateMutation.isError ? (
         <WorkflowErrorAlert
@@ -213,7 +246,7 @@ export function ScriptTab({ chapter }: ScriptTabProps) {
         />
       ) : null}
 
-      {revisions.length === 0 ? (
+      {stream.active ? null : revisions.length === 0 ? (
         <Typography.Text type="secondary">暂无剧本。保存原文后生成剧本。</Typography.Text>
       ) : (
         <div className="revision-workspace">
@@ -273,6 +306,107 @@ export function ScriptTab({ chapter }: ScriptTabProps) {
       )}
     </section>
   );
+}
+
+function LiveScriptDraft({
+  stream,
+}: {
+  stream: ReturnType<typeof useScriptGenerationStream>;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [followOutput, setFollowOutput] = useState(true);
+  const elapsedSeconds = useElapsedSeconds(stream.active && !stream.terminal, stream.startedAt);
+  const statusLabel = stream.reconnecting
+    ? "正在重新连接"
+    : stream.status === "finalizing"
+      ? "正在校验并保存"
+      : stream.status === "completed"
+        ? "正在加载正式版本"
+      : stream.status === "failed"
+        ? "生成中断"
+        : stream.status === "unknown_outcome"
+          ? "生成状态待确认"
+          : stream.text
+            ? "正在生成"
+            : "正在等待模型响应";
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (textarea && followOutput) {
+      textarea.scrollTop = textarea.scrollHeight;
+    }
+  }, [followOutput, stream.text]);
+
+  return (
+    <section aria-label="实时剧本草稿" className="script-live-panel" data-terminal={stream.terminal}>
+      <header className="script-live-header">
+        <div>
+          <strong>实时草稿</strong>
+          <span className="script-live-pulse" data-active={!stream.terminal} />
+          <span>{statusLabel}</span>
+        </div>
+        <div className="script-live-metrics">
+          <span>{stream.characterCount.toLocaleString("zh-CN")} 字</span>
+          <span>{formatElapsed(elapsedSeconds)}</span>
+        </div>
+      </header>
+      <div className="script-live-editor">
+        <textarea
+          aria-label="实时剧本内容"
+          onScroll={(event) => {
+            const target = event.currentTarget;
+            setFollowOutput(target.scrollHeight - target.scrollTop - target.clientHeight < 48);
+          }}
+          placeholder="模型返回的剧本内容会逐字显示在这里……"
+          readOnly
+          ref={textareaRef}
+          value={stream.text}
+        />
+        {!followOutput ? (
+          <Button
+            className="script-follow-output"
+            onClick={() => {
+              setFollowOutput(true);
+              textareaRef.current?.scrollTo({ behavior: "smooth", top: textareaRef.current.scrollHeight });
+            }}
+            size="small"
+          >
+            回到生成末尾
+          </Button>
+        ) : null}
+      </div>
+      {stream.status === "failed" || stream.status === "unknown_outcome" ? (
+        <Alert
+          description={stream.errorCode || undefined}
+          message="生成中断 · 该内容尚未保存为正式剧本版本"
+          showIcon
+          type="error"
+        />
+      ) : (
+        <div className="script-live-notice">生成完成并通过校验后，将自动保存为正式剧本版本。</div>
+      )}
+    </section>
+  );
+}
+
+function useElapsedSeconds(active: boolean, startedAt: number) {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+    const update = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [active, startedAt]);
+  return elapsedSeconds;
+}
+
+function formatElapsed(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
 }
 
 function selectRevision(revisions: ScriptRevisionRead[], selectedRevisionId: string) {
