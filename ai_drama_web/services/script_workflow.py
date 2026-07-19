@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from ai_drama_runtime.registry import SkillNotFoundError, SkillRegistry
 from ai_drama_runtime.services import RuntimeService, WorkflowGateError
@@ -33,6 +34,7 @@ class ScriptWorkflowService:
         self.runtime_store = runtime_store
         self.settings = settings
         self.repo_root = Path(repo_root).resolve()
+        self.supplier_text_executor = supplier_text_executor
         self.runtime_service = RuntimeService(runtime_store, repo_root=self.repo_root, supplier_text_executor=supplier_text_executor)
 
     def generate_script(self, chapter_id: str, *, target_duration_minutes: int | None = None):
@@ -66,6 +68,62 @@ class ScriptWorkflowService:
                 result.run.error_message or result.run.status,
             )
         return self._read_revision(result.revision.revision_id)
+
+    def start_script_generation(
+        self,
+        chapter_id: str,
+        *,
+        idempotency_key: str,
+        target_duration_minutes: int | None = None,
+    ):
+        existing = self.product_store.get_script_generation_run_by_idempotency(
+            idempotency_key
+        )
+        if existing is not None:
+            if existing["chapter_id"] != chapter_id:
+                raise WorkflowExecutionError(
+                    "SCRIPT_GENERATION_IDEMPOTENCY_CONFLICT",
+                    "script generation idempotency conflict",
+                    status_code=409,
+                )
+            return existing
+        if self.supplier_text_executor is None:
+            raise WorkflowExecutionError(
+                "SCRIPT_STREAMING_RUNTIME_UNAVAILABLE",
+                "streaming supplier runtime is unavailable",
+                status_code=409,
+            )
+        chapter = self._chapter_or_raise(chapter_id)
+        project = self.product_store.get_project(chapter.project_id)
+        if project is None:
+            raise MissingRecord
+        source_text = self._source_text_or_gate(chapter)
+        skill = self._script_skill()
+        prepared = self.runtime_service.prepare_script_inputs(
+            skill,
+            artifact_id=self._artifact_id(chapter_id),
+            project_id=chapter.project_id,
+            chapter_id=chapter_id,
+            inputs={
+                "source_chapter": source_text,
+                "series_canon": project.series_canon,
+                "characters": project.characters_context,
+                "production_brief": self._production_brief(
+                    project.production_brief, target_duration_minutes
+                ),
+            },
+            runtime=self.settings.runtime_provider,
+            model=self.settings.runtime_model,
+        )
+        stream = self.supplier_text_executor.prepare_text_stream(
+            project_id=chapter.project_id,
+            chapter_id=chapter_id,
+            source_revision_id=chapter.current_source_revision_id,
+            runtime_run_id=prepared.run_id,
+            idempotency_key=idempotency_key,
+            request=json.loads(prepared.runtime_request.to_json()),
+        )
+        return self.product_store.get_script_generation_run(stream.session_run_id)
 
     @staticmethod
     def _production_brief(production_brief: str, target_duration_minutes: int | None) -> str:

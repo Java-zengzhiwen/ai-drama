@@ -102,6 +102,21 @@ class RunResult:
     adapter_request_json: str = ""
 
 
+@dataclass(frozen=True)
+class PreparedScriptExecution:
+    run_id: str
+    artifact_id: str
+    project_id: str
+    chapter_id: str
+    runtime: str
+    resolved_model: str
+    runtime_request: object
+    request_object_id: str
+    skill: object
+    validation_root: Path
+    started_at: float
+
+
 def _approved_approval_record(store, revision_id):
     approval = store.latest_approval(revision_id)
     return approval.__dict__ if approval else {}
@@ -648,6 +663,52 @@ class RuntimeService:
         started,
         mock_mode,
     ):
+        prepared = self._prepare_script_request(
+            skill=skill,
+            artifact_id=artifact_id,
+            project_id=project_id,
+            chapter_id=chapter_id,
+            runtime=runtime,
+            resolved_model=resolved_model,
+            runtime_request=runtime_request,
+            input_snapshots=input_snapshots,
+            validation_root=validation_root,
+            started=started,
+        )
+        request_json = runtime_request.to_json()
+        try:
+            response = self._run_text_provider(
+                project_id=project_id, operation_key="script_adaptation",
+                runtime_request=runtime_request, runtime=runtime,
+                mock_mode=mock_mode, run_id=prepared.run_id,
+            )
+        except RuntimeErrorBase as exc:
+            run = self.store.update_run(
+                prepared.run_id,
+                status="RUNTIME_FAILED",
+                provider=runtime,
+                model=resolved_model or "",
+                duration_ms=int((time.time() - started) * 1000),
+                error_code=exc.code,
+                error_message=exc.safe_message,
+            )
+            return RunResult(run=run, revision=None, validation_results=[], adapter_request_json=request_json)
+        return self._finalize_prepared_script(prepared, response)
+
+    def _prepare_script_request(
+        self,
+        *,
+        skill,
+        artifact_id,
+        project_id,
+        chapter_id,
+        runtime,
+        resolved_model,
+        runtime_request,
+        input_snapshots,
+        validation_root,
+        started,
+    ):
         request_json = runtime_request.to_json()
         request_object_id = self.store.write_text_object(request_json)
         run = self.store.create_run(
@@ -673,30 +734,28 @@ class RuntimeService:
                 source_path=item["source_path"],
                 text=item["text"],
             )
-        try:
-            response = self._run_text_provider(
-                project_id=project_id, operation_key="script_adaptation",
-                runtime_request=runtime_request, runtime=runtime,
-                mock_mode=mock_mode, run_id=run.run_id,
-            )
-        except RuntimeErrorBase as exc:
-            run = self.store.update_run(
-                run.run_id,
-                status="RUNTIME_FAILED",
-                provider=runtime,
-                model=resolved_model or "",
-                duration_ms=int((time.time() - started) * 1000),
-                error_code=exc.code,
-                error_message=exc.safe_message,
-            )
-            return RunResult(run=run, revision=None, validation_results=[], adapter_request_json=request_json)
+        return PreparedScriptExecution(
+            run_id=run.run_id,
+            artifact_id=artifact_id,
+            project_id=project_id,
+            chapter_id=chapter_id,
+            runtime=runtime,
+            resolved_model=resolved_model or "",
+            runtime_request=runtime_request,
+            request_object_id=request_object_id,
+            skill=skill,
+            validation_root=Path(validation_root),
+            started_at=started,
+        )
 
+    def _finalize_prepared_script(self, prepared, response):
+        request_json = prepared.runtime_request.to_json()
         response_object_id = self.store.write_text_object(response.raw)
         try:
             script_text = parse_script_response(response.raw)
         except ParseError as exc:
             run = self.store.update_run(
-                run.run_id,
+                prepared.run_id,
                 status="PARSE_FAILED",
                 response_object_id=response_object_id,
                 provider=response.provider,
@@ -715,7 +774,7 @@ class RuntimeService:
         content_object_id = self.store.write_text_object(script_text)
         content_hash = _sha256_text(script_text)
         run = self.store.update_run(
-            run.run_id,
+            prepared.run_id,
             status="SUCCEEDED",
             response_object_id=response_object_id,
             provider=response.provider,
@@ -728,14 +787,14 @@ class RuntimeService:
             usage_raw_object_id=self.store.write_text_object(json.dumps(response.usage.get("raw") or {}, ensure_ascii=False, sort_keys=True)),
         )
         revision = self.store.insert_revision(
-            artifact_id=artifact_id,
+            artifact_id=prepared.artifact_id,
             artifact_type="drama_script",
-            project_id=project_id,
-            chapter_id=chapter_id,
+            project_id=prepared.project_id,
+            chapter_id=prepared.chapter_id,
             run_id=run.run_id,
-            skill_id=skill.skill_id,
-            skill_version=skill.version,
-            skill_package_hash=skill.content_hash,
+            skill_id=prepared.skill.skill_id,
+            skill_version=prepared.skill.version,
+            skill_package_hash=prepared.skill.content_hash,
             runtime_provider=response.provider,
             runtime_model=response.model,
             content_object_id=content_object_id,
@@ -743,7 +802,13 @@ class RuntimeService:
             raw_response_object_id=response_object_id,
             parser_version=PARSER_VERSION,
         )
-        validations = run_declared_validators(self.store, skill, revision, validation_root, repo_root=self.repo_root)
+        validations = run_declared_validators(
+            self.store,
+            prepared.skill,
+            revision,
+            prepared.validation_root,
+            repo_root=self.repo_root,
+        )
         blocking = [item for item in validations if item.required and item.status not in {"PASS"}]
         if blocking:
             validator_ids = ", ".join(item.validator_id for item in blocking)
@@ -754,6 +819,46 @@ class RuntimeService:
                 error_message="required validators did not pass: %s" % validator_ids,
             )
         return RunResult(run=run, revision=revision, validation_results=validations, adapter_request_json=request_json)
+
+    def finalize_prepared_script(
+        self,
+        prepared,
+        *,
+        output,
+        usage,
+        provider,
+        model,
+        duration_ms,
+    ):
+        normalized_usage = dict(usage or {})
+        normalized_usage.setdefault(
+            "usage_status", "PROVIDED" if normalized_usage else "NOT_PROVIDED"
+        )
+        normalized_usage.setdefault(
+            "prompt_tokens", int(normalized_usage.get("input_tokens") or 0)
+        )
+        normalized_usage.setdefault(
+            "completion_tokens", int(normalized_usage.get("output_tokens") or 0)
+        )
+        normalized_usage.setdefault(
+            "total_tokens",
+            int(
+                normalized_usage.get("total_tokens")
+                or normalized_usage["prompt_tokens"]
+                + normalized_usage["completion_tokens"]
+            ),
+        )
+        normalized_usage.setdefault("raw", dict(usage or {}))
+        return self._finalize_prepared_script(
+            prepared,
+            RuntimeResponse(
+                raw=output,
+                provider=provider,
+                model=model,
+                usage=normalized_usage,
+                duration_ms=int(duration_ms),
+            ),
+        )
 
     def run_acceptance(self, skill, acceptance_root, runtime, model, mock_mode="success"):
         _validate_skill_input_mode(skill, "input")
@@ -813,6 +918,43 @@ class RuntimeService:
             validation_root=skill.root,
             started=started,
             mock_mode=mock_mode,
+        )
+
+    def prepare_script_inputs(
+        self, skill, artifact_id, project_id, chapter_id, inputs, runtime, model
+    ):
+        _validate_skill_input_mode(skill, "input")
+        started = time.time()
+        self.store.ensure_artifact(
+            artifact_id, "drama_script", project_id, chapter_id
+        )
+        resolved_model = model or (
+            os.environ.get("AI_DRAMA_MODEL")
+            if runtime == "openai-compatible"
+            else model
+        )
+        runtime_request = build_runtime_request_from_inputs(
+            skill, inputs, runtime, resolved_model or ""
+        )
+        return self._prepare_script_request(
+            skill=skill,
+            artifact_id=artifact_id,
+            project_id=project_id,
+            chapter_id=chapter_id,
+            runtime=runtime,
+            resolved_model=resolved_model or "",
+            runtime_request=runtime_request,
+            input_snapshots=[
+                {
+                    "logical_type": logical_type,
+                    "source_relative_path": "web-inputs/%s.md" % logical_type,
+                    "source_path": Path("web-inputs/%s.md" % logical_type),
+                    "text": text,
+                }
+                for logical_type, text in sorted(inputs.items())
+            ],
+            validation_root=skill.root,
+            started=started,
         )
 
     def create_manual_revision(self, source_revision_id, content, actor="local-user"):

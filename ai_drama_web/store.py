@@ -2779,6 +2779,13 @@ class ProductStore:
         ).fetchone()
         return None if row is None else dict(row)
 
+    def get_script_generation_run_by_idempotency(self, idempotency_key):
+        row = self.conn.execute(
+            "SELECT * FROM script_generation_runs WHERE idempotency_key = ?",
+            (idempotency_key,),
+        ).fetchone()
+        return None if row is None else dict(row)
+
     def next_prepared_script_generation_run(self):
         row = self.conn.execute(
             """

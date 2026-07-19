@@ -1,5 +1,6 @@
 import json
-from dataclasses import replace
+import uuid
+from dataclasses import dataclass, replace
 
 from ai_drama_web.services.generation_execution import _persisted_source_url
 from ai_drama_web.suppliers.adapters import sanitize_evidence
@@ -25,6 +26,14 @@ class M6GenerationError(RuntimeError):
     def __init__(self, code):
         super().__init__(code)
         self.code = code
+
+
+@dataclass(frozen=True)
+class PreparedTextStream:
+    session_run_id: str
+    supplier_text_run_id: str
+    snapshot_hash: str
+    request_object_id: str
 
 
 def _normalize_text_request(request):
@@ -257,6 +266,67 @@ class M6GenerationCoordinator:
             evidence_object_id=evidence_object_id,
         )
         return {"run_id": run["run_id"], **normalized}
+
+    def prepare_text_stream(
+        self,
+        *,
+        project_id,
+        chapter_id,
+        source_revision_id,
+        runtime_run_id,
+        idempotency_key,
+        request,
+    ):
+        request = _normalize_text_request(request)
+        snapshot = self._resolve_snapshot(
+            project_id, "script_adaptation", request=request
+        )
+        supplier_key = f"script-stream:{idempotency_key}"
+        replay = self._matching_replay(
+            snapshot, "text", supplier_key, request
+        )
+        if replay is None:
+            text_run, _created = self.store.enqueue_text_run_with_snapshot(
+                project_id=project_id,
+                operation_key="script_adaptation",
+                supplier_id=snapshot.supplier_id,
+                idempotency_key=supplier_key,
+                request=request,
+                snapshot=snapshot,
+            )
+        else:
+            text_run = replay
+        existing = self.store.get_script_generation_run_by_idempotency(
+            idempotency_key
+        )
+        if existing is not None:
+            if existing["supplier_text_run_id"] != text_run["run_id"]:
+                raise SupplierIdempotencyConflict("IDEMPOTENCY_CONFLICT")
+            return PreparedTextStream(
+                session_run_id=existing["run_id"],
+                supplier_text_run_id=existing["supplier_text_run_id"],
+                snapshot_hash=existing["snapshot_hash"],
+                request_object_id=text_run["request_object_id"],
+            )
+        session = self.store.create_script_generation_run(
+            run_id=uuid.uuid4().hex,
+            project_id=project_id,
+            chapter_id=chapter_id,
+            source_revision_id=source_revision_id,
+            runtime_run_id=runtime_run_id,
+            idempotency_key=idempotency_key,
+        )
+        session = self.store.bind_script_generation_snapshot(
+            session["run_id"],
+            supplier_text_run_id=text_run["run_id"],
+            snapshot_hash=text_run["snapshot_hash"],
+        )
+        return PreparedTextStream(
+            session_run_id=session["run_id"],
+            supplier_text_run_id=text_run["run_id"],
+            snapshot_hash=text_run["snapshot_hash"],
+            request_object_id=text_run["request_object_id"],
+        )
 
     def generate_image(self, *, project_id, chapter_id, idempotency_key, request):
         snapshot = self._resolve_snapshot(
