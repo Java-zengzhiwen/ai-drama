@@ -43,10 +43,11 @@ class SupplierInvocationResult:
 
 
 class SupplierWorkerError(RuntimeError):
-    def __init__(self, code, message):
+    def __init__(self, code, message, *, evidence=None):
         super().__init__(message)
         self.code = code
         self.message = message
+        self.evidence = evidence if isinstance(evidence, dict) else {}
 
 
 class SupplierWorker:
@@ -133,6 +134,7 @@ class SupplierWorker:
             raise SupplierWorkerError(
                 error.get("code", "SUPPLIER_EXECUTION_FAILED"),
                 str(error.get("message", "supplier operation failed"))[:299],
+                evidence=error.get("evidence"),
             )
         if (
             response.get("workerProtocolVersion") != "1"

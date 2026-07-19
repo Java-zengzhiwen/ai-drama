@@ -227,7 +227,19 @@ class M6GenerationCoordinator:
         try:
             response = self.gateway.invoke(run["snapshot_hash"], "textRequest", request)
         except Exception as exc:
-            self.store.fail_supplier_text_run(run["run_id"], error_code=getattr(exc, "code", "SUPPLIER_EXECUTION_FAILED"))
+            safe = sanitize_evidence(getattr(exc, "evidence", {}))
+            evidence_object_id = (
+                self.runtime.write_text_object(
+                    json.dumps(safe, sort_keys=True, separators=(",", ":"))
+                )
+                if safe
+                else ""
+            )
+            self.store.fail_supplier_text_run(
+                run["run_id"],
+                error_code=getattr(exc, "code", "SUPPLIER_EXECUTION_FAILED"),
+                evidence_object_id=evidence_object_id,
+            )
             raise
         normalized = {
             "output": response.get("output", ""),

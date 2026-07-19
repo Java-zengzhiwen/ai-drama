@@ -8,6 +8,7 @@ import https from "node:https";
 import net from "node:net";
 import { createPinnedLookup } from "./pinned-lookup.mjs";
 import { assertNotRedirect, assertPeerAddress, isPublicAddress } from "./network-policy.mjs";
+import { describeResponseShape, supplierErrorWithHostEvidence } from "./response-shape.mjs";
 import {
   assertInputBudget,
   authorizeDeclaredInputReference,
@@ -81,6 +82,7 @@ if (
 const networkError = request.mode === "validation"
   ? "NETWORK_DISABLED_DURING_VALIDATION"
   : "NETWORK_HELPER_UNAVAILABLE";
+let lastProviderResponseShape = null;
 const configUrls = [];
 const collectConfigUrls = value => {
   if (typeof value === "string" && /^https:\/\//.test(value)) configUrls.push(value);
@@ -303,6 +305,12 @@ const hostHttpRequest = async options => {
   }
   try {
     const parsed = JSON.parse(buffer.toString("utf8"));
+    lastProviderResponseShape = describeResponseShape({
+      statusCode: response.statusCode,
+      contentType: response.headers["content-type"],
+      byteLength: buffer.length,
+      parsed,
+    });
     for (const value of collectProviderResultUrls(parsed)) providerResultUrls.add(value);
     return parsed;
   }
@@ -422,9 +430,6 @@ try {
 } catch (error) {
   respond({
     ok: false,
-    error: {
-      code: error?.code || "SUPPLIER_EXECUTION_FAILED",
-      message: error?.code || "supplier operation failed",
-    },
+    error: supplierErrorWithHostEvidence(error, lastProviderResponseShape),
   });
 }
