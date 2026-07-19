@@ -22,7 +22,11 @@ function validateVendor(vendor) {
     if (typeof vendor[key] !== "string" || !vendor[key]) return false;
   }
   if (vendor.adapterContractVersion !== "ai-drama-supplier-v1") return false;
-  if (!["ai-drama-helper-v1", "ai-drama-helper-v2"].includes(vendor.helperApiVersion)) return false;
+  if (![
+    "ai-drama-helper-v1",
+    "ai-drama-helper-v2",
+    "ai-drama-helper-v3",
+  ].includes(vendor.helperApiVersion)) return false;
   if (!/^[a-z0-9][a-z0-9._:-]{0,127}$/.test(vendor.rateLimitBucketKey || "")) return false;
   return Array.isArray(vendor.inputs)
     && vendor.inputs.every(validateInput)
@@ -107,7 +111,9 @@ try {
 if (!vendor) fail("MISSING_VENDOR_EXPORT", "supplier must export vendor");
 if (!validateVendor(vendor)) fail("INVALID_VENDOR_MANIFEST", "vendor manifest is invalid");
 const requiredExports = {
-  text: ["textRequest"],
+  text: vendor.helperApiVersion === "ai-drama-helper-v3"
+    ? ["textRequest", "textStream"]
+    : ["textRequest"],
   image: ["imageRequest"],
   video: ["videoSubmit", "videoPoll", "videoFetch"],
 };

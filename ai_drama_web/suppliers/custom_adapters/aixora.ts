@@ -41,7 +41,10 @@ type SupplierPayload = {
 };
 
 type SupplierHelpers = {
-  http: { request(options: Record<string, unknown>): Promise<any> };
+  http: {
+    request(options: Record<string, unknown>): Promise<any>;
+    stream(options: Record<string, unknown>): Promise<any>;
+  };
   media: { decodeBase64(value: string, mediaType: string): Promise<Record<string, unknown>> };
 };
 
@@ -51,7 +54,7 @@ export const vendor = {
   name: "AIXORA",
   author: "AI Drama",
   adapterContractVersion: "ai-drama-supplier-v1",
-  helperApiVersion: "ai-drama-helper-v2",
+  helperApiVersion: "ai-drama-helper-v3",
   rateLimitBucketKey: "aixora-generation",
   inputs: [
     { key: "base_url", label: "Base URL", type: "url", required: true },
@@ -271,6 +274,34 @@ export async function textRequest(payload: SupplierPayload, helpers: SupplierHel
       total_tokens: Number(usage.total_tokens || inputTokens + outputTokens),
     },
   };
+}
+
+/**
+ * 剧本生成使用 Responses SSE。Worker 宿主只把 output_text delta 转成正文帧，
+ * reasoning、协议包装和供应商错误不会进入中央剧本编辑区。
+ */
+export async function textStream(payload: SupplierPayload, helpers: SupplierHelpers) {
+  const body: Record<string, unknown> = {
+    model: payload.model,
+    input: responsesInput(payload),
+    reasoning: { effort: reasoningEffort(payload) },
+    stream: true,
+    store: false,
+  };
+  const instructions = payload.request?.instructions || payload.request?.system;
+  if (instructions) body.instructions = String(instructions);
+
+  return helpers.http.stream({
+    method: "POST",
+    url: `${baseUrl(payload)}/responses`,
+    headers: authorization(payload),
+    body,
+    eventMap: {
+      delta: "response.output_text.delta",
+      completed: "response.completed",
+      failed: "response.failed",
+    },
+  });
 }
 
 function imageFields(payload: SupplierPayload): Record<string, string | number> {

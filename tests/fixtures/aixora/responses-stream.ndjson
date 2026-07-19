@@ -1,0 +1,5 @@
+{"event":"response.created","data":{"type":"response.created"}}
+{"event":"response.output_text.delta","data":{"delta":"# 第一场\n"}}
+{"event":"response.reasoning.delta","data":{"delta":"not-visible"}}
+{"event":"response.output_text.delta","data":{"delta":"测试剧本正文。"}}
+{"event":"response.completed","data":{"response":{"usage":{"input_tokens":1,"output_tokens":2,"total_tokens":3}}}}

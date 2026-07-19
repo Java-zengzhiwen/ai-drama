@@ -142,7 +142,9 @@ async def put_supplier_code(
             manifest_hash=artifact.manifest_hash,
             manifest=artifact.vendor,
             adapter_contract_version=artifact.adapter_contract_version,
-            worker_protocol_version="1",
+            worker_protocol_version=(
+                "2" if artifact.helper_api_version == "ai-drama-helper-v3" else "1"
+            ),
             worker_runtime_version=artifact.worker_runtime_version,
             compiler_name=artifact.compiler_name,
             compiler_version=artifact.compiler_version,

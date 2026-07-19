@@ -186,6 +186,36 @@ def test_supplier_config_secret_and_code_mutations_require_matching_etags(tmp_pa
         assert absent.headers["etag"] == '"credential-2"'
 
 
+def test_stream_capable_supplier_version_persists_worker_protocol_2(tmp_path):
+    stream_source = SOURCE.replace(
+        'helperApiVersion: "ai-drama-helper-v1"',
+        'helperApiVersion: "ai-drama-helper-v3"',
+    ).replace(
+        "models: []",
+        'models: [{ providerModelName: "stream-text", displayName: "Stream Text", capability: "text" }]',
+    ) + "\nexport async function textStream() { return {}; }"
+    with _client(tmp_path) as client:
+        supplier = client.post(
+            "/api/suppliers",
+            json={"slug": "stream-runtime", "display_name": "Stream Runtime"},
+            headers={"If-None-Match": "*", "Idempotency-Key": "create-stream-runtime"},
+        ).json()
+        saved = client.put(
+            f"/api/suppliers/{supplier['supplier_id']}/code",
+            json={"source": stream_source},
+            headers={"If-Match": '"supplier-1"'},
+        )
+        version = client.portal.call(
+            lambda: client.app.state.product_store.get_supplier_version(
+                saved.json()["supplier_version_id"]
+            )
+        )
+
+    assert saved.status_code == 200, saved.text
+    assert version.worker_protocol_version == "2"
+    assert version.helper_api_version == "ai-drama-helper-v3"
+
+
 def test_supplier_config_rejects_value_outside_manifest_select(tmp_path):
     select_source = SOURCE.replace(
         "inputs: []",

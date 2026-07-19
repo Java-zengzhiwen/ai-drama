@@ -55,6 +55,35 @@ def test_compiler_accepts_media_helper_v2_without_changing_legacy_v1(tmp_path):
     assert upgraded.helper_api_version == "ai-drama-helper-v2"
 
 
+def test_compiler_accepts_stream_helper_v3_with_sync_rollback(tmp_path):
+    source = VALID_SOURCE.replace(
+        'helperApiVersion: "ai-drama-helper-v1"',
+        'helperApiVersion: "ai-drama-helper-v3"',
+    ).replace(
+        "models: []",
+        'models: [{ providerModelName: "stream-text", displayName: "Stream Text", capability: "text" }]',
+    ) + "\nexport async function textStream() { return {}; }"
+
+    artifact = compile_supplier(source, runtime_store=_runtime(tmp_path))
+
+    assert artifact.helper_api_version == "ai-drama-helper-v3"
+
+
+def test_compiler_requires_text_stream_for_v3_text_models(tmp_path):
+    source = VALID_SOURCE.replace(
+        'helperApiVersion: "ai-drama-helper-v1"',
+        'helperApiVersion: "ai-drama-helper-v3"',
+    ).replace(
+        "models: []",
+        'models: [{ providerModelName: "stream-text", displayName: "Stream Text", capability: "text" }]',
+    )
+
+    with pytest.raises(SupplierCompileError) as exc_info:
+        compile_supplier(source, runtime_store=_runtime(tmp_path))
+
+    assert exc_info.value.code == "MISSING_RUNTIME_EXPORT"
+
+
 def test_compiler_accepts_manifest_select_with_unique_string_options(tmp_path):
     source = VALID_SOURCE.replace(
         "inputs: []",

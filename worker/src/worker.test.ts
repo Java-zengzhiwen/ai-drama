@@ -27,7 +27,7 @@ function invoke(compiledCode, mode = "execution", payload = {}, helperApiVersion
     fileURLToPath(new URL("./worker.ts", import.meta.url)),
   ], {
     input: JSON.stringify({
-      workerProtocolVersion: "1",
+      workerProtocolVersion: helperApiVersion === "ai-drama-helper-v3" ? "2" : "1",
       helperApiVersion,
       workerRuntimeVersion: process.version,
       compiledCode,
@@ -41,6 +41,29 @@ function invoke(compiledCode, mode = "execution", payload = {}, helperApiVersion
     env: { PATH: process.env.PATH, LANG: "C.UTF-8", TZ: "UTC" },
   });
   return JSON.parse(result.stdout);
+}
+
+
+function invokeStream(compiledCode, mode = "validation", payload = {}) {
+  const result = spawnSync(process.execPath, [
+    "--import", fileURLToPath(new URL("./network-denial.mjs", import.meta.url)),
+    fileURLToPath(new URL("./worker.ts", import.meta.url)),
+  ], {
+    input: JSON.stringify({
+      workerProtocolVersion: "2",
+      helperApiVersion: "ai-drama-helper-v3",
+      workerRuntimeVersion: process.version,
+      compiledCode,
+      operation: "textStream",
+      payload,
+      mode,
+      timeoutMs: 1000,
+      maxOutputBytes: 1024 * 1024,
+    }),
+    encoding: "utf8",
+    env: { PATH: process.env.PATH, LANG: "C.UTF-8", TZ: "UTC" },
+  });
+  return result.stdout.trim().split("\n").filter(Boolean).map(line => JSON.parse(line));
 }
 
 
@@ -285,6 +308,23 @@ test("v2 multipart resolves a declared data image before denied test transport",
 });
 
 
+test("v3 preserves synchronous multipart rollback on worker protocol 2", () => {
+  const code = `module.exports.textRequest = async (payload, helpers) => helpers.http.request({
+    method:'POST', url:payload.config.base_url, headers:{},
+    multipart:{fields:{model:'gpt-image-2',prompt:'edit'},files:[{fieldName:'image[]',url:payload.request.input_images[0]}]}
+  });`;
+  const image = `data:image/png;base64,${VALID_PNG_BASE64}`;
+  const response = invoke(
+    code,
+    "execution",
+    {config:{base_url:"https://example.invalid/v1"},request:{input_images:[image]}},
+    "ai-drama-helper-v3",
+  );
+
+  assert.match(response.error.code, /SUPPLIER_EXECUTION_FAILED|UNEXPECTED_REAL_NETWORK/);
+});
+
+
 test("supplier context cannot read process", () => {
   const response = invoke("module.exports.textRequest = () => typeof process;");
   assert.equal(response.ok, true);
@@ -299,6 +339,20 @@ test("validation helper denies network", () => {
   );
   assert.equal(response.ok, false);
   assert.equal(response.error.code, "NETWORK_DISABLED_DURING_VALIDATION");
+});
+
+
+test("stream helper emits a versioned failed frame when validation disables network", () => {
+  const frames = invokeStream(
+    "module.exports.textStream = async (_payload, helpers) => helpers.http.stream({});",
+  );
+
+  assert.deepEqual(frames, [{
+    type: "failed",
+    sequence: 0,
+    errorCode: "NETWORK_DISABLED_DURING_VALIDATION",
+    evidence: {},
+  }]);
 });
 
 test("execution helper rejects destinations outside selected config", () => {

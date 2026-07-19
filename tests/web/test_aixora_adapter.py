@@ -35,6 +35,10 @@ new vm.Script(`
       globalThis.__calls.push(options);
       if (!globalThis.__responses.length) throw Object.assign(new Error("FAKE_RESPONSE_MISSING"), {code:"FAKE_RESPONSE_MISSING"});
       return globalThis.__responses.shift();
+    }, stream: async options => {
+      globalThis.__calls.push(options);
+      if (!globalThis.__responses.length) throw Object.assign(new Error("FAKE_RESPONSE_MISSING"), {code:"FAKE_RESPONSE_MISSING"});
+      return globalThis.__responses.shift();
     }}),
     media: Object.freeze({decodeBase64: async (value, mediaType) => {
       globalThis.__calls.push({mediaOperation:"decodeBase64", value, mediaType});
@@ -97,7 +101,7 @@ def payload(model, *, request=None, config=None, constraints=None):
 
 
 def test_manifest_is_exact_and_stable(artifact):
-    assert artifact.helper_api_version == "ai-drama-helper-v2"
+    assert artifact.helper_api_version == "ai-drama-helper-v3"
     assert [(model["providerModelName"], model["capability"]) for model in artifact.vendor["models"]] == [
         ("gpt-5.5", "text"),
         ("gpt-5.6", "text"),
@@ -160,6 +164,33 @@ def test_manifest_is_exact_and_stable(artifact):
         "none", "low", "medium", "high", "xhigh", "max"
     ]
     assert all(model["reasoning_effort"] == "medium" for model in text_models.values())
+
+
+def test_text_stream_uses_responses_sse_contract(artifact):
+    result = invoke(
+        artifact,
+        "textStream",
+        payload(
+            "gpt-5.6-sol",
+            request={"prompt": "stream this", "parameters": {"reasoning_effort": "high"}},
+        ),
+        [{"streamed": True}],
+    )
+
+    assert result["ok"] is True
+    assert result["result"] == {"streamed": True}
+    assert len(result["calls"]) == 1
+    call = result["calls"][0]
+    assert call["method"] == "POST"
+    assert call["url"] == "https://www.aixora.store/v1/responses"
+    assert call["body"]["stream"] is True
+    assert call["body"]["store"] is False
+    assert call["body"]["reasoning"] == {"effort": "high"}
+    assert call["eventMap"] == {
+        "delta": "response.output_text.delta",
+        "completed": "response.completed",
+        "failed": "response.failed",
+    }
 
 
 @pytest.mark.parametrize("effort", ["none", "low", "medium", "high", "xhigh", "max"])
