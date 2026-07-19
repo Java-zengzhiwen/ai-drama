@@ -5,7 +5,13 @@ from ai_drama_runtime.services import ApprovalBlocked, WorkflowGateError
 from ai_drama_runtime.store import RuntimeStore
 from ai_drama_web.config import Settings
 from ai_drama_web.dependencies import get_product_store, get_runtime_store
-from ai_drama_web.schemas.workflows import ErrorResponse, RevisionDecision, ScriptRevisionRead, ScriptRevisionUpdate
+from ai_drama_web.schemas.workflows import (
+    ErrorResponse,
+    RevisionDecision,
+    ScriptGenerationRequest,
+    ScriptRevisionRead,
+    ScriptRevisionUpdate,
+)
 from ai_drama_web.services.projects import MissingRecord
 from ai_drama_web.services.script_workflow import ScriptWorkflowService, WorkflowExecutionError
 from ai_drama_web.store import ProductStore
@@ -44,9 +50,16 @@ def _error(status_code: int, error_code: str, error_message: str) -> JSONRespons
     response_model=ScriptRevisionRead,
     responses={409: {"model": ErrorResponse}},
 )
-async def generate_script(chapter_id: str, service: ScriptWorkflowService = Depends(get_service)):
+async def generate_script(
+    chapter_id: str,
+    payload: ScriptGenerationRequest = Body(default_factory=ScriptGenerationRequest),
+    service: ScriptWorkflowService = Depends(get_service),
+):
     try:
-        return service.generate_script(chapter_id)
+        return service.generate_script(
+            chapter_id,
+            target_duration_minutes=payload.target_duration_minutes,
+        )
     except MissingRecord:
         raise HTTPException(status_code=404, detail="chapter not found")
     except WorkflowGateError as exc:

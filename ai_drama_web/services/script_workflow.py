@@ -35,7 +35,7 @@ class ScriptWorkflowService:
         self.repo_root = Path(repo_root).resolve()
         self.runtime_service = RuntimeService(runtime_store, repo_root=self.repo_root, supplier_text_executor=supplier_text_executor)
 
-    def generate_script(self, chapter_id: str):
+    def generate_script(self, chapter_id: str, *, target_duration_minutes: int | None = None):
         chapter = self._chapter_or_raise(chapter_id)
         project = self.product_store.get_project(chapter.project_id)
         if project is None:
@@ -46,7 +46,10 @@ class ScriptWorkflowService:
             "source_chapter": source_text,
             "series_canon": project.series_canon,
             "characters": project.characters_context,
-            "production_brief": project.production_brief,
+            "production_brief": self._production_brief(
+                project.production_brief,
+                target_duration_minutes,
+            ),
         }
         result = self.runtime_service.run_script_inputs(
             skill,
@@ -63,6 +66,17 @@ class ScriptWorkflowService:
                 result.run.error_message or result.run.status,
             )
         return self._read_revision(result.revision.revision_id)
+
+    @staticmethod
+    def _production_brief(production_brief: str, target_duration_minutes: int | None) -> str:
+        if target_duration_minutes is None:
+            return production_brief
+        duration_instruction = (
+            f"本次改编目标时长：{target_duration_minutes} 分钟。"
+            "请据此控制场次数量、叙事节奏和对白密度，同时保留原文关键情节。"
+        )
+        brief = production_brief.strip()
+        return f"{brief}\n\n{duration_instruction}" if brief else duration_instruction
 
     def list_revisions(self, chapter_id: str):
         self._chapter_or_raise(chapter_id)

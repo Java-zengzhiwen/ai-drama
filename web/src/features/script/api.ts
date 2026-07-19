@@ -58,8 +58,14 @@ export async function createSourceRevision(
   return response.data;
 }
 
-export async function generateScript(chapterId: string): Promise<ScriptRevisionRead> {
-  const response = await apiClient.post<ScriptRevisionRead>(`/chapters/${chapterId}/script/generate`);
+export async function generateScript(
+  chapterId: string,
+  payload?: { target_duration_minutes: number },
+): Promise<ScriptRevisionRead> {
+  const response = await apiClient.post<ScriptRevisionRead>(
+    `/chapters/${chapterId}/script/generate`,
+    payload,
+  );
   return response.data;
 }
 

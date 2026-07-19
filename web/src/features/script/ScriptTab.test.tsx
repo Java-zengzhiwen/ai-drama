@@ -362,6 +362,9 @@ describe("chapter source and script workspace tabs", () => {
     await waitFor(() =>
       expect(screen.getByRole("combobox", { name: "文本模型" })).toHaveValue("model-sol"),
     );
+    const durationSelect = screen.getByRole("combobox", { name: "目标时长" });
+    expect(durationSelect).toHaveValue("3");
+    fireEvent.change(durationSelect, { target: { value: "5" } });
 
     fireEvent.change(screen.getByLabelText("小说原文"), {
       target: { value: "第一章正文。沈清荷醒来。" },
@@ -371,7 +374,7 @@ describe("chapter source and script workspace tabs", () => {
     await waitFor(() =>
       expect(mockedPost.mock.calls.slice(0, 2)).toEqual([
         ["/chapters/chapter-1/source-revisions", { content: "第一章正文。沈清荷醒来。" }],
-        ["/chapters/chapter-1/script/generate"],
+        ["/chapters/chapter-1/script/generate", { target_duration_minutes: 5 }],
       ]),
     );
     expect(await screen.findByText("script_markdown_contract")).toBeInTheDocument();

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def _not_blank(value: str) -> str:
@@ -40,6 +40,10 @@ class ScriptRevisionUpdate(BaseModel):
     @classmethod
     def validate_content(cls, value: str) -> str:
         return _not_blank(value)
+
+
+class ScriptGenerationRequest(BaseModel):
+    target_duration_minutes: int | None = Field(default=None, ge=3, le=8)
 
 
 class RevisionDecision(BaseModel):

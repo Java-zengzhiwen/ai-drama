@@ -55,12 +55,16 @@ export function SourceTab({ chapter, onOpenScript }: SourceTabProps) {
   const [chapterSearch, setChapterSearch] = useState("");
   const [lastRevision, setLastRevision] = useState<SourceRevisionRead | null>(null);
   const [selectedModelId, setSelectedModelId] = useState("");
+  const [targetDurationMinutes, setTargetDurationMinutes] = useState(() =>
+    recommendedDurationMinutes(chapter.source_text ?? ""),
+  );
 
   useEffect(() => {
     setDraft(chapter.source_text ?? "");
     setSaved(false);
     setLastRevision(null);
     setSelectedModelId("");
+    setTargetDurationMinutes(recommendedDurationMinutes(chapter.source_text ?? ""));
   }, [chapter.chapter_id, chapter.project_id]);
 
   const chaptersQuery = useQuery({
@@ -114,7 +118,6 @@ export function SourceTab({ chapter, onOpenScript }: SourceTabProps) {
     || (Boolean(chapter.current_source_revision_id) && normalizedDraft === persistedSource)
   );
   const characterCount = countReadableCharacters(draft);
-  const estimatedMinutes = Math.max(1, Math.round(characterCount / 900));
   const estimatedScenes = Math.max(1, Math.ceil(characterCount / 450));
   const previewRows = buildPreviewRows(estimatedScenes, characterCount);
 
@@ -180,7 +183,9 @@ export function SourceTab({ chapter, onOpenScript }: SourceTabProps) {
       if (!sourceIsSaved) {
         await saveMutation.mutateAsync(normalizedDraft);
       }
-      return generateScript(chapter.chapter_id);
+      return generateScript(chapter.chapter_id, {
+        target_duration_minutes: targetDurationMinutes,
+      });
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["script-revisions", chapter.chapter_id] });
@@ -361,9 +366,17 @@ export function SourceTab({ chapter, onOpenScript }: SourceTabProps) {
           </InspectorField>
           <InspectorField label="目标时长">
             <div className="source-duration-control">
-              <strong>{estimatedMinutes}</strong>
-              <span>分钟</span>
-              <small>按原文字数自动估算</small>
+              <select
+                aria-label="目标时长"
+                disabled={mutationPending}
+                onChange={(event) => setTargetDurationMinutes(Number(event.target.value))}
+                value={targetDurationMinutes}
+              >
+                {[3, 4, 5, 6, 7, 8].map((minutes) => (
+                  <option key={minutes} value={minutes}>{minutes} 分钟</option>
+                ))}
+              </select>
+              <small>建议：约 {recommendedDurationMinutes(draft)} 分钟</small>
             </div>
           </InspectorField>
           </div>
@@ -383,8 +396,8 @@ export function SourceTab({ chapter, onOpenScript }: SourceTabProps) {
           <ReadinessItem ready={Boolean(chapter.title.trim())} text="章节标题已设置" />
           <ReadinessItem ready={characterCount >= 500} text="字数满足要求（≥ 500）" />
           <ReadinessItem
-            ready={estimatedMinutes >= 3 && estimatedMinutes <= 8}
-            text={`预计可生成时长在范围内（约 ${estimatedMinutes} 分钟）`}
+            ready={targetDurationMinutes >= 3 && targetDurationMinutes <= 8}
+            text={`目标时长已设置（${targetDurationMinutes} 分钟）`}
           />
           </section>
 
@@ -511,6 +524,10 @@ function getApiErrorDetails(error: unknown, fallbackMessage: string) {
 
 function countReadableCharacters(content: string) {
   return content.replace(/\s/g, "").length;
+}
+
+function recommendedDurationMinutes(content: string) {
+  return Math.min(8, Math.max(3, Math.round(countReadableCharacters(content) / 900)));
 }
 
 function buildPreviewRows(sceneCount: number, characterCount: number) {

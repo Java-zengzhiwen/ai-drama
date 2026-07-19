@@ -18,6 +18,9 @@ from ai_drama_web.suppliers.image_options import ImageOptionError, resolve_image
 from ai_drama_runtime.store import now_iso
 
 
+TEXT_GENERATION_WORKER_TIMEOUT_SECONDS = 180
+
+
 class M6GenerationError(RuntimeError):
     def __init__(self, code):
         super().__init__(code)
@@ -111,12 +114,20 @@ class M6GenerationCoordinator:
                     )
                 except ImageOptionError as exc:
                     raise M6GenerationError(exc.code) from exc
+        timeout_seconds = (
+            TEXT_GENERATION_WORKER_TIMEOUT_SECONDS
+            if resolved.revision.capability == "text"
+            else 30
+        )
         return SnapshotBuilder(self.store).build(
             resolved,
             credential_resolution_mode="current",
             resolved_credential_version_id=credential_id,
             resolved_constraints=constraints or {},
-            worker_limits={"timeout_seconds": 30, "max_output_bytes": 4 * 1024 * 1024},
+            worker_limits={
+                "timeout_seconds": timeout_seconds,
+                "max_output_bytes": 4 * 1024 * 1024,
+            },
         )
 
     def _read_json_object(self, object_id):

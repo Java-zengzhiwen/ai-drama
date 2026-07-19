@@ -1067,7 +1067,7 @@ def test_gateway_rebuilds_worker_limits_from_snapshot_and_rejects_override(tmp_p
     worker = Worker()
     gateway = SnapshotExecutionGateway(store, coordinator.credentials, worker=worker)
     gateway.invoke(record.snapshot_hash, "textRequest", {"prompt": "x"})
-    assert worker.received.timeout_seconds == 30
+    assert worker.received.timeout_seconds == 180
     assert worker.received.max_output_bytes == 4 * 1024 * 1024
     with pytest.raises(SupplierRuntimeUnavailable, match="SUPPLIER_RUNTIME_UNAVAILABLE"):
         gateway.invoke(record.snapshot_hash, "textRequest", {"prompt": "x"}, limits=WorkerLimits(timeout_seconds=1))

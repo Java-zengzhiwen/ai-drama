@@ -1081,10 +1081,14 @@ body {
   color: #98a2b3;
 }
 
-.source-duration-control strong {
-  min-width: 24px;
+.source-duration-control select {
+  min-width: 92px;
+  border: 0;
+  outline: 0;
   color: #172033;
-  font-size: 14px;
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
 }
 
 .source-duration-control small {

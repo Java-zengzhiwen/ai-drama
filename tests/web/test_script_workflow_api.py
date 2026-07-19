@@ -138,6 +138,41 @@ def test_script_workflow_generates_lists_edits_and_approves_current_revision(cli
     assert by_id[edited["revision_id"]]["current"] is True
 
 
+def test_script_generation_freezes_selected_target_duration_in_production_brief(client):
+    _, chapter = _create_chapter_with_source(client)
+
+    response = client.post(
+        f"/api/chapters/{chapter['chapter_id']}/script/generate",
+        json={"target_duration_minutes": 5},
+    )
+
+    assert response.status_code == 200
+    from ai_drama_runtime.store import RuntimeStore
+
+    data_root = client.app.state.settings.data_root
+    with RuntimeStore(data_root / "runtime.db", data_root / "objects") as runtime:
+        run = runtime.conn.execute(
+            "SELECT run_id FROM runs WHERE chapter_id = ? ORDER BY rowid DESC LIMIT 1",
+            (chapter["chapter_id"],),
+        ).fetchone()
+        snapshots = {
+            item.logical_type: runtime.read_text(item.object_id)
+            for item in runtime.input_snapshots(run["run_id"])
+        }
+    assert "本次改编目标时长：5 分钟" in snapshots["production_brief"]
+
+
+def test_script_generation_rejects_target_duration_outside_three_to_eight_minutes(client):
+    _, chapter = _create_chapter_with_source(client)
+
+    response = client.post(
+        f"/api/chapters/{chapter['chapter_id']}/script/generate",
+        json={"target_duration_minutes": 9},
+    )
+
+    assert response.status_code == 422
+
+
 def test_script_workflow_maps_gate_and_approval_errors(client):
     project = client.post("/api/projects", json={"name": "生死"}).json()
     chapter = client.post(
