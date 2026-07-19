@@ -193,14 +193,16 @@ export function ScriptTab({ activeRun = null, chapter, onGenerationCompleted, on
       ) : null}
 
       <div className="production-command-bar">
-        <Button
-          disabled={!chapter.current_source_revision_id || isScriptMutating}
-          loading={generateMutation.isPending}
-          onClick={() => generateMutation.mutate()}
-          type="primary"
-        >
-          生成剧本
-        </Button>
+        {!stream.active ? (
+          <Button
+            disabled={!chapter.current_source_revision_id || isScriptMutating}
+            loading={generateMutation.isPending}
+            onClick={() => generateMutation.mutate()}
+            type="primary"
+          >
+            生成剧本
+          </Button>
+        ) : null}
         {selectedRevision ? <StatusChip status={selectedRevision.approval_status} /> : null}
       </div>
 

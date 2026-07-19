@@ -762,6 +762,54 @@ class RuntimeStore:
         self.conn.commit()
         return self.get_revision(values["revision_id"])
 
+    def insert_validated_script_revision(self, *, revision_values, validations):
+        """Atomically publish one validated script revision and its evidence.
+
+        Candidate validation happens before this method is called.  Keeping the
+        revision insert, validation rows, and successful run status in one
+        transaction prevents a failed or interrupted candidate from entering
+        the formal revision chain.
+        """
+        values = dict(revision_values)
+        rows = [dict(item) for item in validations]
+        with self.conn:
+            number = self.conn.execute(
+                "SELECT COALESCE(MAX(number), 0) + 1 AS n FROM revisions WHERE artifact_id = ?",
+                (values["artifact_id"],),
+            ).fetchone()
+            previous = self.conn.execute(
+                "SELECT revision_id FROM revisions WHERE artifact_id = ? ORDER BY number DESC LIMIT 1",
+                (values["artifact_id"],),
+            ).fetchone()
+            values.setdefault("revision_id", uuid.uuid4().hex)
+            values["number"] = int(number["n"])
+            values["supersedes_revision_id"] = (
+                previous["revision_id"] if previous else ""
+            )
+            values.setdefault("approval_status", "pending")
+            values.setdefault("derivation_type", "model_generation")
+            values.setdefault("content_profile", "markdown-script-mvp-v1")
+            values.setdefault("created_at", now_iso())
+            columns = list(values)
+            self.conn.execute(
+                "INSERT INTO revisions (%s) VALUES (%s)"
+                % (",".join(columns), ",".join("?" for _ in columns)),
+                [values[column] for column in columns],
+            )
+            for row in rows:
+                row["revision_id"] = values["revision_id"]
+                columns = list(row)
+                self.conn.execute(
+                    "INSERT INTO validation_results (%s) VALUES (%s)"
+                    % (",".join(columns), ",".join("?" for _ in columns)),
+                    [row[column] for column in columns],
+                )
+            self.conn.execute(
+                "UPDATE runs SET status = 'SUCCEEDED', completed_at = ? WHERE run_id = ?",
+                (now_iso(), values["run_id"]),
+            )
+        return self.get_revision(values["revision_id"])
+
     def insert_validation(self, **values):
         values.setdefault("validation_id", uuid.uuid4().hex)
         values.setdefault("created_at", now_iso())

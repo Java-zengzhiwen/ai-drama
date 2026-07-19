@@ -36,6 +36,13 @@ class FakeStreamingGateway:
         }
 
 
+class InvalidStreamingGateway:
+    def invoke_stream(self, snapshot_hash, operation, request):
+        yield {"type": "started", "sequence": 0}
+        yield {"type": "text_delta", "sequence": 1, "text": "# 第一场\n太短"}
+        yield {"type": "completed", "sequence": 2, "evidence": {}}
+
+
 def _runner_fixture(tmp_path):
     repo_root = Path(__file__).resolve().parents[2]
     runtime = RuntimeStore(tmp_path / "runtime.db", tmp_path / "objects")
@@ -93,6 +100,8 @@ def test_runner_persists_before_provider_and_creates_one_validated_revision(tmp_
     assert session["status"] == "completed"
     assert session["revision_id"]
     revision = runtime.get_revision(session["revision_id"])
+    assert revision.number == 1
+    assert revision.supersedes_revision_id == ""
     assert runtime.read_text(revision.content_object_id).startswith("# Mock Drama Script")
     required = [row for row in runtime.validation_results(revision.revision_id) if row.required]
     assert required and all(row.status == "PASS" for row in required)
@@ -113,6 +122,23 @@ def test_streaming_request_keeps_skill_inputs_and_target_duration(tmp_path):
     assert "本次改编目标时长：4 分钟" in inputs["production_brief"]
     assert {"source_chapter", "series_canon", "characters", "production_brief"} <= set(inputs)
     assert runtime.get_run(prepared.run_id).status == "RUNNING"
+
+
+def test_required_validation_failure_never_enters_formal_revision_chain(tmp_path):
+    repo_root, runtime, store, prepared = _runner_fixture(tmp_path)
+    runner = ScriptGenerationRunner(
+        store, runtime, repo_root=repo_root, gateway=InvalidStreamingGateway()
+    )
+
+    result = runner.run_cycle()
+
+    assert result.failed == 1
+    assert runtime.get_run(prepared.run_id).status == "VALIDATION_FAILED"
+    assert runtime.revisions_for_artifact(prepared.artifact_id) == []
+    session = store.get_script_generation_run("session-1")
+    assert session["status"] == "failed"
+    assert session["revision_id"] == ""
+    assert store.list_script_generation_events("session-1")[-1]["event_type"] == "failed"
 
 
 def test_stream_display_waits_for_a_markdown_heading_and_hides_wrappers():
@@ -155,3 +181,23 @@ def test_recovery_completes_a_finalized_revision_without_resubmitting(tmp_path):
     assert recovered["status"] == "completed"
     assert recovered["revision_id"] == revision_id
     assert gateway.submit_count == 1
+
+
+def test_recovery_emits_terminal_failure_for_a_rejected_candidate(tmp_path):
+    _repo_root, runtime, store, prepared = _runner_fixture(tmp_path)
+    store.transition_script_generation_run(
+        "session-1", expected_statuses=("prepared",), status="finalizing"
+    )
+    runtime.update_run(
+        prepared.run_id,
+        status="VALIDATION_FAILED",
+        error_code="VALIDATION_REQUIRED_FAILED",
+    )
+
+    report = store.recover_script_generation_runs()
+
+    assert report == {"unknown_outcome": 0}
+    session = store.get_script_generation_run("session-1")
+    assert session["status"] == "failed"
+    assert session["revision_id"] == ""
+    assert store.list_script_generation_events("session-1")[-1]["event_type"] == "failed"

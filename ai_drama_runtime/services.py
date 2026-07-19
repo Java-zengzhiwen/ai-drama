@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import time
 import uuid
-from .store import now_iso
+from .store import RevisionRecord, ValidationRecord, now_iso
 
 from .acceptance import load_acceptance_bundle
 from .parser import (
@@ -115,6 +115,39 @@ class PreparedScriptExecution:
     skill: object
     validation_root: Path
     started_at: float
+
+
+class _CandidateValidationStore:
+    """Collect validator results without publishing a formal revision."""
+
+    def __init__(self, store):
+        self._store = store
+        self.records = []
+
+    def __getattr__(self, name):
+        return getattr(self._store, name)
+
+    def insert_validation(self, **values):
+        values = dict(values)
+        values.setdefault("validation_id", uuid.uuid4().hex)
+        values.setdefault("created_at", now_iso())
+        record = ValidationRecord(
+            validation_id=values["validation_id"],
+            revision_id=values["revision_id"],
+            validator_id=values["validator_id"],
+            validator_name=values["validator_name"],
+            status=values["status"],
+            required=bool(values["required"]),
+            exit_code=int(values["exit_code"]),
+            error_code=values["error_code"],
+            duration_ms=int(values["duration_ms"]),
+            stdout_object_id=values["stdout_object_id"],
+            stderr_object_id=values["stderr_object_id"],
+            report_object_id=values["report_object_id"],
+            created_at=values["created_at"],
+        )
+        self.records.append(record)
+        return record
 
 
 def _approved_approval_record(store, revision_id):
@@ -851,7 +884,7 @@ class RuntimeService:
             ),
         )
         normalized_usage.setdefault("raw", dict(usage or {}))
-        return self._finalize_prepared_script(
+        return self._finalize_prepared_script_candidate_first(
             prepared,
             RuntimeResponse(
                 raw=output,
@@ -860,6 +893,108 @@ class RuntimeService:
                 usage=normalized_usage,
                 duration_ms=int(duration_ms),
             ),
+        )
+
+    def _finalize_prepared_script_candidate_first(self, prepared, response):
+        """Validate a streamed candidate before it enters the revision chain."""
+        request_json = prepared.runtime_request.to_json()
+        response_object_id = self.store.write_text_object(response.raw)
+        try:
+            script_text = parse_script_response(response.raw)
+        except ParseError as exc:
+            run = self.store.update_run(
+                prepared.run_id,
+                status="PARSE_FAILED",
+                response_object_id=response_object_id,
+                provider=response.provider,
+                model=response.model,
+                duration_ms=response.duration_ms,
+                error_code=exc.code,
+                error_message=str(exc),
+            )
+            return RunResult(
+                run=run,
+                revision=None,
+                validation_results=[],
+                adapter_request_json=request_json,
+            )
+
+        content_object_id = self.store.write_text_object(script_text)
+        candidate_id = uuid.uuid4().hex
+        run = self.store.update_run(
+            prepared.run_id,
+            status="VALIDATING",
+            response_object_id=response_object_id,
+            provider=response.provider,
+            model=response.model,
+            duration_ms=response.duration_ms,
+            usage_status=response.usage.get("usage_status", "NOT_PROVIDED"),
+            prompt_tokens=int(response.usage.get("prompt_tokens") or 0),
+            completion_tokens=int(response.usage.get("completion_tokens") or 0),
+            total_tokens=int(response.usage.get("total_tokens") or 0),
+            usage_raw_object_id=self.store.write_text_object(
+                json.dumps(response.usage.get("raw") or {}, ensure_ascii=False, sort_keys=True)
+            ),
+        )
+        candidate = RevisionRecord(
+            revision_id=candidate_id,
+            artifact_id=prepared.artifact_id,
+            artifact_type="drama_script",
+            project_id=prepared.project_id,
+            chapter_id=prepared.chapter_id,
+            run_id=run.run_id,
+            skill_id=prepared.skill.skill_id,
+            skill_version=prepared.skill.version,
+            skill_package_hash=prepared.skill.content_hash,
+            runtime_provider=response.provider,
+            runtime_model=response.model,
+            number=0,
+            content_object_id=content_object_id,
+            content_hash=_sha256_text(script_text),
+            raw_response_object_id=response_object_id,
+            parser_version=PARSER_VERSION,
+            content_profile="markdown-script-mvp-v1",
+            derivation_type="model_generation",
+            supersedes_revision_id="",
+            approval_status="pending",
+            created_at=now_iso(),
+        )
+        validation_store = _CandidateValidationStore(self.store)
+        validations = run_declared_validators(
+            validation_store,
+            prepared.skill,
+            candidate,
+            prepared.validation_root,
+            repo_root=self.repo_root,
+        )
+        blocking = [
+            item for item in validations if item.required and item.status != "PASS"
+        ]
+        if blocking:
+            validator_ids = ", ".join(item.validator_id for item in blocking)
+            run = self.store.update_run(
+                run.run_id,
+                status="VALIDATION_FAILED",
+                error_code="VALIDATION_REQUIRED_FAILED",
+                error_message="required validators did not pass: %s" % validator_ids,
+            )
+            return RunResult(
+                run=run,
+                revision=None,
+                validation_results=validations,
+                adapter_request_json=request_json,
+            )
+
+        revision_values = dict(candidate.__dict__)
+        revision = self.store.insert_validated_script_revision(
+            revision_values=revision_values,
+            validations=[dict(item.__dict__) for item in validation_store.records],
+        )
+        return RunResult(
+            run=self.store.get_run(run.run_id),
+            revision=revision,
+            validation_results=self.store.validation_results(revision.revision_id),
+            adapter_request_json=request_json,
         )
 
     def run_acceptance(self, skill, acceptance_root, runtime, model, mock_mode="success"):

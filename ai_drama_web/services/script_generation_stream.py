@@ -125,6 +125,18 @@ class ScriptGenerationRunner:
             self._fail(claimed, "SUPPLIER_WORKER_PROTOCOL_ERROR")
             return ScriptGenerationCycleResult(started=1, failed=1)
         except Exception as exc:
+            current = self.store.get_script_generation_run(claimed["run_id"])
+            runtime_run = self.runtime.get_run(claimed["runtime_run_id"])
+            if (
+                current is not None
+                and current["status"] == "finalizing"
+                and runtime_run is not None
+                and runtime_run.status == "SUCCEEDED"
+            ):
+                self.store.recover_script_generation_runs()
+                recovered = self.store.get_script_generation_run(claimed["run_id"])
+                if recovered is not None and recovered["status"] == "completed":
+                    return ScriptGenerationCycleResult(started=1, completed=1)
             self._fail(
                 claimed,
                 getattr(exc, "code", "SUPPLIER_EXECUTION_FAILED"),
@@ -210,6 +222,13 @@ class ScriptGenerationRunner:
             duration_ms=int((time.time() - prepared.started_at) * 1000),
         )
         if result.revision is None or result.run.status != "SUCCEEDED":
+            current = self.store.get_script_generation_run(session["run_id"])
+            self.store.append_script_generation_event(
+                session["run_id"],
+                sequence=current["last_sequence"] + 1,
+                event_type="failed",
+                payload={"error_code": result.run.error_code or result.run.status},
+            )
             self.store.transition_script_generation_run(
                 session["run_id"],
                 expected_statuses=("finalizing",),

@@ -556,6 +556,7 @@ describe("chapter source and script workspace tabs", () => {
     expect(screen.getByText("PROVIDER_RESPONSE_MALFORMED")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "复制部分草稿" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "返回原文重新生成" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "生成剧本" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "确认剧本" })).not.toBeInTheDocument();
   });
 

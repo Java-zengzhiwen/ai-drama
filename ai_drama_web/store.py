@@ -3149,6 +3149,21 @@ class ProductStore:
                 "VALIDATION_FAILED",
                 "RUNTIME_FAILED",
             }:
+                current = self.get_script_generation_run(session["run_id"])
+                failed_event = self.conn.execute(
+                    """
+                    SELECT 1 FROM script_generation_events
+                    WHERE run_id = ? AND event_type = 'failed'
+                    """,
+                    (session["run_id"],),
+                ).fetchone()
+                if failed_event is None:
+                    self.append_script_generation_event(
+                        session["run_id"],
+                        sequence=current["last_sequence"] + 1,
+                        event_type="failed",
+                        payload={"error_code": runtime_run.error_code or runtime_run.status},
+                    )
                 self.transition_script_generation_run(
                     session["run_id"],
                     expected_statuses=("finalizing",),
