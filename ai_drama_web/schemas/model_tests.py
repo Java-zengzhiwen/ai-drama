@@ -8,6 +8,8 @@ class ModelTestCreate(BaseModel):
 
     prompt: str = Field(min_length=1, max_length=4000)
     reasoning_effort: str | None = Field(default=None, min_length=1, max_length=16)
+    size: str | None = Field(default=None, min_length=1, max_length=24)
+    quality: str | None = Field(default=None, min_length=1, max_length=16)
 
 
 class ModelTestFeatureStatus(BaseModel):
@@ -32,3 +34,5 @@ class ModelTestRead(BaseModel):
     error_code: str = ""
     error_message: str = ""
     reasoning_effort: str = ""
+    size: str = ""
+    quality: str = ""

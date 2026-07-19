@@ -1,3 +1,5 @@
+import hashlib
+import json
 import pytest
 import time
 from fastapi.testclient import TestClient
@@ -259,7 +261,7 @@ def test_text_model_test_override_wins_and_is_frozen_for_audit(tmp_path):
     runtime.close()
 
 
-def test_text_model_test_uses_model_default_before_supplier_default(tmp_path):
+def test_text_model_test_uses_supplier_default_before_model_default(tmp_path):
     runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
     supplier = store.get_supplier(snapshot.supplier_id)
     model = store.get_supplier_model(snapshot.supplier_model_id)
@@ -275,6 +277,14 @@ def test_text_model_test_uses_model_default_before_supplier_default(tmp_path):
         acknowledged_binding_count=0,
     )
     current = store.get_supplier_model(model.supplier_model_id)
+    config_raw = json.dumps({"reasoning_effort": "medium"}, separators=(",", ":"))
+    config_object_id = runtime.write_text_object(config_raw)
+    store.replace_supplier_config(
+        supplier.supplier_id,
+        config_object_id=config_object_id,
+        config_hash=hashlib.sha256(config_raw.encode()).hexdigest(),
+        expected_revision=supplier.config_revision,
+    )
 
     run, _created = ModelTestService(store).create_model_test(
         supplier_model_id=model.supplier_model_id,
@@ -284,7 +294,7 @@ def test_text_model_test_uses_model_default_before_supplier_default(tmp_path):
     )
 
     persisted = load_snapshot(store, run["snapshot_hash"])
-    assert persisted.resolved_constraints["reasoning_effort"] == "low"
+    assert persisted.resolved_constraints["reasoning_effort"] == "medium"
     runtime.close()
 
 
@@ -389,8 +399,77 @@ def test_image_service_uses_provider_neutral_default_size(tmp_path):
     )
 
     assert runtime.read_text(run["request_object_id"]) == (
-        '{"prompt":"a cup","size":"1024x768","test_contract_version":"model-test-v1"}'
+        '{"prompt":"a cup","quality":"auto","size":"1024x768",'
+        '"test_contract_version":"model-test-v1"}'
     )
+    assert ModelTestService(store).safe_read(run["test_run_id"])["size"] == "1024x768"
+    assert ModelTestService(store).safe_read(run["test_run_id"])["quality"] == "auto"
+    runtime.close()
+
+
+def test_image_model_test_override_is_frozen_and_auditable(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(
+        tmp_path, capability="image"
+    )
+    supplier = store.get_supplier(snapshot.supplier_id)
+    model = store.get_supplier_model(snapshot.supplier_model_id)
+    revision = store.get_supplier_model_revision(model.current_model_revision_id)
+    ModelCatalogService(store).revise_model(
+        model.supplier_model_id,
+        provider_model_name=revision.provider_model_name,
+        display_name=revision.display_name,
+        capability="image",
+        definition={
+            "default_size": "1024x1024",
+            "constraints": {
+                "supported_sizes": ["auto", "1024x1024", "1024x1536", "1536x1024"],
+                "default_quality": "auto",
+                "supported_qualities": ["auto", "low", "medium", "high"],
+            },
+        },
+        expected_catalog_revision=supplier.model_catalog_revision,
+        expected_model_revision=model.revision,
+        acknowledged_binding_count=0,
+    )
+    current = store.get_supplier_model(model.supplier_model_id)
+
+    run, created = ModelTestService(store).create_model_test(
+        supplier_model_id=model.supplier_model_id,
+        prompt="a cup",
+        size="1024x1536",
+        quality="high",
+        idempotency_key="image-options",
+        expected_model_revision=current.revision,
+    )
+
+    assert created is True
+    persisted = load_snapshot(store, run["snapshot_hash"])
+    assert persisted.resolved_constraints == {"size": "1024x1536", "quality": "high"}
+    safe = ModelTestService(store).safe_read(run["test_run_id"])
+    assert safe["size"] == "1024x1536"
+    assert safe["quality"] == "high"
+    assert runtime.read_text(run["request_object_id"]) == (
+        '{"prompt":"a cup","quality":"high","size":"1024x1536",'
+        '"test_contract_version":"model-test-v1"}'
+    )
+    runtime.close()
+
+
+def test_text_model_test_rejects_image_options_before_writing_run(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
+
+    with pytest.raises(ModelTestError, match="MODEL_TEST_IMAGE_OPTIONS_UNSUPPORTED"):
+        ModelTestService(store).create_model_test(
+            supplier_model_id=snapshot.supplier_model_id,
+            prompt="hello",
+            size="1024x1024",
+            idempotency_key="text-image-options",
+            expected_model_revision=1,
+        )
+
+    assert store.conn.execute(
+        "SELECT count(*) FROM supplier_model_test_runs"
+    ).fetchone()[0] == 0
     runtime.close()
 
 
@@ -829,7 +908,7 @@ def test_image_model_test_content_is_local_and_private(tmp_path, monkeypatch):
                 "Idempotency-Key": "api-image-key",
                 "If-Match": f'"model-{model.supplier_model_id}-1"',
             },
-            json={"prompt": "a cup"},
+            json={"prompt": "a cup", "size": "1024x1536", "quality": "high"},
         )
         terminal = _wait_for_terminal(client, response.json()["test_run_id"])
         content = client.get(
@@ -838,6 +917,8 @@ def test_image_model_test_content_is_local_and_private(tmp_path, monkeypatch):
 
     assert terminal["status"] == "completed"
     assert terminal["media_type"] == "image/png"
+    assert terminal["size"] == "1024x1536"
+    assert terminal["quality"] == "high"
     assert content.status_code == 200
     assert content.content.startswith(b"\x89PNG\r\n\x1a\n")
     assert content.headers["content-type"] == "image/png"

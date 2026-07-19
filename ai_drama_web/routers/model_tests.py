@@ -40,6 +40,8 @@ async def create_model_test(
             supplier_model_id=supplier_model_id,
             prompt=payload.prompt,
             reasoning_effort=payload.reasoning_effort,
+            size=payload.size,
+            quality=payload.quality,
             idempotency_key=idempotency_key,
             expected_model_revision=revision,
         )
@@ -118,7 +120,13 @@ def _model_revision(header, model_id):
 def _model_test_error(exc):
     if exc.code in {"MODEL_NOT_FOUND", "MODEL_TEST_NOT_FOUND"}:
         status = 404
-    elif exc.code in {"INVALID_REASONING_EFFORT", "MODEL_TEST_REASONING_UNSUPPORTED"}:
+    elif exc.code in {
+        "INVALID_REASONING_EFFORT",
+        "INVALID_IMAGE_SIZE",
+        "INVALID_IMAGE_QUALITY",
+        "MODEL_TEST_REASONING_UNSUPPORTED",
+        "MODEL_TEST_IMAGE_OPTIONS_UNSUPPORTED",
+    }:
         status = 422
     else:
         status = 409
@@ -138,7 +146,10 @@ def _safe_message(code):
         "CREDENTIAL_STORAGE_CORRUPT": "供应商密钥存储异常。",
         "SUPPLIER_OPERATION_UNAVAILABLE": "适配代码未导出该模型能力。",
         "SUPPLIER_RUNTIME_UNAVAILABLE": "供应商运行时不可用。",
-        "INVALID_REASONING_EFFORT": "思考深度只支持低、中、高。",
+        "INVALID_REASONING_EFFORT": "当前模型不支持所选思考深度。",
+        "INVALID_IMAGE_SIZE": "当前图片模型不支持所选尺寸。",
+        "INVALID_IMAGE_QUALITY": "当前图片模型不支持所选质量。",
         "MODEL_TEST_REASONING_UNSUPPORTED": "当前模型能力不支持思考深度。",
+        "MODEL_TEST_IMAGE_OPTIONS_UNSUPPORTED": "当前模型能力不支持图片尺寸或质量。",
     }
     return messages.get(code, "模型测试无法启动。")
