@@ -49,6 +49,7 @@ M6A_SUPPLIER_FINGERPRINT_MIGRATION_ID = "m6a_supplier_runtime_fingerprint_v2"
 M6B_MODEL_CATALOG_MIGRATION_ID = "m6b_model_catalog_binding_v1"
 M6C_ADAPTER_CUTOVER_MIGRATION_ID = "m6c_adapter_cutover_v1"
 M6C_SUBMISSION_STATE_MIGRATION_ID = "m6c_submission_state_v2"
+STREAMING_SCRIPT_GENERATION_MIGRATION_ID = "streaming_script_generation_v1"
 BUILTIN_SUPPLIERS = (
     ("agnes", "Agnes"),
     ("anthropic", "Anthropic"),
@@ -56,6 +57,10 @@ BUILTIN_SUPPLIERS = (
     ("openai", "OpenAI"),
     ("xai", "xAI Grok"),
 )
+
+
+class ScriptGenerationConflict(RuntimeError):
+    pass
 
 
 class ProductStore:
@@ -234,6 +239,36 @@ class ProductStore:
               error_code TEXT NOT NULL DEFAULT '',
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS script_generation_runs (
+              run_id TEXT PRIMARY KEY,
+              project_id TEXT NOT NULL REFERENCES projects(project_id) ON DELETE RESTRICT,
+              chapter_id TEXT NOT NULL REFERENCES chapters(chapter_id) ON DELETE RESTRICT,
+              source_revision_id TEXT NOT NULL REFERENCES chapter_source_revisions(source_revision_id) ON DELETE RESTRICT,
+              runtime_run_id TEXT NOT NULL UNIQUE,
+              supplier_text_run_id TEXT NOT NULL DEFAULT '',
+              snapshot_hash TEXT NOT NULL DEFAULT '',
+              idempotency_key TEXT NOT NULL UNIQUE,
+              status TEXT NOT NULL CHECK (status IN ('prepared','submitting','streaming','finalizing','completed','failed','unknown_outcome')),
+              last_sequence INTEGER NOT NULL DEFAULT 0,
+              character_count INTEGER NOT NULL DEFAULT 0,
+              revision_id TEXT NOT NULL DEFAULT '',
+              error_code TEXT NOT NULL DEFAULT '',
+              evidence_object_id TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS script_generation_runs_status_idx
+              ON script_generation_runs(status, created_at, run_id);
+            CREATE TABLE IF NOT EXISTS script_generation_events (
+              run_id TEXT NOT NULL REFERENCES script_generation_runs(run_id) ON DELETE RESTRICT,
+              sequence INTEGER NOT NULL,
+              event_type TEXT NOT NULL CHECK (event_type IN ('stage','text_delta','usage','failed','revision_completed')),
+              payload_object_id TEXT NOT NULL,
+              payload_hash TEXT NOT NULL,
+              byte_length INTEGER NOT NULL,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY (run_id, sequence)
             );
             CREATE TABLE IF NOT EXISTS schema_migrations (
               migration_id TEXT PRIMARY KEY,
@@ -444,7 +479,19 @@ class ProductStore:
         self._apply_model_catalog_binding_migration()
         self._apply_m6c_adapter_cutover_migration()
         self._apply_m6c_submission_state_migration()
+        self._apply_streaming_script_generation_migration()
         self.conn.commit()
+
+    def _apply_streaming_script_generation_migration(self):
+        if self.conn.execute(
+            "SELECT 1 FROM schema_migrations WHERE migration_id = ?",
+            (STREAMING_SCRIPT_GENERATION_MIGRATION_ID,),
+        ).fetchone():
+            return
+        self.conn.execute(
+            "INSERT INTO schema_migrations (migration_id, applied_at) VALUES (?, ?)",
+            (STREAMING_SCRIPT_GENERATION_MIGRATION_ID, now_iso()),
+        )
 
     def _apply_m6c_submission_state_migration(self):
         if self.conn.execute("SELECT 1 FROM schema_migrations WHERE migration_id = ?", (M6C_SUBMISSION_STATE_MIGRATION_ID,)).fetchone():
@@ -2649,6 +2696,257 @@ class ProductStore:
         )
         self.conn.commit()
         return self.get_supplier_text_run(run_id)
+
+    def create_script_generation_run(
+        self,
+        *,
+        run_id,
+        project_id,
+        chapter_id,
+        source_revision_id,
+        runtime_run_id,
+        idempotency_key,
+    ):
+        created_at = now_iso()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            replay = self.conn.execute(
+                "SELECT * FROM script_generation_runs WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+            if replay is not None:
+                expected = (project_id, chapter_id, source_revision_id)
+                observed = (
+                    replay["project_id"],
+                    replay["chapter_id"],
+                    replay["source_revision_id"],
+                )
+                if observed != expected:
+                    raise ScriptGenerationConflict("SCRIPT_GENERATION_IDEMPOTENCY_CONFLICT")
+                self.conn.commit()
+                return dict(replay)
+            self.conn.execute(
+                """
+                INSERT INTO script_generation_runs
+                (run_id, project_id, chapter_id, source_revision_id,
+                 runtime_run_id, idempotency_key, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?, ?)
+                """,
+                (
+                    run_id,
+                    project_id,
+                    chapter_id,
+                    source_revision_id,
+                    runtime_run_id,
+                    idempotency_key,
+                    created_at,
+                    created_at,
+                ),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return self.get_script_generation_run(run_id)
+
+    def bind_script_generation_snapshot(
+        self, run_id, *, supplier_text_run_id, snapshot_hash
+    ):
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                UPDATE script_generation_runs
+                SET supplier_text_run_id = ?, snapshot_hash = ?, updated_at = ?
+                WHERE run_id = ? AND status = 'prepared'
+                  AND supplier_text_run_id = '' AND snapshot_hash = ''
+                """,
+                (supplier_text_run_id, snapshot_hash, now_iso(), run_id),
+            )
+            if cursor.rowcount != 1:
+                current = self.get_script_generation_run(run_id)
+                if current is None:
+                    raise ScriptGenerationConflict("SCRIPT_GENERATION_NOT_FOUND")
+                if (
+                    current["supplier_text_run_id"] != supplier_text_run_id
+                    or current["snapshot_hash"] != snapshot_hash
+                ):
+                    raise ScriptGenerationConflict("SCRIPT_GENERATION_BINDING_CONFLICT")
+        return self.get_script_generation_run(run_id)
+
+    def get_script_generation_run(self, run_id):
+        row = self.conn.execute(
+            "SELECT * FROM script_generation_runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return None if row is None else dict(row)
+
+    def next_prepared_script_generation_run(self):
+        row = self.conn.execute(
+            """
+            SELECT * FROM script_generation_runs
+            WHERE status = 'prepared'
+            ORDER BY created_at, run_id LIMIT 1
+            """
+        ).fetchone()
+        return None if row is None else dict(row)
+
+    def claim_script_generation_run(self, run_id):
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                UPDATE script_generation_runs
+                SET status = 'submitting', updated_at = ?
+                WHERE run_id = ? AND status = 'prepared'
+                """,
+                (now_iso(), run_id),
+            )
+        return self.get_script_generation_run(run_id) if cursor.rowcount == 1 else None
+
+    def append_script_generation_event(
+        self, run_id, *, sequence, event_type, payload
+    ):
+        if event_type not in {
+            "stage",
+            "text_delta",
+            "usage",
+            "failed",
+            "revision_completed",
+        }:
+            raise ScriptGenerationConflict("SCRIPT_EVENT_TYPE_INVALID")
+        payload_raw = _normalized_json(payload)
+        payload_hash = hashlib.sha256(payload_raw.encode("utf-8")).hexdigest()
+        payload_object_id = self.runtime.write_text_object(payload_raw)
+        byte_length = len(payload_raw.encode("utf-8"))
+        created_at = now_iso()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            existing = self.conn.execute(
+                """
+                SELECT * FROM script_generation_events
+                WHERE run_id = ? AND sequence = ?
+                """,
+                (run_id, int(sequence)),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["event_type"] != event_type
+                    or existing["payload_hash"] != payload_hash
+                ):
+                    raise ScriptGenerationConflict("STREAM_SEQUENCE_CONFLICT")
+                self.conn.commit()
+                return dict(existing)
+            current = self.conn.execute(
+                "SELECT * FROM script_generation_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if current is None:
+                raise ScriptGenerationConflict("SCRIPT_GENERATION_NOT_FOUND")
+            if int(sequence) != int(current["last_sequence"]) + 1:
+                raise ScriptGenerationConflict("STREAM_SEQUENCE_CONFLICT")
+            text_length = (
+                len(payload.get("text", ""))
+                if event_type == "text_delta"
+                and isinstance(payload, dict)
+                and isinstance(payload.get("text"), str)
+                else 0
+            )
+            self.conn.execute(
+                """
+                INSERT INTO script_generation_events
+                (run_id, sequence, event_type, payload_object_id, payload_hash,
+                 byte_length, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    int(sequence),
+                    event_type,
+                    payload_object_id,
+                    payload_hash,
+                    byte_length,
+                    created_at,
+                ),
+            )
+            self.conn.execute(
+                """
+                UPDATE script_generation_runs
+                SET last_sequence = ?, character_count = character_count + ?,
+                    updated_at = ?
+                WHERE run_id = ?
+                """,
+                (int(sequence), text_length, created_at, run_id),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return dict(
+            self.conn.execute(
+                """
+                SELECT * FROM script_generation_events
+                WHERE run_id = ? AND sequence = ?
+                """,
+                (run_id, int(sequence)),
+            ).fetchone()
+        )
+
+    def list_script_generation_events(self, run_id, *, after_sequence=0):
+        rows = self.conn.execute(
+            """
+            SELECT * FROM script_generation_events
+            WHERE run_id = ? AND sequence > ?
+            ORDER BY sequence
+            """,
+            (run_id, int(after_sequence)),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def transition_script_generation_run(
+        self,
+        run_id,
+        *,
+        expected_statuses,
+        status,
+        revision_id="",
+        error_code="",
+        evidence_object_id="",
+    ):
+        expected = tuple(expected_statuses)
+        if not expected:
+            raise ScriptGenerationConflict("SCRIPT_STATUS_CONFLICT")
+        placeholders = ",".join("?" for _ in expected)
+        with self.conn:
+            cursor = self.conn.execute(
+                f"""
+                UPDATE script_generation_runs
+                SET status = ?, revision_id = ?, error_code = ?,
+                    evidence_object_id = ?, updated_at = ?
+                WHERE run_id = ? AND status IN ({placeholders})
+                """,
+                (
+                    status,
+                    revision_id,
+                    error_code,
+                    evidence_object_id,
+                    now_iso(),
+                    run_id,
+                    *expected,
+                ),
+            )
+        if cursor.rowcount != 1:
+            raise ScriptGenerationConflict("SCRIPT_STATUS_CONFLICT")
+        return self.get_script_generation_run(run_id)
+
+    def recover_script_generation_runs(self):
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                UPDATE script_generation_runs
+                SET status = 'unknown_outcome',
+                    error_code = 'SUBMISSION_OUTCOME_UNKNOWN', updated_at = ?
+                WHERE status IN ('submitting','streaming','finalizing')
+                """,
+                (now_iso(),),
+            )
+        return {"unknown_outcome": cursor.rowcount}
 
     def get_generation_job(self, job_id):
         row = self.conn.execute("SELECT * FROM generation_jobs WHERE job_id = ?", (job_id,)).fetchone()

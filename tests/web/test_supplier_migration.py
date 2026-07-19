@@ -20,6 +20,8 @@ def test_supplier_core_migration_is_replayable_and_preserves_legacy_rows(tmp_pat
             "supplier_config_revisions",
             "credential_versions",
             "credential_migration_journal",
+            "script_generation_runs",
+            "script_generation_events",
         )
     }
     ProductStore(runtime)
@@ -35,3 +37,6 @@ def test_supplier_core_migration_is_replayable_and_preserves_legacy_rows(tmp_pat
     assert runtime.conn.execute(
         "SELECT migration_id FROM schema_migrations WHERE migration_id = 'm6a_supplier_core_v1'"
     ).fetchone()["migration_id"] == "m6a_supplier_core_v1"
+    assert runtime.conn.execute(
+        "SELECT migration_id FROM schema_migrations WHERE migration_id = 'streaming_script_generation_v1'"
+    ).fetchone()["migration_id"] == "streaming_script_generation_v1"
