@@ -1005,7 +1005,7 @@
       "active_or_reference": "support",
       "baseline_status": "SUPPORT_TOOL",
       "notes": "read-only target hash verification tool",
-      "sha256": "204a9e1ca3dffc7119acea8f381f53b13e05f9e24bfa740a0a49eb4bf3b7f4ac"
+      "sha256": "eeb0295c090dd2054d14ee508153c04c5cbb4c686ed71dbb48d0414d379c7899"
     },
     {
       "source_root": null,
