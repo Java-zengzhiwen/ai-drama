@@ -1,4 +1,6 @@
 from dataclasses import replace
+import hashlib
+import json
 
 import pytest
 
@@ -17,6 +19,7 @@ from ai_drama_web.suppliers.snapshots import (
 from ai_drama_web.suppliers.execution import SnapshotExecutionGateway
 from ai_drama_web.suppliers.worker import SupplierInvocationResult
 from ai_drama_web.suppliers.credentials import SupplierCredentialStore
+from ai_drama_web.suppliers.compiler import compile_supplier
 from tests.web.model_test_support import create_model, install_test_supplier_runtime
 
 
@@ -35,6 +38,83 @@ def _resolved(tmp_path):
         expected_revision=0,
     )
     return runtime, store, ModelResolver(store).resolve(project.project_id, "script_adaptation")
+
+
+def _resolved_stream(tmp_path):
+    runtime = RuntimeStore(tmp_path / "stream-runtime.db", tmp_path / "stream-objects")
+    store = ProductStore(runtime)
+    project = store.create_project(name="Stream Snapshot")
+    supplier = store.list_suppliers()[0]
+    source = """
+export const vendor = {
+  id: "stream-runtime", version: "1", name: "Stream Runtime", author: "Test",
+  adapterContractVersion: "ai-drama-supplier-v1",
+  helperApiVersion: "ai-drama-helper-v3",
+  rateLimitBucketKey: "frozen-stream-bucket", inputs: [], inputValues: {}, models: []
+};
+export async function textRequest() { return { output: "rollback", usage: {} }; }
+export async function textStream() { return {}; }
+""".strip()
+    artifact = compile_supplier(source, runtime_store=runtime)
+    store.replace_supplier_version(
+        supplier.supplier_id,
+        source_object_id=artifact.source_object_id,
+        source_hash=artifact.source_hash,
+        compiled_artifact_object_id=artifact.compiled_artifact_object_id,
+        compiled_artifact_hash=artifact.compiled_artifact_hash,
+        manifest_hash=artifact.manifest_hash,
+        manifest=artifact.vendor,
+        adapter_contract_version=artifact.adapter_contract_version,
+        worker_protocol_version="2",
+        worker_runtime_version=artifact.worker_runtime_version,
+        compiler_name=artifact.compiler_name,
+        compiler_version=artifact.compiler_version,
+        compiler_options_hash=artifact.compiler_options_hash,
+        helper_api_version=artifact.helper_api_version,
+        rate_limit_bucket_key=artifact.vendor["rateLimitBucketKey"],
+        expected_revision=supplier.revision,
+    )
+    supplier = store.get_supplier(supplier.supplier_id)
+    config_value = json.dumps(
+        {"base_url": "https://frozen.example/v1"},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    config_object_id = runtime.write_text_object(config_value)
+    store.replace_supplier_config(
+        supplier.supplier_id,
+        config_object_id=config_object_id,
+        config_hash=hashlib.sha256(config_value.encode("utf-8")).hexdigest(),
+        expected_revision=supplier.config_revision,
+    )
+    credentials = SupplierCredentialStore(store, tmp_path / "stream-credentials")
+    credential = credentials.replace(
+        supplier.supplier_id,
+        "frozen-credential",
+        expected_revision=supplier.credential_revision,
+    )
+    supplier = store.get_supplier(supplier.supplier_id)
+    model = create_model(
+        store,
+        supplier,
+        capability="text",
+        name="frozen-stream-model",
+        catalog_revision=supplier.model_catalog_revision,
+        key="frozen-stream-model",
+    )
+    ModelBindingService(store).replace(
+        project.project_id,
+        defaults={"text": model.supplier_model_id, "image": "", "video": ""},
+        overrides={},
+        expected_revision=0,
+    )
+    return (
+        runtime,
+        store,
+        credentials,
+        credential,
+        ModelResolver(store).resolve(project.project_id, "script_adaptation"),
+    )
 
 
 def test_snapshot_is_canonical_complete_and_content_addressed(tmp_path):
@@ -284,3 +364,62 @@ def test_snapshot_gateway_passes_frozen_constraints_to_worker(tmp_path):
     gateway.invoke(record.snapshot_hash, "textRequest", {"prompt": "hello"})
 
     assert worker.payload["constraints"] == {"reasoning_effort": "high"}
+
+
+def test_stream_gateway_uses_exact_frozen_snapshot_runtime_and_inputs(tmp_path):
+    _runtime, store, credentials, credential, resolved = _resolved_stream(tmp_path)
+    snapshot = SnapshotBuilder(store).build(
+        resolved,
+        credential_resolution_mode="current",
+        resolved_credential_version_id=credential.credential_version_id,
+        resolved_constraints={"reasoning_effort": "high"},
+        worker_limits={"timeout_seconds": 30},
+    )
+    record = persist_snapshot(store, snapshot)
+
+    current = store.get_supplier(resolved.supplier.supplier_id)
+    credentials.replace(
+        current.supplier_id,
+        "current-but-not-frozen",
+        expected_revision=current.credential_revision,
+    )
+
+    class RecordingStreamWorker:
+        def __init__(self):
+            self.artifact = None
+            self.payload = None
+            self.protocol = None
+
+        def invoke_stream(
+            self,
+            artifact,
+            _operation,
+            payload,
+            *,
+            mode,
+            limits,
+            worker_protocol_version,
+        ):
+            self.artifact = artifact
+            self.payload = payload
+            self.protocol = worker_protocol_version
+            yield {"type": "started", "sequence": 0}
+            yield {"type": "completed", "sequence": 1, "evidence": {}}
+
+    worker = RecordingStreamWorker()
+    gateway = SnapshotExecutionGateway(store, credentials, worker=worker)
+
+    frames = list(
+        gateway.invoke_stream(record.snapshot_hash, "textStream", {"prompt": "hello"})
+    )
+
+    assert frames[-1]["type"] == "completed"
+    assert worker.protocol == "2"
+    assert worker.artifact.helper_api_version == "ai-drama-helper-v3"
+    assert worker.payload == {
+        "request": {"prompt": "hello"},
+        "model": "frozen-stream-model",
+        "config": {"base_url": "https://frozen.example/v1"},
+        "constraints": {"reasoning_effort": "high"},
+        "credential": "frozen-credential",
+    }
