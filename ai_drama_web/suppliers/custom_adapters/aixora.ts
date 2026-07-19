@@ -21,8 +21,13 @@
 type SupplierPayload = {
   model: string;
   credential: string;
-  config: { base_url?: string; reasoning_effort?: string };
-  constraints?: { reasoning_effort?: string };
+  config: {
+    base_url?: string;
+    reasoning_effort?: string;
+    image_size?: string;
+    image_quality?: string;
+  };
+  constraints?: { reasoning_effort?: string; size?: string; quality?: string };
   request: {
     prompt?: string;
     messages?: unknown[];
@@ -50,11 +55,50 @@ export const vendor = {
   rateLimitBucketKey: "aixora-generation",
   inputs: [
     { key: "base_url", label: "Base URL", type: "url", required: true },
-    { key: "reasoning_effort", label: "默认思考深度", type: "text", required: true },
+    {
+      key: "reasoning_effort",
+      label: "默认思考深度",
+      type: "select",
+      required: true,
+      options: [
+        { value: "none", label: "无额外推理" },
+        { value: "low", label: "低" },
+        { value: "medium", label: "中" },
+        { value: "high", label: "高" },
+        { value: "xhigh", label: "超高" },
+        { value: "max", label: "最大" },
+      ],
+    },
+    {
+      key: "image_size",
+      label: "默认图片尺寸",
+      type: "select",
+      required: true,
+      options: [
+        { value: "auto", label: "自动" },
+        { value: "1024x1024", label: "方形 1024 × 1024" },
+        { value: "1024x1536", label: "竖版 1024 × 1536" },
+        { value: "1536x1024", label: "横版 1536 × 1024" },
+      ],
+    },
+    {
+      key: "image_quality",
+      label: "默认图片质量",
+      type: "select",
+      required: true,
+      options: [
+        { value: "auto", label: "自动" },
+        { value: "low", label: "低（更快、费用较低）" },
+        { value: "medium", label: "中（质量与费用平衡）" },
+        { value: "high", label: "高（耗时和费用可能增加）" },
+      ],
+    },
   ],
   inputValues: {
     base_url: "https://www.aixora.store/v1",
     reasoning_effort: "medium",
+    image_size: "1024x1024",
+    image_quality: "auto",
   },
   models: [
     {
@@ -62,35 +106,50 @@ export const vendor = {
       providerModelName: "gpt-5.5",
       displayName: "GPT-5.5",
       capability: "text",
-      constraints: { reasoning_effort: "medium" },
+      constraints: {
+        reasoning_effort: "medium",
+        supported_reasoning_efforts: ["none", "low", "medium", "high", "xhigh"],
+      },
     },
     {
       supplierModelId: "07c95486e414569bb18f694431f3ad4f",
       providerModelName: "gpt-5.6",
       displayName: "GPT-5.6",
       capability: "text",
-      constraints: { reasoning_effort: "medium" },
+      constraints: {
+        reasoning_effort: "medium",
+        supported_reasoning_efforts: ["none", "low", "medium", "high", "xhigh", "max"],
+      },
     },
     {
       supplierModelId: "a1a97eb5b16457c38a1e53ee7459c6de",
       providerModelName: "gpt-5.6-sol",
       displayName: "GPT-5.6 Sol",
       capability: "text",
-      constraints: { reasoning_effort: "medium" },
+      constraints: {
+        reasoning_effort: "medium",
+        supported_reasoning_efforts: ["none", "low", "medium", "high", "xhigh", "max"],
+      },
     },
     {
       supplierModelId: "41f191fa614050daabefd1085cf730aa",
       providerModelName: "gpt-5.6-luna",
       displayName: "GPT-5.6 Luna",
       capability: "text",
-      constraints: { reasoning_effort: "medium" },
+      constraints: {
+        reasoning_effort: "medium",
+        supported_reasoning_efforts: ["none", "low", "medium", "high", "xhigh", "max"],
+      },
     },
     {
       supplierModelId: "ad6e2e9101f35b62800dc8a6ff1cdaaa",
       providerModelName: "gpt-5.6-terra",
       displayName: "GPT-5.6 Terra",
       capability: "text",
-      constraints: { reasoning_effort: "medium" },
+      constraints: {
+        reasoning_effort: "medium",
+        supported_reasoning_efforts: ["none", "low", "medium", "high", "xhigh", "max"],
+      },
     },
     {
       supplierModelId: "e7dc2c3c5a205726ad2b44b583e3aeb9",
@@ -98,7 +157,11 @@ export const vendor = {
       displayName: "GPT Image 2",
       capability: "image",
       default_size: "1024x1024",
-      constraints: {},
+      constraints: {
+        supported_sizes: ["auto", "1024x1024", "1024x1536", "1536x1024"],
+        default_quality: "auto",
+        supported_qualities: ["auto", "low", "medium", "high"],
+      },
     },
   ],
 };
@@ -203,18 +266,26 @@ export async function textRequest(payload: SupplierPayload, helpers: SupplierHel
 }
 
 function imageFields(payload: SupplierPayload): Record<string, string | number> {
-  const size = String(payload.request?.size || "1024x1024");
+  const size = String(
+    payload.request?.size
+      || payload.constraints?.size
+      || payload.config?.image_size
+      || "1024x1024",
+  );
   if (!IMAGE_SIZES.has(size)) fail("INVALID_IMAGE_SIZE");
+  const quality = String(
+    payload.request?.quality
+      || payload.constraints?.quality
+      || payload.config?.image_quality
+      || "auto",
+  );
+  if (!IMAGE_QUALITIES.has(quality)) fail("INVALID_IMAGE_QUALITY");
   const fields: Record<string, string | number> = {
     model: payload.model,
     prompt: String(payload.request?.prompt || ""),
     size,
+    quality,
   };
-  const quality = payload.request?.quality;
-  if (quality !== undefined) {
-    if (!IMAGE_QUALITIES.has(String(quality))) fail("INVALID_IMAGE_QUALITY");
-    fields.quality = String(quality);
-  }
   return fields;
 }
 

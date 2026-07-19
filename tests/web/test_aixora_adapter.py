@@ -88,6 +88,8 @@ def payload(model, *, request=None, config=None, constraints=None):
         "config": config or {
             "base_url": "https://www.aixora.store/v1",
             "reasoning_effort": "medium",
+            "image_size": "1024x1024",
+            "image_quality": "auto",
         },
         "request": request or {"prompt": "hello"},
         "constraints": constraints or {},
@@ -104,19 +106,60 @@ def test_manifest_is_exact_and_stable(artifact):
         ("gpt-5.6-terra", "text"),
         ("gpt-image-2", "image"),
     ]
-    assert [item["key"] for item in artifact.vendor["inputs"]] == ["base_url", "reasoning_effort"]
+    assert [item["key"] for item in artifact.vendor["inputs"]] == [
+        "base_url",
+        "reasoning_effort",
+        "image_size",
+        "image_quality",
+    ]
     assert artifact.vendor["inputValues"] == {
         "base_url": "https://www.aixora.store/v1",
         "reasoning_effort": "medium",
+        "image_size": "1024x1024",
+        "image_quality": "auto",
     }
+    inputs = {item["key"]: item for item in artifact.vendor["inputs"]}
+    assert inputs["reasoning_effort"]["type"] == "select"
+    assert [option["value"] for option in inputs["reasoning_effort"]["options"]] == [
+        "none",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    ]
+    assert [option["value"] for option in inputs["image_size"]["options"]] == [
+        "auto",
+        "1024x1024",
+        "1024x1536",
+        "1536x1024",
+    ]
+    assert [option["value"] for option in inputs["image_quality"]["options"]] == [
+        "auto",
+        "low",
+        "medium",
+        "high",
+    ]
     assert artifact.vendor["models"][1]["supplierModelId"] == "07c95486e414569bb18f694431f3ad4f"
     image_model = next(model for model in artifact.vendor["models"] if model["capability"] == "image")
     assert image_model["default_size"] == "1024x1024"
-    assert all(
-        model["constraints"]["reasoning_effort"] == "medium"
+    assert image_model["constraints"] == {
+        "supported_sizes": ["auto", "1024x1024", "1024x1536", "1536x1024"],
+        "default_quality": "auto",
+        "supported_qualities": ["auto", "low", "medium", "high"],
+    }
+    text_models = {
+        model["providerModelName"]: model["constraints"]
         for model in artifact.vendor["models"]
         if model["capability"] == "text"
-    )
+    }
+    assert text_models["gpt-5.5"]["supported_reasoning_efforts"] == [
+        "none", "low", "medium", "high", "xhigh"
+    ]
+    assert text_models["gpt-5.6-sol"]["supported_reasoning_efforts"] == [
+        "none", "low", "medium", "high", "xhigh", "max"
+    ]
+    assert all(model["reasoning_effort"] == "medium" for model in text_models.values())
 
 
 @pytest.mark.parametrize("effort", ["none", "low", "medium", "high", "xhigh", "max"])
@@ -228,6 +271,8 @@ def test_text_to_image_accepts_base64_and_url_results(artifact):
 
     assert base64_result["ok"] is True
     assert base64_result["calls"][0]["url"].endswith("/images/generations")
+    assert base64_result["calls"][0]["body"]["size"] == "1024x1024"
+    assert base64_result["calls"][0]["body"]["quality"] == "auto"
     assert base64_result["calls"][0]["body"]["response_format"] == "url"
     assert base64_result["calls"][1]["mediaOperation"] == "decodeBase64"
     assert url_result["calls"][1] == {
@@ -235,6 +280,39 @@ def test_text_to_image_accepts_base64_and_url_results(artifact):
         "url": "https://cdn.example.test/result.png?sig=hidden",
         "responseType": "bytes",
     }
+
+
+def test_image_options_precedence_uses_request_then_frozen_snapshot_then_config(artifact):
+    frozen = invoke(
+        artifact,
+        "imageRequest",
+        payload(
+            "gpt-image-2",
+            request={"prompt": "a cup", "input_images": []},
+            constraints={"size": "1024x1536", "quality": "high"},
+            config={
+                "base_url": "https://www.aixora.store/v1",
+                "image_size": "1536x1024",
+                "image_quality": "low",
+            },
+        ),
+        [{"data": [{"b64_json": "iVBORw0KGgo="}]}],
+    )
+    explicit = invoke(
+        artifact,
+        "imageRequest",
+        payload(
+            "gpt-image-2",
+            request={"prompt": "a cup", "size": "auto", "quality": "medium", "input_images": []},
+            constraints={"size": "1024x1536", "quality": "high"},
+        ),
+        [{"data": [{"b64_json": "iVBORw0KGgo="}]}],
+    )
+
+    assert frozen["calls"][0]["body"]["size"] == "1024x1536"
+    assert frozen["calls"][0]["body"]["quality"] == "high"
+    assert explicit["calls"][0]["body"]["size"] == "auto"
+    assert explicit["calls"][0]["body"]["quality"] == "medium"
 
 
 def test_image_edit_uses_ordered_declared_inputs_and_safe_multipart(artifact):
