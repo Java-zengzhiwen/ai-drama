@@ -277,7 +277,7 @@ def test_text_uses_canonical_response_content_and_rejects_invalid_effort(artifac
         artifact,
         "textRequest",
         payload("gpt-5.5"),
-        [{"output": [{"content": [{"type": "output_text", "text": "canonical"}]}], "usage": {}}],
+        [{"output": [{"type": "message", "content": [{"type": "output_text", "text": "canonical"}]}], "usage": {}}],
     )
     invalid = invoke(
         artifact,
@@ -288,6 +288,19 @@ def test_text_uses_canonical_response_content_and_rejects_invalid_effort(artifac
 
     assert canonical["result"]["output"] == "canonical"
     assert invalid == {"ok": False, "error_code": "INVALID_REASONING_EFFORT", "calls": []}
+
+
+def test_text_does_not_promote_reasoning_summary_to_script(artifact):
+    result = invoke(
+        artifact,
+        "textRequest",
+        payload("gpt-5.6-sol"),
+        [{"output": [{"type": "reasoning", "content": [{"type": "output_text", "text": "private reasoning"}]}], "usage": {}}],
+    )
+
+    assert result["ok"] is False
+    assert result["error_code"] == "PROVIDER_RESPONSE_MALFORMED"
+    assert len(result["calls"]) == 1
 
 
 def test_text_reasoning_precedence_uses_frozen_constraints_before_supplier_config(artifact):

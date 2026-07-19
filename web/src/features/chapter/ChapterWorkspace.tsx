@@ -11,6 +11,11 @@ import { listShotPromptRevisions } from "../prompts/api";
 import { ShotPromptTab } from "../prompts/ShotPromptTab";
 import { ScriptTab } from "../script/ScriptTab";
 import { getChapter, type ScriptGenerationRunRead } from "../script/api";
+import {
+  clearActiveScriptRun,
+  loadActiveScriptRun,
+  persistActiveScriptRun,
+} from "../script/streaming";
 import { StoryboardTab } from "../storyboard/StoryboardTab";
 import { SourceTab } from "./SourceTab";
 
@@ -39,8 +44,9 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
   const [activeTab, setActiveTab] = useState("source");
   const [activeScriptRun, setActiveScriptRun] = useState<ScriptGenerationRunRead | null>(null);
   useEffect(() => {
-    setActiveScriptRun(null);
-    setActiveTab("source");
+    const restored = loadActiveScriptRun(chapterId);
+    setActiveScriptRun(restored);
+    setActiveTab(restored ? "script" : "source");
   }, [chapterId]);
   const chapterQuery = useQuery({
     enabled: Boolean(chapterId),
@@ -162,7 +168,13 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
                 <SourceTab
                   chapter={chapter}
                   onScriptGenerationStarted={(run) => {
+                    persistActiveScriptRun(chapter.chapter_id, run);
                     setActiveScriptRun(run);
+                    setActiveTab("script");
+                  }}
+                  onLegacyScriptGenerated={() => {
+                    clearActiveScriptRun(chapter.chapter_id);
+                    setActiveScriptRun(null);
                     setActiveTab("script");
                   }}
                 />
@@ -175,7 +187,15 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
                 <ScriptTab
                   activeRun={activeScriptRun}
                   chapter={chapter}
-                  onGenerationCompleted={() => setActiveScriptRun(null)}
+                  onGenerationCompleted={() => {
+                    clearActiveScriptRun(chapter.chapter_id);
+                    setActiveScriptRun(null);
+                  }}
+                  onRegenerateRequested={() => {
+                    clearActiveScriptRun(chapter.chapter_id);
+                    setActiveScriptRun(null);
+                    setActiveTab("source");
+                  }}
                 />
               ),
               key: "script",

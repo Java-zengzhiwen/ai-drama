@@ -775,7 +775,7 @@ class RuntimeService:
         content_hash = _sha256_text(script_text)
         run = self.store.update_run(
             prepared.run_id,
-            status="SUCCEEDED",
+            status="VALIDATING",
             response_object_id=response_object_id,
             provider=response.provider,
             model=response.model,
@@ -818,6 +818,8 @@ class RuntimeService:
                 error_code="VALIDATION_REQUIRED_FAILED",
                 error_message="required validators did not pass: %s" % validator_ids,
             )
+        else:
+            run = self.store.update_run(run.run_id, status="SUCCEEDED")
         return RunResult(run=run, revision=revision, validation_results=validations, adapter_request_json=request_json)
 
     def finalize_prepared_script(

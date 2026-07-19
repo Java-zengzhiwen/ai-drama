@@ -4,7 +4,10 @@ from ai_drama_runtime.registry import SkillRegistry
 from ai_drama_runtime.runtime import _mock_script
 from ai_drama_runtime.services import RuntimeService
 from ai_drama_runtime.store import RuntimeStore
-from ai_drama_web.services.script_generation_stream import ScriptGenerationRunner
+from ai_drama_web.services.script_generation_stream import (
+    ScriptGenerationRunner,
+    _DisplayableScriptText,
+)
 from ai_drama_web.services.script_workflow import SCRIPT_SKILL_REF
 from ai_drama_web.store import ProductStore
 
@@ -93,6 +96,9 @@ def test_runner_persists_before_provider_and_creates_one_validated_revision(tmp_
     assert runtime.read_text(revision.content_object_id).startswith("# Mock Drama Script")
     required = [row for row in runtime.validation_results(revision.revision_id) if row.required]
     assert required and all(row.status == "PASS" for row in required)
+    assert [event["event_type"] for event in store.list_script_generation_events(
+        "session-1", after_sequence=0
+    )][-3:] == ["stage", "stage", "revision_completed"]
 
     assert runner.run_cycle().started == 0
     assert gateway.submit_count == 1
@@ -108,3 +114,44 @@ def test_streaming_request_keeps_skill_inputs_and_target_duration(tmp_path):
     assert {"source_chapter", "series_canon", "characters", "production_brief"} <= set(inputs)
     assert runtime.get_run(prepared.run_id).status == "RUNNING"
 
+
+def test_stream_display_waits_for_a_markdown_heading_and_hides_wrappers():
+    text = _DisplayableScriptText()
+
+    assert text.push('{"script":"') == ""
+    assert text.push('# 第一场\\n半截 JSON"}') == ""
+    assert text.final_output().startswith('{"script"')
+
+    markdown = _DisplayableScriptText()
+    assert markdown.push("这里是说明，不应展示\n") == ""
+    assert markdown.push("# 第一场\n正文") == "# 第一场\n正文"
+    assert markdown.final_output() == "# 第一场\n正文"
+
+
+def test_recovery_completes_a_finalized_revision_without_resubmitting(tmp_path):
+    repo_root, runtime, store, _prepared = _runner_fixture(tmp_path)
+    gateway = FakeStreamingGateway()
+    runner = ScriptGenerationRunner(store, runtime, repo_root=repo_root, gateway=gateway)
+    assert runner.run_cycle().completed == 1
+    revision_id = store.get_script_generation_run("session-1")["revision_id"]
+    with store.conn:
+        store.conn.execute(
+            "DELETE FROM script_generation_events WHERE run_id=? AND event_type='revision_completed'",
+            ("session-1",),
+        )
+        last = store.conn.execute(
+            "SELECT COALESCE(MAX(sequence), 0) AS n FROM script_generation_events WHERE run_id=?",
+            ("session-1",),
+        ).fetchone()["n"]
+        store.conn.execute(
+            "UPDATE script_generation_runs SET status='finalizing', revision_id='', last_sequence=? WHERE run_id=?",
+            (last, "session-1"),
+        )
+
+    report = store.recover_script_generation_runs()
+
+    assert report == {"unknown_outcome": 0}
+    recovered = store.get_script_generation_run("session-1")
+    assert recovered["status"] == "completed"
+    assert recovered["revision_id"] == revision_id
+    assert gateway.submit_count == 1

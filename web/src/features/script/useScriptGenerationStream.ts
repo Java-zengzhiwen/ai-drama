@@ -21,7 +21,7 @@ export function useScriptGenerationStream(run: ScriptGenerationRunRead | null) {
 
     let disposed = false;
     const source = new EventSource(
-      `/api/script-generation-runs/${encodeURIComponent(run.run_id)}/events?after_sequence=${run.last_sequence}`,
+      `/api/script-generation-runs/${encodeURIComponent(run.run_id)}/events?after_sequence=0`,
     );
     setState(createScriptStreamState(run.run_id, run.status, run));
 
@@ -32,7 +32,11 @@ export function useScriptGenerationStream(run: ScriptGenerationRunRead | null) {
       const payload = JSON.parse((rawEvent as MessageEvent<string>).data) as Record<string, unknown>;
       const sequence = Number(payload.sequence ?? 0);
       let event: ScriptStreamEvent;
-      if (type === "text_delta") {
+      if (type === "stage") {
+        const rawStage = String(payload.status ?? "");
+        if (rawStage !== "finalizing" && rawStage !== "validating") return;
+        event = { sequence, stage: rawStage, type };
+      } else if (type === "text_delta") {
         event = { sequence, text: String(payload.text ?? ""), type };
       } else if (type === "failed") {
         event = { errorCode: String(payload.error_code ?? "SUPPLIER_EXECUTION_FAILED"), sequence, type };
@@ -48,9 +52,11 @@ export function useScriptGenerationStream(run: ScriptGenerationRunRead | null) {
     };
 
     const textHandler = accept("text_delta");
+    const stageHandler = accept("stage");
     const usageHandler = accept("usage");
     const failedHandler = accept("failed");
     const completedHandler = accept("revision_completed");
+    source.addEventListener("stage", stageHandler);
     source.addEventListener("text_delta", textHandler);
     source.addEventListener("usage", usageHandler);
     source.addEventListener("failed", failedHandler);
@@ -86,4 +92,3 @@ export function useScriptGenerationStream(run: ScriptGenerationRunRead | null) {
   const clear = useCallback(() => setState(emptyState), []);
   return { ...state, clear };
 }
-

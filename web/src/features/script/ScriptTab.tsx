@@ -18,6 +18,7 @@ type ScriptTabProps = {
   activeRun?: ScriptGenerationRunRead | null;
   chapter: ChapterRead;
   onGenerationCompleted?: () => void;
+  onRegenerateRequested?: () => void;
 };
 
 type ApiError = {
@@ -34,7 +35,7 @@ type ScriptEditInput = {
   revisionId: string;
 };
 
-export function ScriptTab({ activeRun = null, chapter, onGenerationCompleted }: ScriptTabProps) {
+export function ScriptTab({ activeRun = null, chapter, onGenerationCompleted, onRegenerateRequested }: ScriptTabProps) {
   const queryClient = useQueryClient();
   const [selectedRevisionId, setSelectedRevisionId] = useState("");
   const [draft, setDraft] = useState("");
@@ -147,7 +148,7 @@ export function ScriptTab({ activeRun = null, chapter, onGenerationCompleted }: 
   });
 
   const isScriptMutating =
-    stream.active ||
+    (stream.active && !stream.terminal) ||
     generateMutation.isPending ||
     saveMutation.isPending ||
     approveMutation.isPending ||
@@ -203,7 +204,12 @@ export function ScriptTab({ activeRun = null, chapter, onGenerationCompleted }: 
         {selectedRevision ? <StatusChip status={selectedRevision.approval_status} /> : null}
       </div>
 
-      {stream.active ? <LiveScriptDraft stream={stream} /> : null}
+      {stream.active ? (
+        <LiveScriptDraft
+          onRegenerateRequested={onRegenerateRequested}
+          stream={stream}
+        />
+      ) : null}
 
       {generateMutation.isError ? (
         <WorkflowErrorAlert
@@ -309,8 +315,10 @@ export function ScriptTab({ activeRun = null, chapter, onGenerationCompleted }: 
 }
 
 function LiveScriptDraft({
+  onRegenerateRequested,
   stream,
 }: {
+  onRegenerateRequested?: () => void;
   stream: ReturnType<typeof useScriptGenerationStream>;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -318,8 +326,10 @@ function LiveScriptDraft({
   const elapsedSeconds = useElapsedSeconds(stream.active && !stream.terminal, stream.startedAt);
   const statusLabel = stream.reconnecting
     ? "正在重新连接"
-    : stream.status === "finalizing"
+    : stream.stage === "validating"
       ? "正在校验并保存"
+      : stream.stage === "finalizing" || stream.status === "finalizing"
+        ? "正在整理完整剧本"
       : stream.status === "completed"
         ? "正在加载正式版本"
       : stream.status === "failed"
@@ -338,12 +348,17 @@ function LiveScriptDraft({
   }, [followOutput, stream.text]);
 
   return (
-    <section aria-label="实时剧本草稿" className="script-live-panel" data-terminal={stream.terminal}>
+    <section
+      aria-busy={!stream.terminal}
+      aria-label="实时剧本草稿"
+      className="script-live-panel"
+      data-terminal={stream.terminal}
+    >
       <header className="script-live-header">
         <div>
           <strong>实时草稿</strong>
-          <span className="script-live-pulse" data-active={!stream.terminal} />
-          <span>{statusLabel}</span>
+          <span aria-hidden="true" className="script-live-pulse" data-active={!stream.terminal} />
+          <span aria-live="polite">{statusLabel}</span>
         </div>
         <div className="script-live-metrics">
           <span>{stream.characterCount.toLocaleString("zh-CN")} 字</span>
@@ -353,9 +368,10 @@ function LiveScriptDraft({
       <div className="script-live-editor">
         <textarea
           aria-label="实时剧本内容"
+          autoFocus
           onScroll={(event) => {
             const target = event.currentTarget;
-            setFollowOutput(target.scrollHeight - target.scrollTop - target.clientHeight < 48);
+            setFollowOutput(target.scrollHeight - target.scrollTop - target.clientHeight < 80);
           }}
           placeholder="模型返回的剧本内容会逐字显示在这里……"
           readOnly
@@ -367,7 +383,12 @@ function LiveScriptDraft({
             className="script-follow-output"
             onClick={() => {
               setFollowOutput(true);
-              textareaRef.current?.scrollTo({ behavior: "smooth", top: textareaRef.current.scrollHeight });
+              textareaRef.current?.scrollTo({
+                behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+                  ? "auto"
+                  : "smooth",
+                top: textareaRef.current.scrollHeight,
+              });
             }}
             size="small"
           >
@@ -376,12 +397,22 @@ function LiveScriptDraft({
         ) : null}
       </div>
       {stream.status === "failed" || stream.status === "unknown_outcome" ? (
-        <Alert
-          description={stream.errorCode || undefined}
-          message="生成中断 · 该内容尚未保存为正式剧本版本"
-          showIcon
-          type="error"
-        />
+        <div className="script-live-failure">
+          <Alert
+            description={stream.errorCode || undefined}
+            message="生成中断 · 该内容尚未保存为正式剧本版本"
+            showIcon
+            type="error"
+          />
+          <div className="script-live-failure-actions">
+            <Button onClick={() => void navigator.clipboard?.writeText(stream.text)}>
+              复制部分草稿
+            </Button>
+            <Button onClick={onRegenerateRequested} type="primary">
+              返回原文重新生成
+            </Button>
+          </div>
+        </div>
       ) : (
         <div className="script-live-notice">生成完成并通过校验后，将自动保存为正式剧本版本。</div>
       )}

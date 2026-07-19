@@ -139,6 +139,10 @@ def test_fake_stream_api_creates_one_validated_revision_and_one_submit(
             headers={"Idempotency-Key": "fake-click-1"},
             json={"target_duration_minutes": 4},
         )
+        durable_session = client.portal.call(
+            app.state.product_store.get_script_generation_run,
+            started.json()["run_id"],
+        )
 
         gateway = FakeStreamingGateway()
         runner = ScriptGenerationRunner(
@@ -168,6 +172,8 @@ def test_fake_stream_api_creates_one_validated_revision_and_one_submit(
     assert source.status_code == 200
     assert started.status_code == 202
     assert started.json()["status"] == "prepared"
+    assert durable_session["supplier_text_run_id"]
+    assert durable_session["snapshot_hash"]
     assert cycle.started == 1 and cycle.completed == 1
     assert final.json()["status"] == "completed"
     assert final.json()["revision_id"]

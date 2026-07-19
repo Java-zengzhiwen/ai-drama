@@ -282,44 +282,19 @@ class M6GenerationCoordinator:
             project_id, "script_adaptation", request=request
         )
         supplier_key = f"script-stream:{idempotency_key}"
-        replay = self._matching_replay(
-            snapshot, "text", supplier_key, request
-        )
-        if replay is None:
-            text_run, _created = self.store.enqueue_text_run_with_snapshot(
-                project_id=project_id,
-                operation_key="script_adaptation",
-                supplier_id=snapshot.supplier_id,
-                idempotency_key=supplier_key,
-                request=request,
-                snapshot=snapshot,
-            )
-        else:
-            text_run = replay
-        existing = self.store.get_script_generation_run_by_idempotency(
-            idempotency_key
-        )
-        if existing is not None:
-            if existing["supplier_text_run_id"] != text_run["run_id"]:
-                raise SupplierIdempotencyConflict("IDEMPOTENCY_CONFLICT")
-            return PreparedTextStream(
-                session_run_id=existing["run_id"],
-                supplier_text_run_id=existing["supplier_text_run_id"],
-                snapshot_hash=existing["snapshot_hash"],
-                request_object_id=text_run["request_object_id"],
-            )
-        session = self.store.create_script_generation_run(
+        session, text_run, _created = (
+            self.store.enqueue_script_generation_with_snapshot(
             run_id=uuid.uuid4().hex,
             project_id=project_id,
             chapter_id=chapter_id,
             source_revision_id=source_revision_id,
             runtime_run_id=runtime_run_id,
             idempotency_key=idempotency_key,
-        )
-        session = self.store.bind_script_generation_snapshot(
-            session["run_id"],
-            supplier_text_run_id=text_run["run_id"],
-            snapshot_hash=text_run["snapshot_hash"],
+            supplier_id=snapshot.supplier_id,
+            supplier_idempotency_key=supplier_key,
+            request=request,
+            snapshot=snapshot,
+            )
         )
         return PreparedTextStream(
             session_run_id=session["run_id"],

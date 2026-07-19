@@ -620,7 +620,13 @@ try {
   }
   if (supplierError) throw supplierError;
   if (streamingInvocation) {
-    respondStreamFrame({ type: "completed", evidence: value?.evidence || {} });
+    // Evidence is created by the host HTTP broker only. Adapter-returned values
+    // are untrusted and may contain the selected credential under an innocent
+    // looking field name, so they never cross the Worker protocol boundary.
+    respondStreamFrame({
+      type: "completed",
+      evidence: lastProviderStreamEvidence || {},
+    });
   } else {
     respond({
       ok: true,

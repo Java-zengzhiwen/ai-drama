@@ -211,8 +211,11 @@ function responseText(raw: any): string {
   if (typeof raw?.output_text === "string" && raw.output_text) return raw.output_text;
   const parts: string[] = [];
   for (const item of Array.isArray(raw?.output) ? raw.output : []) {
+    if (item?.type !== "message") continue;
     for (const content of Array.isArray(item?.content) ? item.content : []) {
-      if (typeof content?.text === "string") parts.push(content.text);
+      if (content?.type === "output_text" && typeof content?.text === "string") {
+        parts.push(content.text);
+      }
     }
   }
   if (!parts.length) fail("PROVIDER_RESPONSE_MALFORMED");

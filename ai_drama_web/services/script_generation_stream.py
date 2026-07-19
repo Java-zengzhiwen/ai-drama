@@ -20,6 +20,36 @@ class ScriptGenerationCycleResult:
     failed: int = 0
 
 
+class _DisplayableScriptText:
+    """Buffer protocol wrappers until a real Markdown heading starts."""
+
+    def __init__(self):
+        self.raw = ""
+        self.started = False
+
+    def push(self, text):
+        self.raw += str(text or "")
+        if self.started:
+            return str(text or "")
+        lines = self.raw.splitlines(keepends=True)
+        offset = 0
+        for line in lines:
+            if line.lstrip().startswith("#"):
+                candidate = line.lstrip()
+                hashes, separator, title = candidate.partition(" ")
+                if separator and hashes and set(hashes) == {"#"} and title.strip():
+                    start = offset + len(line) - len(candidate)
+                    self.started = True
+                    visible = self.raw[start:]
+                    self.raw = visible
+                    return visible
+            offset += len(line)
+        return ""
+
+    def final_output(self):
+        return self.raw
+
+
 class ScriptGenerationRunner:
     """Runs one already-durable script stream without ever resubmitting it."""
 
@@ -38,12 +68,18 @@ class ScriptGenerationRunner:
         if claimed is None:
             return ScriptGenerationCycleResult()
         usage = {}
+        script_text = _DisplayableScriptText()
+        provider_sequence = -1
         try:
             prepared = self._prepared_execution(claimed)
             request = _normalize_text_request(prepared.runtime_request.to_dict())
             for frame in self.gateway.invoke_stream(
                 claimed["snapshot_hash"], "textStream", request
             ):
+                frame_sequence = int(frame.get("sequence", -1))
+                if frame_sequence != provider_sequence + 1:
+                    raise RuntimeError("SUPPLIER_WORKER_PROTOCOL_ERROR")
+                provider_sequence = frame_sequence
                 frame_type = frame["type"]
                 if frame_type == "started":
                     self.store.transition_script_generation_run(
@@ -52,17 +88,21 @@ class ScriptGenerationRunner:
                         status="streaming",
                     )
                 elif frame_type == "text_delta":
-                    self.store.append_script_generation_event(
-                        claimed["run_id"],
-                        sequence=frame["sequence"],
-                        event_type="text_delta",
-                        payload={"text": frame["text"]},
-                    )
+                    visible = script_text.push(frame["text"])
+                    if visible:
+                        current = self.store.get_script_generation_run(claimed["run_id"])
+                        self.store.append_script_generation_event(
+                            claimed["run_id"],
+                            sequence=current["last_sequence"] + 1,
+                            event_type="text_delta",
+                            payload={"text": visible},
+                        )
                 elif frame_type == "usage":
                     usage.update(frame["usage"])
+                    current = self.store.get_script_generation_run(claimed["run_id"])
                     self.store.append_script_generation_event(
                         claimed["run_id"],
-                        sequence=frame["sequence"],
+                        sequence=current["last_sequence"] + 1,
                         event_type="usage",
                         payload={"usage": dict(usage)},
                     )
@@ -80,6 +120,7 @@ class ScriptGenerationRunner:
                         prepared,
                         usage,
                         frame,
+                        script_text,
                     )
             self._fail(claimed, "SUPPLIER_WORKER_PROTOCOL_ERROR")
             return ScriptGenerationCycleResult(started=1, failed=1)
@@ -122,22 +163,27 @@ class ScriptGenerationRunner:
             started_at=time.time(),
         )
 
-    def _complete(self, session, prepared, usage, frame):
+    def _complete(self, session, prepared, usage, frame, script_text):
         self.store.transition_script_generation_run(
             session["run_id"],
             expected_statuses=("submitting", "streaming"),
             status="finalizing",
         )
-        chunks = self.store.list_script_generation_events(
-            session["run_id"], after_sequence=0
+        current = self.store.get_script_generation_run(session["run_id"])
+        self.store.append_script_generation_event(
+            session["run_id"],
+            sequence=current["last_sequence"] + 1,
+            event_type="stage",
+            payload={"status": "finalizing"},
         )
-        output = "".join(
-            json.loads(self.runtime.read_text(event["payload_object_id"])).get(
-                "text", ""
-            )
-            for event in chunks
-            if event["event_type"] == "text_delta"
+        current = self.store.get_script_generation_run(session["run_id"])
+        self.store.append_script_generation_event(
+            session["run_id"],
+            sequence=current["last_sequence"] + 1,
+            event_type="stage",
+            payload={"status": "validating"},
         )
+        output = script_text.final_output()
         normalized = {"output": output, "usage": dict(usage)}
         result_object_id = self.runtime.write_text_object(
             json.dumps(normalized, sort_keys=True, separators=(",", ":"))
@@ -173,7 +219,7 @@ class ScriptGenerationRunner:
             )
             return ScriptGenerationCycleResult(started=1, failed=1)
         current = self.store.get_script_generation_run(session["run_id"])
-        event_sequence = max(int(frame["sequence"]), current["last_sequence"] + 1)
+        event_sequence = current["last_sequence"] + 1
         self.store.append_script_generation_event(
             session["run_id"],
             sequence=event_sequence,

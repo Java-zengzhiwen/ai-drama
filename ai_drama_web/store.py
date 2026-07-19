@@ -2677,6 +2677,169 @@ class ProductStore:
             raise
         return self.get_supplier_text_run(run_id), True
 
+    def enqueue_script_generation_with_snapshot(
+        self,
+        *,
+        run_id,
+        project_id,
+        chapter_id,
+        source_revision_id,
+        runtime_run_id,
+        idempotency_key,
+        supplier_id,
+        supplier_idempotency_key,
+        request,
+        snapshot,
+    ):
+        """Create the snapshot, supplier run, and visible script session atomically."""
+        from .suppliers.idempotency import (
+            SupplierIdempotencyConflict,
+            canonical_request_hash,
+        )
+        from .suppliers.snapshots import (
+            _validate_snapshot,
+            canonical_snapshot_json,
+            snapshot_hash,
+        )
+
+        _validate_snapshot(self, snapshot)
+        snapshot_raw = canonical_snapshot_json(snapshot)
+        digest = snapshot_hash(snapshot)
+        snapshot_object_id = self.runtime.write_text_object(snapshot_raw)
+        request_object_id = self.runtime.write_text_object(_normalized_json(request))
+        request_hash = canonical_request_hash(request, digest)
+        supplier_run_id = uuid.uuid4().hex
+        created_at = now_iso()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            supplier_replay = self.conn.execute(
+                """
+                SELECT * FROM supplier_idempotency_records
+                WHERE supplier_id = ? AND capability = 'text'
+                  AND idempotency_key = ?
+                """,
+                (supplier_id, supplier_idempotency_key),
+            ).fetchone()
+            if supplier_replay is not None:
+                if supplier_replay["request_hash"] != request_hash:
+                    raise SupplierIdempotencyConflict("IDEMPOTENCY_CONFLICT")
+                supplier_run_id = supplier_replay["existing_id"]
+            else:
+                self.conn.execute(
+                    """
+                    INSERT OR IGNORE INTO execution_snapshots
+                    (snapshot_hash, snapshot_object_id, supplier_id,
+                     supplier_model_id, model_revision_id, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        digest,
+                        snapshot_object_id,
+                        snapshot.supplier_id,
+                        snapshot.supplier_model_id,
+                        snapshot.model_revision_id,
+                        snapshot.created_at,
+                    ),
+                )
+                self.conn.execute(
+                    """
+                    INSERT INTO supplier_text_runs
+                    (run_id, project_id, operation_key, supplier_id,
+                     snapshot_hash, snapshot_object_id, idempotency_key,
+                     request_hash, request_object_id, status, created_at, updated_at)
+                    VALUES (?, ?, 'script_adaptation', ?, ?, ?, ?, ?, ?,
+                            'prepared', ?, ?)
+                    """,
+                    (
+                        supplier_run_id,
+                        project_id,
+                        supplier_id,
+                        digest,
+                        snapshot_object_id,
+                        supplier_idempotency_key,
+                        request_hash,
+                        request_object_id,
+                        created_at,
+                        created_at,
+                    ),
+                )
+                self.conn.execute(
+                    """
+                    INSERT INTO supplier_idempotency_records
+                    (supplier_id, capability, idempotency_key, request_hash,
+                     existing_id, created_at)
+                    VALUES (?, 'text', ?, ?, ?, ?)
+                    """,
+                    (
+                        supplier_id,
+                        supplier_idempotency_key,
+                        request_hash,
+                        supplier_run_id,
+                        created_at,
+                    ),
+                )
+
+            supplier_run = self.conn.execute(
+                "SELECT * FROM supplier_text_runs WHERE run_id = ?",
+                (supplier_run_id,),
+            ).fetchone()
+            session_replay = self.conn.execute(
+                "SELECT * FROM script_generation_runs WHERE idempotency_key = ?",
+                (idempotency_key,),
+            ).fetchone()
+            if session_replay is not None:
+                expected = (
+                    project_id,
+                    chapter_id,
+                    source_revision_id,
+                    supplier_run_id,
+                    digest,
+                )
+                observed = (
+                    session_replay["project_id"],
+                    session_replay["chapter_id"],
+                    session_replay["source_revision_id"],
+                    session_replay["supplier_text_run_id"],
+                    session_replay["snapshot_hash"],
+                )
+                if observed != expected:
+                    raise ScriptGenerationConflict(
+                        "SCRIPT_GENERATION_IDEMPOTENCY_CONFLICT"
+                    )
+                self.conn.commit()
+                return dict(session_replay), dict(supplier_run), False
+
+            self.conn.execute(
+                """
+                INSERT INTO script_generation_runs
+                (run_id, project_id, chapter_id, source_revision_id,
+                 runtime_run_id, supplier_text_run_id, snapshot_hash,
+                 idempotency_key, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?, ?)
+                """,
+                (
+                    run_id,
+                    project_id,
+                    chapter_id,
+                    source_revision_id,
+                    runtime_run_id,
+                    supplier_run_id,
+                    digest,
+                    idempotency_key,
+                    created_at,
+                    created_at,
+                ),
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+        return (
+            self.get_script_generation_run(run_id),
+            self.get_supplier_text_run(supplier_run_id),
+            True,
+        )
+
     def get_supplier_text_run(self, run_id):
         row = self.conn.execute("SELECT * FROM supplier_text_runs WHERE run_id = ?", (run_id,)).fetchone()
         return None if row is None else dict(row)
@@ -2943,6 +3106,56 @@ class ProductStore:
         return self.get_script_generation_run(run_id)
 
     def recover_script_generation_runs(self):
+        finalizing = [
+            dict(row)
+            for row in self.conn.execute(
+                "SELECT * FROM script_generation_runs WHERE status = 'finalizing'"
+            ).fetchall()
+        ]
+        for session in finalizing:
+            runtime_run = self.runtime.get_run(session["runtime_run_id"])
+            revision = self.conn.execute(
+                """
+                SELECT revision_id FROM revisions
+                WHERE run_id = ? ORDER BY number DESC LIMIT 1
+                """,
+                (session["runtime_run_id"],),
+            ).fetchone()
+            if runtime_run is not None and runtime_run.status == "SUCCEEDED" and revision:
+                completed_event = self.conn.execute(
+                    """
+                    SELECT 1 FROM script_generation_events
+                    WHERE run_id = ? AND event_type = 'revision_completed'
+                    """,
+                    (session["run_id"],),
+                ).fetchone()
+                if completed_event is None:
+                    current = self.get_script_generation_run(session["run_id"])
+                    self.append_script_generation_event(
+                        session["run_id"],
+                        sequence=current["last_sequence"] + 1,
+                        event_type="revision_completed",
+                        payload={"revision_id": revision["revision_id"]},
+                    )
+                self.transition_script_generation_run(
+                    session["run_id"],
+                    expected_statuses=("finalizing",),
+                    status="completed",
+                    revision_id=revision["revision_id"],
+                    evidence_object_id=session["evidence_object_id"],
+                )
+            elif runtime_run is not None and runtime_run.status in {
+                "PARSE_FAILED",
+                "VALIDATION_FAILED",
+                "RUNTIME_FAILED",
+            }:
+                self.transition_script_generation_run(
+                    session["run_id"],
+                    expected_statuses=("finalizing",),
+                    status="failed",
+                    error_code=runtime_run.error_code or runtime_run.status,
+                    evidence_object_id=session["evidence_object_id"],
+                )
         with self.conn:
             cursor = self.conn.execute(
                 """

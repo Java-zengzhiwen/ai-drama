@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { createScriptStreamState, reduceScriptStreamEvent } from "./streaming";
+import { createScriptStreamState, reconcileScriptRun, reduceScriptStreamEvent } from "./streaming";
 
 describe("script stream state", () => {
   test("appends ordered text and ignores replayed sequences", () => {
@@ -64,5 +64,41 @@ describe("script stream state", () => {
     expect(completed.revisionId).toBe("revision-9");
     expect(completed.text).toBe("完成内容");
     expect(completed.terminal).toBe(true);
+  });
+
+  test("tracks finalization and validation stages", () => {
+    const finalizing = reduceScriptStreamEvent(
+      createScriptStreamState("run-stage", "streaming"),
+      { sequence: 1, stage: "finalizing", type: "stage" },
+    );
+    const validating = reduceScriptStreamEvent(
+      finalizing,
+      { sequence: 2, stage: "validating", type: "stage" },
+    );
+
+    expect(finalizing.status).toBe("finalizing");
+    expect(validating.stage).toBe("validating");
+  });
+
+  test("does not skip missing text when status polling is ahead of the browser", () => {
+    const received = reduceScriptStreamEvent(createScriptStreamState("run-4", "prepared"), {
+      sequence: 1,
+      text: "已收到",
+      type: "text_delta",
+    });
+
+    const reconciled = reconcileScriptRun(received, {
+      run_id: "run-4",
+      status: "streaming",
+      last_sequence: 5,
+      character_count: 20,
+      revision_id: "",
+      error_code: "",
+    });
+
+    expect(reconciled.lastSequence).toBe(1);
+    expect(reconciled.characterCount).toBe(3);
+    expect(reconciled.text).toBe("已收到");
+    expect(reconciled.reconnecting).toBe(true);
   });
 });

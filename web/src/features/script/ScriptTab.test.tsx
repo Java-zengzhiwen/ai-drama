@@ -310,6 +310,7 @@ function setupWorkspaceMocks() {
 
 describe("chapter source and script workspace tabs", () => {
   beforeEach(() => {
+    window.sessionStorage.clear();
     mockedGet.mockReset();
     mockedPost.mockReset();
     mockedPut.mockReset();
@@ -430,6 +431,73 @@ describe("chapter source and script workspace tabs", () => {
     expect(screen.getByRole("tab", { name: "剧本" })).toHaveAttribute("aria-selected", "true");
   });
 
+  test("reuses one idempotency key when the start response is lost and retried", async () => {
+    const originalPost = mockedPost.getMockImplementation();
+    const keys: string[] = [];
+    let starts = 0;
+    mockedPost.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "/chapters/chapter-1/script/generations") {
+        keys.push(String((args[2] as { headers: Record<string, string> }).headers["Idempotency-Key"]));
+        starts += 1;
+        if (starts === 1) {
+          throw { response: { data: { error_code: "START_RESPONSE_LOST", error_message: "response lost" } } };
+        }
+      }
+      return originalPost?.(...args);
+    });
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("小说原文"), {
+      target: { value: "第一章正文。沈清荷醒来。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存并生成剧本" }));
+    expect(await screen.findByText("START_RESPONSE_LOST")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /重\s*试/ }));
+
+    await waitFor(() => expect(starts).toBe(2));
+    expect(keys[0]).toBe(keys[1]);
+  });
+
+  test("falls back to the legacy endpoint only when streaming is disabled", async () => {
+    const originalPost = mockedPost.getMockImplementation();
+    mockedPost.mockImplementation(async (...args: unknown[]) => {
+      if (args[0] === "/chapters/chapter-1/script/generations") {
+        throw { response: { data: { error_code: "SCRIPT_STREAMING_DISABLED", error_message: "disabled" } } };
+      }
+      return originalPost?.(...args);
+    });
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("小说原文"), {
+      target: { value: "第一章正文。沈清荷醒来。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存并生成剧本" }));
+
+    await waitFor(() => expect(mockedPost).toHaveBeenCalledWith(
+      "/chapters/chapter-1/script/generate",
+      { target_duration_minutes: 3 },
+    ));
+    expect(screen.getByRole("tab", { name: "剧本" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  test("restores the same active run after a page refresh", async () => {
+    window.sessionStorage.setItem("ai-drama:script-generation:chapter-1", JSON.stringify({
+      run_id: "stream-run-restored",
+      status: "streaming",
+      last_sequence: 2,
+      character_count: 10,
+      revision_id: "",
+      error_code: "",
+    }));
+
+    render(<App />);
+
+    expect(await screen.findByRole("region", { name: "实时剧本草稿" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "剧本" })).toHaveAttribute("aria-selected", "true");
+    const source = FakeEventSource.instances[FakeEventSource.instances.length - 1];
+    expect(source.url).toContain("/script-generation-runs/stream-run-restored/events?after_sequence=0");
+  });
+
   test("shows streamed script text in the editor and loads the formal revision on completion", async () => {
     render(<App />);
 
@@ -486,6 +554,8 @@ describe("chapter source and script workspace tabs", () => {
     expect(liveEditor).toHaveValue("已生成的部分剧本");
     expect(screen.getByText("生成中断 · 该内容尚未保存为正式剧本版本")).toBeInTheDocument();
     expect(screen.getByText("PROVIDER_RESPONSE_MALFORMED")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "复制部分草稿" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "返回原文重新生成" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "确认剧本" })).not.toBeInTheDocument();
   });
 

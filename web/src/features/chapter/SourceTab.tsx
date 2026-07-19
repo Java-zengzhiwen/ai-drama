@@ -24,7 +24,9 @@ import {
 } from "../suppliers/api";
 import {
   createSourceRevision,
+  generateScript,
   startScriptGeneration,
+  type ScriptRevisionRead,
   type ScriptGenerationRunRead,
   type SourceRevisionRead,
 } from "../script/api";
@@ -32,6 +34,7 @@ import {
 type SourceTabProps = {
   chapter: ChapterRead;
   onScriptGenerationStarted?: (run: ScriptGenerationRunRead) => void;
+  onLegacyScriptGenerated?: (revision: ScriptRevisionRead) => void;
 };
 
 type ApiError = {
@@ -48,7 +51,7 @@ type TextModelOption = {
   supplier: SupplierRead;
 };
 
-export function SourceTab({ chapter, onScriptGenerationStarted }: SourceTabProps) {
+export function SourceTab({ chapter, onLegacyScriptGenerated, onScriptGenerationStarted }: SourceTabProps) {
   const queryClient = useQueryClient();
   const inRouterContext = useInRouterContext();
   const [draft, setDraft] = useState(chapter.source_text ?? "");
@@ -174,7 +177,7 @@ export function SourceTab({ chapter, onScriptGenerationStarted }: SourceTabProps
   });
 
   const generateMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ idempotencyKey }: { idempotencyKey: string }) => {
       if (!selectedModelId) {
         throw new Error("请先选择文本模型。");
       }
@@ -184,14 +187,34 @@ export function SourceTab({ chapter, onScriptGenerationStarted }: SourceTabProps
       if (!sourceIsSaved) {
         await saveMutation.mutateAsync(normalizedDraft);
       }
-      return startScriptGeneration(
-        chapter.chapter_id,
-        { target_duration_minutes: targetDurationMinutes },
-        createIdempotencyKey(),
-      );
+      try {
+        const run = await startScriptGeneration(
+          chapter.chapter_id,
+          { target_duration_minutes: targetDurationMinutes },
+          idempotencyKey,
+        );
+        return { kind: "stream" as const, run };
+      } catch (error) {
+        if (getApiErrorDetails(error, "").code !== "SCRIPT_STREAMING_DISABLED") {
+          throw error;
+        }
+        const revision = await generateScript(chapter.chapter_id, {
+          target_duration_minutes: targetDurationMinutes,
+        });
+        return { kind: "legacy" as const, revision };
+      }
     },
-    onSuccess: (run) => {
-      onScriptGenerationStarted?.(run);
+    onSuccess: (result) => {
+      if (result.kind === "stream") {
+        onScriptGenerationStarted?.(result.run);
+        return;
+      }
+      queryClient.setQueryData<ScriptRevisionRead[]>(
+        ["script-revisions", chapter.chapter_id],
+        (current = []) => [...current.filter((item) => item.revision_id !== result.revision.revision_id), result.revision],
+      );
+      void queryClient.invalidateQueries({ queryKey: ["chapter-status", chapter.chapter_id] });
+      onLegacyScriptGenerated?.(result.revision);
     },
   });
 
@@ -442,7 +465,9 @@ export function SourceTab({ chapter, onScriptGenerationStarted }: SourceTabProps
                   : "原文保存失败。请重试。"}
               onRetry={() => {
                 if (generateMutation.isError || bindingMutation.isError) {
-                  generateMutation.mutate();
+                  generateMutation.mutate(
+                    generateMutation.variables ?? { idempotencyKey: createIdempotencyKey() },
+                  );
                 } else if (saveMutation.variables) {
                   saveMutation.mutate(saveMutation.variables);
                 }
@@ -464,7 +489,7 @@ export function SourceTab({ chapter, onScriptGenerationStarted }: SourceTabProps
             disabled={!normalizedDraft || mutationPending || !modelSelectionReady}
             icon={<PlayCircleFilled aria-hidden="true" />}
             loading={generateMutation.isPending}
-            onClick={() => generateMutation.mutate()}
+            onClick={() => generateMutation.mutate({ idempotencyKey: createIdempotencyKey() })}
             type="primary"
           >
             保存并生成剧本

@@ -62,7 +62,7 @@ class ScriptWorkflowService:
             runtime=self.settings.runtime_provider,
             model=self.settings.runtime_model,
         )
-        if result.revision is None:
+        if result.revision is None or result.run.status != "SUCCEEDED":
             raise WorkflowExecutionError(
                 result.run.error_code or result.run.status,
                 result.run.error_message or result.run.status,
@@ -138,7 +138,13 @@ class ScriptWorkflowService:
 
     def list_revisions(self, chapter_id: str):
         self._chapter_or_raise(chapter_id)
-        return [self._read_revision(item.revision_id) for item in self.runtime_store.revisions_for_artifact(self._artifact_id(chapter_id))]
+        return [
+            self._read_revision(item.revision_id)
+            for item in self.runtime_store.revisions_for_artifact(
+                self._artifact_id(chapter_id)
+            )
+            if self.runtime_store.get_run(item.run_id).status == "SUCCEEDED"
+        ]
 
     def create_manual_revision(self, revision_id: str, content: str):
         if self.runtime_store.get_revision(revision_id) is None:

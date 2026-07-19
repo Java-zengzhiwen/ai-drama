@@ -1342,13 +1342,32 @@ body {
   font-size: 12px;
 }
 
-.script-live-panel > .ant-alert {
+.script-live-panel > .ant-alert,
+.script-live-failure .ant-alert {
   border-radius: 0;
+}
+
+.script-live-failure {
+  background: #fff5f5;
+  border-top: 1px solid #ffd1d1;
+}
+
+.script-live-failure-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 14px 12px;
 }
 
 @keyframes script-stream-pulse {
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .script-live-pulse[data-active="true"] {
+    animation: none;
+  }
 }
 
 .production-command-bar {

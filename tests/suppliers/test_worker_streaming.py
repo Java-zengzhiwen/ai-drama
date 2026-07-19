@@ -72,6 +72,24 @@ for (const frame of [
     assert [frame["sequence"] for frame in frames] == [0, 1, 2, 3]
 
 
+def test_worker_stream_never_forwards_adapter_supplied_evidence(tmp_path):
+    artifact = _artifact(tmp_path)
+    artifact = type(artifact)(
+        **{
+            **artifact.__dict__,
+            "compiled_code": (
+                "module.exports.textStream = async function() { "
+                "return {evidence:{innocent:'selected-secret'}}; };"
+            ),
+        }
+    )
+
+    frames = list(SupplierWorker().invoke_stream(artifact, "textStream", {}))
+
+    assert frames == [{"type": "completed", "sequence": 0, "evidence": {}}]
+    assert "selected-secret" not in str(frames)
+
+
 def test_worker_stream_rejects_duplicate_sequence(tmp_path):
     entrypoint = _fixture_worker(
         tmp_path,
