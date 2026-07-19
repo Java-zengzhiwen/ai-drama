@@ -32,7 +32,7 @@
 - Consumes: `GET /api/suppliers`, `GET /api/suppliers/{supplier_id}`, `GET /api/suppliers/{supplier_id}/code`, `GET /api/suppliers/{supplier_id}/models`
 - Produces: a safe in-memory source supplier object, adapter source, non-secret config map, and six model definitions
 
-- [ ] **Step 1: Verify the branch and repository are clean**
+- [x] **Step 1: Verify the branch and repository are clean**
 
 Run:
 
@@ -43,7 +43,7 @@ git status --short
 
 Expected: branch is `feat/aixora-image-supplier` and status is empty after the plan commit.
 
-- [ ] **Step 2: Assert the local service and feature gates are ready**
+- [x] **Step 2: Assert the local service and feature gates are ready**
 
 Run:
 
@@ -54,7 +54,7 @@ curl -fsS http://127.0.0.1:8000/api/model-tests/status
 
 Expected: `{"status":"ok"}` and `{"enabled":true}`.
 
-- [ ] **Step 3: Run a read-only preflight assertion**
+- [x] **Step 3: Run a read-only preflight assertion**
 
 Run:
 
@@ -97,7 +97,7 @@ Expected: `AIXORA_IMAGE_PREFLIGHT_PASS`.
 - Consumes: safe source state from Task 1
 - Produces: enabled custom supplier `aixora-image`, isolated supplier version/config revision, six manifest-managed built-in models, and no credential
 
-- [ ] **Step 1: Execute the exact loopback-only clone operation**
+- [x] **Step 1: Execute the exact loopback-only clone operation**
 
 Run:
 
@@ -258,7 +258,7 @@ PY
 
 Expected: one JSON object with `result=AIXORA_IMAGE_CLONE_CREATED`, `model_count=6`, `credential_copied=false`, and `real_provider_requests=false`.
 
-- [ ] **Step 2: Confirm validation produced no network request**
+- [x] **Step 2: Confirm validation produced no network request**
 
 Inspect the returned supplier and model catalog only. Do not invoke `/api/models/{supplier_model_id}/tests`; adapter compilation during `PUT /code` must remain network-disabled.
 
@@ -277,7 +277,7 @@ Expected: the supplier remains enabled only after every mutation succeeds; any f
 - Consumes: completed `aixora-image` supplier from Task 2
 - Produces: machine-checked evidence that the supplier is isolated, credential-free, and ready for Web configuration
 
-- [ ] **Step 1: Assert supplier and model isolation**
+- [x] **Step 1: Assert supplier and model isolation**
 
 Run:
 
@@ -322,7 +322,7 @@ PY
 
 Expected: `AIXORA_IMAGE_ISOLATION_PASS`.
 
-- [ ] **Step 2: Run focused management and migration verification**
+- [x] **Step 2: Run focused management and migration verification**
 
 Run:
 
@@ -338,7 +338,7 @@ python3 migration/tools/verify_migration.py
 
 Expected: pytest passes; all verifiers report PASS/valid; real Provider request counts remain zero.
 
-- [ ] **Step 3: Verify repository hygiene**
+- [x] **Step 3: Verify repository hygiene**
 
 Run:
 
@@ -350,8 +350,25 @@ git ls-files | rg '(^|/)(runtime-data|.*\.db|secrets?)(/|$)' && exit 1 || true
 
 Expected: no runtime data, database, credential, or secret is tracked; only approved documentation commits exist on the branch.
 
-- [ ] **Step 4: Hand off credential configuration**
+- [x] **Step 4: Hand off credential configuration**
 
 Open `http://127.0.0.1:8000/suppliers`, select `aixora-image`, and verify the 密钥 tab reports 未配置. The user can then enter the second Key and explicitly confirm one model-level real test.
 
 Expected: the new supplier is usable without changing or exposing the original Aixora credential.
+
+## Execution Result
+
+- Supplier ID: `12a7682f30a54490b31568e1ff966568`
+- Supplier slug: `aixora-image`
+- Enabled: true
+- Credential configured: false
+- Model count: 6
+- Source model IDs and cloned model IDs are disjoint.
+- Adapter manifest ID: `aixora-image`
+- Rate-limit bucket: `aixora-image-generation`
+- Focused pytest: 48 passed
+- Playwright: 11 passed
+- Model-level provider test verifier: PASS
+- M6 supplier/model management verifier: PASS
+- Migration verifier: valid, 81 files checked
+- Real Provider requests: text=0, image=0, video=0
