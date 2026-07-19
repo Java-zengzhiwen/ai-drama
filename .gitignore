@@ -24,3 +24,4 @@ coverage/
 workspace/
 runtime-data/
 _reference/
+.worktrees/
