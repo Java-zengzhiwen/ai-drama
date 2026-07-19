@@ -176,7 +176,7 @@ explicit request override
 -> system default
 ```
 
-System image defaults are `1024x1024` and `auto`. The service validates the resolved value against the selected immutable model revision before creating a run.
+System image defaults are `1024x1024` and `auto` for a GPT-style image model that declares this contract. The service validates the resolved value against the selected immutable model revision before creating a run. Legacy and non-GPT image models that do not declare `supported_sizes` preserve their existing Provider-specific size contract, including Agnes values such as `1024x768`; GPT Image 2 enums are never imposed globally.
 
 The resolved fields are frozen before Provider submission:
 
@@ -273,4 +273,3 @@ Automated tests use fake/local transports and keep real request counts at zero.
 - no automated test or implementation action makes a real Provider request.
 
 Acceptance requires focused Python and Web tests, full Python regression, Web tests/build/e2e, Worker tests, migration verification, `git diff --check`, tracked-secret scan, and confirmation that both local supplier credentials were preserved during runtime synchronization.
-

@@ -33,6 +33,10 @@ from ai_drama_web.suppliers.reasoning import (
     ReasoningEffortError,
     resolve_reasoning_effort,
 )
+from ai_drama_web.suppliers.image_options import (
+    ImageOptionError,
+    resolve_image_options,
+)
 
 
 def test_feature_flag_defaults_off():
@@ -334,6 +338,51 @@ def test_m6_image_execution_is_durable_and_links_result_and_asset(tmp_path):
     assert [call[1] for call in gateway.calls] == ["imageRequest"]
 
 
+def test_m6_image_execution_freezes_supplier_defaults_in_snapshot(tmp_path):
+    runtime, store, project, supplier, gateway, coordinator = _coordinator_fixture(
+        tmp_path, "image"
+    )
+    resolved = ModelResolver(store).resolve(project.project_id, "storyboard_keyframe_image")
+    ModelCatalogService(store).revise_model(
+        resolved.model.supplier_model_id,
+        provider_model_name=resolved.revision.provider_model_name,
+        display_name=resolved.revision.display_name,
+        capability="image",
+        definition={
+            "default_size": "1024x1024",
+            "constraints": {
+                "supported_sizes": ["auto", "1024x1024", "1024x1536", "1536x1024"],
+                "default_quality": "auto",
+                "supported_qualities": ["auto", "low", "medium", "high"],
+            },
+        },
+        expected_catalog_revision=supplier.model_catalog_revision,
+        expected_model_revision=resolved.model.revision,
+        acknowledged_binding_count=1,
+    )
+    config = {"image_size": "1024x1536", "image_quality": "high"}
+    raw = json.dumps(config, sort_keys=True, separators=(",", ":"))
+    object_id = runtime.write_text_object(raw)
+    store.replace_supplier_config(
+        supplier.supplier_id,
+        config_object_id=object_id,
+        config_hash=hashlib.sha256(raw.encode()).hexdigest(),
+        expected_revision=supplier.config_revision,
+    )
+    chapter = store.create_chapter(project.project_id, title="Chapter", position=1)
+
+    asset = coordinator.generate_image(
+        project_id=project.project_id,
+        chapter_id=chapter.chapter_id,
+        idempotency_key="image-defaults",
+        request={"prompt": "frame", "asset_type": "shot_keyframe", "name": "Frame"},
+    )
+
+    snapshot = load_snapshot(store, gateway.calls[0][0])
+    assert snapshot.resolved_constraints == {"size": "1024x1536", "quality": "high"}
+    assert store.get_generation_job(asset["job_id"]).snapshot_hash == gateway.calls[0][0]
+
+
 def test_m6_image_accepted_crash_recovers_result_and_asset_without_second_request(tmp_path):
     runtime, store, project, _supplier, gateway, coordinator = _coordinator_fixture(tmp_path, "image")
     chapter = store.create_chapter(project.project_id, title="Chapter", position=1)
@@ -434,7 +483,7 @@ def test_m6_text_execution_normalizes_runtime_request_into_model_messages(tmp_pa
             {},
             {"constraints": {"reasoning_effort": "low"}},
             {"reasoning_effort": "high"},
-            "low",
+            "high",
         ),
         ({}, {}, {"reasoning_effort": "high"}, "high"),
         ({}, {}, {}, "medium"),
@@ -456,6 +505,88 @@ def test_reasoning_resolution_rejects_unexposed_value(value):
             model_definition={},
             supplier_config={},
         )
+
+
+@pytest.mark.parametrize("value", ["none", "low", "medium", "high", "xhigh", "max"])
+def test_reasoning_resolution_accepts_full_gpt_5_6_contract(value):
+    definition = {
+        "constraints": {
+            "reasoning_effort": "medium",
+            "supported_reasoning_efforts": [
+                "none", "low", "medium", "high", "xhigh", "max"
+            ],
+        }
+    }
+    assert resolve_reasoning_effort(
+        request={"parameters": {"reasoning_effort": value}},
+        model_definition=definition,
+        supplier_config={},
+    ) == value
+
+
+def test_reasoning_resolution_rejects_max_when_model_omits_it():
+    with pytest.raises(ReasoningEffortError, match="INVALID_REASONING_EFFORT"):
+        resolve_reasoning_effort(
+            request={"parameters": {"reasoning_effort": "max"}},
+            model_definition={
+                "constraints": {
+                    "reasoning_effort": "medium",
+                    "supported_reasoning_efforts": [
+                        "none", "low", "medium", "high", "xhigh"
+                    ],
+                }
+            },
+            supplier_config={},
+        )
+
+
+def test_image_options_resolve_request_then_supplier_then_model_defaults():
+    definition = {
+        "default_size": "1024x1024",
+        "constraints": {
+            "supported_sizes": ["auto", "1024x1024", "1024x1536", "1536x1024"],
+            "default_quality": "auto",
+            "supported_qualities": ["auto", "low", "medium", "high"],
+        },
+    }
+
+    assert resolve_image_options(
+        request={"size": "1024x1536"},
+        model_definition=definition,
+        supplier_config={"image_size": "1536x1024", "image_quality": "high"},
+    ) == {"size": "1024x1536", "quality": "high"}
+
+
+@pytest.mark.parametrize(
+    ("request_value", "code"),
+    [
+        ({"size": "2048x2048"}, "INVALID_IMAGE_SIZE"),
+        ({"quality": "ultra"}, "INVALID_IMAGE_QUALITY"),
+    ],
+)
+def test_image_options_reject_values_outside_model_contract(request_value, code):
+    definition = {
+        "default_size": "1024x1024",
+        "constraints": {
+            "supported_sizes": ["auto", "1024x1024", "1024x1536", "1536x1024"],
+            "default_quality": "auto",
+            "supported_qualities": ["auto", "low", "medium", "high"],
+        },
+    }
+    with pytest.raises(ImageOptionError, match=code):
+        resolve_image_options(
+            request=request_value,
+            model_definition=definition,
+            supplier_config={},
+        )
+
+
+def test_image_options_preserve_legacy_provider_size_without_declared_list():
+    assert resolve_image_options(
+        request={"size": "1024x768"},
+        model_definition={"default_size": "1024x768"},
+        supplier_config={},
+    ) == {"size": "1024x768", "quality": "auto"}
 
 
 @pytest.mark.parametrize(

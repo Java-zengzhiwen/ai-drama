@@ -14,6 +14,7 @@ from ai_drama_web.suppliers.reasoning import (
     ReasoningEffortError,
     resolve_reasoning_effort,
 )
+from ai_drama_web.suppliers.image_options import ImageOptionError, resolve_image_options
 from ai_drama_runtime.store import now_iso
 
 
@@ -86,20 +87,30 @@ class M6GenerationCoordinator:
                 if credential.state == "credential_storage_corrupt"
                 else "CREDENTIAL_NOT_READY"
             )
-        if constraints is None and resolved.revision.capability == "text":
+        if constraints is None and resolved.revision.capability in {"text", "image"}:
             definition = self._read_json_object(resolved.revision.definition_object_id)
             config = self.store.get_config_revision(supplier.current_config_revision_id)
             config_value = self._read_json_object(config.config_object_id) if config else {}
-            try:
-                constraints = {
-                    "reasoning_effort": resolve_reasoning_effort(
+            if resolved.revision.capability == "text":
+                try:
+                    constraints = {
+                        "reasoning_effort": resolve_reasoning_effort(
+                            request=request or {},
+                            model_definition=definition,
+                            supplier_config=config_value,
+                        )
+                    }
+                except ReasoningEffortError as exc:
+                    raise M6GenerationError(exc.code) from exc
+            else:
+                try:
+                    constraints = resolve_image_options(
                         request=request or {},
                         model_definition=definition,
                         supplier_config=config_value,
                     )
-                }
-            except ReasoningEffortError as exc:
-                raise M6GenerationError(exc.code) from exc
+                except ImageOptionError as exc:
+                    raise M6GenerationError(exc.code) from exc
         return SnapshotBuilder(self.store).build(
             resolved,
             credential_resolution_mode="current",
@@ -225,7 +236,9 @@ class M6GenerationCoordinator:
         return {"run_id": run["run_id"], **normalized}
 
     def generate_image(self, *, project_id, chapter_id, idempotency_key, request):
-        snapshot = self._resolve_snapshot(project_id, "storyboard_keyframe_image")
+        snapshot = self._resolve_snapshot(
+            project_id, "storyboard_keyframe_image", request=request
+        )
         job = self._matching_replay(snapshot, "image", idempotency_key, request)
         created = job is None
         reserved = False

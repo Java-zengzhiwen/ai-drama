@@ -14,7 +14,7 @@
 - Automated implementation and verification make zero real Provider requests.
 - GPT-5.6-family reasoning values are exactly `none`, `low`, `medium`, `high`, `xhigh`, `max`.
 - GPT-5.5 reasoning values are exactly `none`, `low`, `medium`, `high`, `xhigh`.
-- GPT Image 2 sizes are exactly `auto`, `1024x1024`, `1024x1536`, `1536x1024`.
+- GPT Image 2 sizes are exactly `auto`, `1024x1024`, `1024x1536`, `1536x1024`; legacy non-GPT models preserve their declared Provider-specific size values.
 - GPT Image 2 qualities are exactly `auto`, `low`, `medium`, `high`.
 - Do not expose `2K`, `4K`, arbitrary dimensions, retry, or model fallback.
 - Supplier config is the default; a request override wins and is frozen in the immutable snapshot.
@@ -222,7 +222,7 @@ IMAGE_SIZES = frozenset({"auto", "1024x1024", "1024x1536", "1536x1024"})
 IMAGE_QUALITIES = frozenset({"auto", "low", "medium", "high"})
 ```
 
-Resolve explicit request, then supplier config, then model default, then safety default. Validate the final value against both the global safe set and the model-declared supported set.
+Resolve explicit request, then supplier config, then model default, then safety default. Validate GPT-style values against the model-declared supported set. When a legacy or non-GPT image model has no supported-size list, preserve its existing non-empty Provider-specific size instead of imposing GPT Image 2 dimensions globally.
 
 - [ ] **Step 4: Freeze controls in project snapshots**
 
