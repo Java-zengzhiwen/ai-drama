@@ -211,6 +211,36 @@ def test_text_preserves_caller_supplied_response_messages(artifact):
     assert result["calls"][0]["body"]["input"] == messages
 
 
+def test_text_normalizes_string_message_content_for_responses_api(artifact):
+    result = invoke(
+        artifact,
+        "textRequest",
+        payload(
+            "gpt-5.6-sol",
+            request={
+                "messages": [
+                    {"role": "system", "content": "follow the supplied skill"},
+                    {"role": "user", "content": "create the complete script"},
+                ]
+            },
+        ),
+        [{"output_text": "ok", "usage": {}}],
+    )
+
+    assert result["calls"][0]["body"]["input"] == [
+        {
+            "type": "message",
+            "role": "system",
+            "content": [{"type": "input_text", "text": "follow the supplied skill"}],
+        },
+        {
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": "create the complete script"}],
+        },
+    ]
+
+
 def test_text_uses_canonical_response_content_and_rejects_invalid_effort(artifact):
     canonical = invoke(
         artifact,

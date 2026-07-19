@@ -219,12 +219,20 @@ function responseText(raw: any): string {
 /**
  * AIXORA 的 Responses 入口对字符串 input 的兼容性并不稳定：部分推理模型会只返回
  * reasoning 项而不返回最终 message。普通提示词因此统一转换为 Responses API 的标准
- * message/input_text 结构；调用方已提供 messages 时保持原样。这里不做失败重试，避免
- * 一次用户测试被重复提交和重复计费。
+ * message/input_text 结构。业务生成传入的 messages 也可能使用字符串 content，必须
+ * 逐条转换成相同的标准结构；已经规范化的 content 数组保持原样。这里不做失败重试，
+ * 避免一次用户操作被重复提交和重复计费。
  */
 function responsesInput(payload: SupplierPayload): unknown[] {
   if (Array.isArray(payload.request?.messages) && payload.request.messages.length) {
-    return payload.request.messages;
+    return payload.request.messages.map((message: any) => {
+      if (Array.isArray(message?.content)) return message;
+      return {
+        type: "message",
+        role: String(message?.role || "user"),
+        content: [{ type: "input_text", text: String(message?.content || "") }],
+      };
+    });
   }
   return [
     {
