@@ -5,6 +5,9 @@ import re
 PROJECT_MANAGEMENT_PATH = re.compile(
     r"^/api/projects/[^/]+/(?:model-bindings|model-resolution(?:/|$))"
 )
+SCRIPT_STREAM_PATH = re.compile(
+    r"^/api/(?:chapters/[^/]+/script/generations|script-generation-runs(?:/|$))"
+)
 
 
 def is_management_path(path):
@@ -14,6 +17,7 @@ def is_management_path(path):
         or path.startswith("/api/model-tests")
         or path == "/api/settings/agnes"
         or bool(PROJECT_MANAGEMENT_PATH.match(path))
+        or bool(SCRIPT_STREAM_PATH.match(path))
     )
 
 

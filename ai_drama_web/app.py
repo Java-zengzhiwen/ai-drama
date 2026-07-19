@@ -30,6 +30,7 @@ from .services.asset_delivery import AssetDeliveryService
 from .services.generation_execution import GenerationExecutionService
 from .services.generation_poller import GenerationPoller
 from .services.m6_generation import M6GenerationCoordinator
+from .services.script_generation_stream import ScriptGenerationBackgroundService
 from .services.legacy_agnes_backfill import LegacyAgnesBackfill
 from .suppliers.execution import SnapshotExecutionGateway
 from .suppliers.model_tests import ModelTestRunner
@@ -76,6 +77,7 @@ def create_app(
             supplier_gateway,
             rate_limiter=app.state.supplier_rate_limiter,
         )
+        app.state.script_generation_runner = None
         if settings.m6_supplier_execution_enabled:
             app.state.m6_builtin_adapter_install_count = install_builtin_adapters(product_store)
             app.state.legacy_agnes_backfill_count = LegacyAgnesBackfill(
@@ -124,9 +126,21 @@ def create_app(
                 settings.data_root, rate_limiter=app.state.supplier_rate_limiter
             )
             await app.state.model_test_runner.start()
+        if (
+            settings.m6_supplier_execution_enabled
+            and settings.script_streaming_enabled
+        ):
+            product_store.recover_script_generation_runs()
+            app.state.script_generation_runner = ScriptGenerationBackgroundService(
+                data_root=settings.data_root,
+                repo_root=repo_root,
+            )
+            await app.state.script_generation_runner.start()
         try:
             yield
         finally:
+            if app.state.script_generation_runner is not None:
+                await app.state.script_generation_runner.stop()
             if app.state.model_test_runner is not None:
                 await app.state.model_test_runner.stop()
             if app.state.generation_poller is not None:

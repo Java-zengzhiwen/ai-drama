@@ -46,6 +46,15 @@ class ScriptGenerationRequest(BaseModel):
     target_duration_minutes: int | None = Field(default=None, ge=3, le=8)
 
 
+class ScriptGenerationRunRead(BaseModel):
+    run_id: str
+    status: str
+    last_sequence: int
+    character_count: int
+    revision_id: str = ""
+    error_code: str = ""
+
+
 class RevisionDecision(BaseModel):
     reviewer: str = "local-user"
     note: str = ""

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import asyncio
 import json
 from pathlib import Path
 import time
@@ -227,3 +228,52 @@ class ScriptGenerationRunner:
             error_code=str(error_code),
             evidence_object_id=evidence_object_id,
         )
+
+
+class ScriptGenerationBackgroundService:
+    """Owns thread-local database and gateway instances for the blocking stream."""
+
+    def __init__(self, *, data_root, repo_root):
+        self.data_root = Path(data_root).resolve()
+        self.repo_root = Path(repo_root).resolve()
+        self._task = None
+        self._stopping = False
+
+    async def start(self):
+        if self._task is None:
+            self._stopping = False
+            self._task = asyncio.create_task(self._run_forever())
+
+    async def stop(self):
+        self._stopping = True
+        if self._task is not None:
+            await self._task
+            self._task = None
+
+    async def _run_forever(self):
+        while not self._stopping:
+            result = await asyncio.to_thread(self._run_thread_cycle)
+            if result.started == 0:
+                await asyncio.sleep(0.25)
+
+    def _run_thread_cycle(self):
+        from ai_drama_runtime.store import RuntimeStore
+        from ai_drama_web.store import ProductStore
+        from ai_drama_web.suppliers.credentials import SupplierCredentialStore
+        from ai_drama_web.suppliers.execution import SnapshotExecutionGateway
+
+        runtime = RuntimeStore(
+            self.data_root / "runtime.db", self.data_root / "objects"
+        )
+        try:
+            store = ProductStore(runtime)
+            credentials = SupplierCredentialStore(store, self.data_root)
+            gateway = SnapshotExecutionGateway(store, credentials)
+            return ScriptGenerationRunner(
+                store,
+                runtime,
+                repo_root=self.repo_root,
+                gateway=gateway,
+            ).run_cycle()
+        finally:
+            runtime.close()
