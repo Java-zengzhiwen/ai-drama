@@ -4,7 +4,7 @@
 
 分支：`fix/aixora-message-input-normalization`
 
-状态：`PROPOSED — 等待书面批准`
+状态：`APPROVED — 用户于 2026-07-19 书面批准`
 
 实施状态：`false`
 
