@@ -95,7 +95,7 @@ Expected: `AIXORA_IMAGE_PREFLIGHT_PASS`.
 
 **Interfaces:**
 - Consumes: safe source state from Task 1
-- Produces: enabled custom supplier `aixora-image`, isolated supplier version/config revision, six overlay models, and no credential
+- Produces: enabled custom supplier `aixora-image`, isolated supplier version/config revision, six manifest-managed built-in models, and no credential
 
 - [ ] **Step 1: Execute the exact loopback-only clone operation**
 
@@ -103,8 +103,8 @@ Run:
 
 ```bash
 python3 - <<'PY'
-import copy
 import json
+import uuid
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -133,61 +133,61 @@ def get(path):
 try:
     suppliers = get("/suppliers")
     source_supplier = next(item for item in suppliers if item["slug"] == "aixora")
-    if any(item["slug"] == "aixora-image" for item in suppliers):
-        raise RuntimeError("AIXORA_IMAGE_ALREADY_EXISTS")
 
     source_id = source_supplier["supplier_id"]
     source_detail = get(f"/suppliers/{source_id}")
     source_code = get(f"/suppliers/{source_id}/code")["source"]
     source_models = get(f"/suppliers/{source_id}/models")
 
-    status, _, clone = call(
-        "POST",
-        "/suppliers",
-        {"slug": "aixora-image", "display_name": "aixora-image"},
-        {"If-None-Match": "*", "Idempotency-Key": "aixora-image-supplier-v1"},
+    existing_clone = next(
+        (item for item in suppliers if item["slug"] == "aixora-image"), None
     )
-    assert status == 201
-    created_supplier_id = clone["supplier_id"]
-    assert clone["credential"]["configured"] is False
-
-    catalog_etag = '"model-catalog-0"'
-    model_id_map = {}
-    for source_model in sorted(source_models, key=lambda item: item["provider_model_name"]):
-        definition = copy.deepcopy(source_model["definition"])
-        definition.pop("supplierModelId", None)
-        provider_name = source_model["provider_model_name"]
-        status, response_headers, created_model = call(
+    recovered_model_ids = {}
+    if existing_clone is None:
+        status, _, clone = call(
             "POST",
-            f"/suppliers/{created_supplier_id}/models",
-            {
-                "provider_model_name": provider_name,
-                "display_name": source_model["display_name"],
-                "capability": source_model["capability"],
-                "definition": definition,
-            },
-            {
-                "If-None-Match": "*",
-                "If-Match": catalog_etag,
-                "Idempotency-Key": f"aixora-image-model-{provider_name}-v1",
-            },
+            "/suppliers",
+            {"slug": "aixora-image", "display_name": "aixora-image"},
+            {"If-None-Match": "*", "Idempotency-Key": "aixora-image-supplier-v1"},
         )
         assert status == 201
-        new_model_id = created_model["supplier_model_id"]
-        model_id_map[source_model["supplier_model_id"]] = new_model_id
-        model_etag = response_headers["etag"]
-        catalog_etag = response_headers["x-model-catalog-etag"]
+        created_supplier_id = clone["supplier_id"]
+    else:
+        created_supplier_id = existing_clone["supplier_id"]
+        clone = get(f"/suppliers/{created_supplier_id}")
+        assert clone["enabled"] == 0, "EXISTING_CLONE_MUST_BE_DISABLED"
+        assert clone["credential"]["configured"] is False
+        assert clone["credential_active_job_count"] == 0
+        partial_models = get(f"/suppliers/{created_supplier_id}/models")
+        assert len(partial_models) in {0, 6}
+        for model in partial_models:
+            assert model["source"] == "overlay"
+            assert model["binding_count"] == 0
+            recovered_model_ids[model["provider_model_name"]] = model["supplier_model_id"]
+            status, response_headers, _ = call("GET", f"/models/{model['supplier_model_id']}")
+            assert status == 200
+            status, _, _ = call(
+                "DELETE",
+                f"/models/{model['supplier_model_id']}",
+                headers={
+                    "If-Match": (
+                        f"{response_headers['etag']}, "
+                        f"{response_headers['x-model-catalog-etag']}"
+                    )
+                },
+            )
+            assert status == 204
 
-        definition["supplierModelId"] = new_model_id
-        status, response_headers, revised_model = call(
-            "PATCH",
-            f"/models/{new_model_id}",
-            {"definition": definition, "acknowledged_binding_count": 0},
-            {"If-Match": f"{model_etag}, {catalog_etag}"},
+    clone = get(f"/suppliers/{created_supplier_id}")
+    assert clone["credential"]["configured"] is False
+    assert get(f"/suppliers/{created_supplier_id}/models") == []
+
+    model_id_map = {
+        source_model["supplier_model_id"]: recovered_model_ids.get(
+            source_model["provider_model_name"], uuid.uuid4().hex
         )
-        assert status == 200
-        assert revised_model["definition"]["supplierModelId"] == new_model_id
-        catalog_etag = response_headers["x-model-catalog-etag"]
+        for source_model in source_models
+    }
 
     transformed_source = source_code
     exact_replacements = {
@@ -222,6 +222,16 @@ try:
         {"If-Match": f'"config-{clone["config_revision"]}"'},
     )
     assert status == 200
+
+    clone = get(f"/suppliers/{created_supplier_id}")
+    if clone["enabled"] == 0:
+        status, _, _ = call(
+            "PATCH",
+            f"/suppliers/{created_supplier_id}",
+            {"enabled": True},
+            {"If-Match": f'"supplier-{clone["revision"]}"'},
+        )
+        assert status == 200
     print(json.dumps({
         "result": "AIXORA_IMAGE_CLONE_CREATED",
         "supplier_id": created_supplier_id,
@@ -233,12 +243,13 @@ except Exception:
     if created_supplier_id:
         try:
             clone = get(f"/suppliers/{created_supplier_id}")
-            call(
-                "PATCH",
-                f"/suppliers/{created_supplier_id}",
-                {"enabled": False},
-                {"If-Match": f'"supplier-{clone["revision"]}"'},
-            )
+            if clone["enabled"]:
+                call(
+                    "PATCH",
+                    f"/suppliers/{created_supplier_id}",
+                    {"enabled": False},
+                    {"If-Match": f'"supplier-{clone["revision"]}"'},
+                )
         except Exception:
             pass
     raise
