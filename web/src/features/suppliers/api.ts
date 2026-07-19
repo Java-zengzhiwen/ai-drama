@@ -116,9 +116,18 @@ export type ModelTestRead = {
   error_code?: string;
   error_message?: string;
   reasoning_effort?: string;
+  size?: string;
+  quality?: string;
 };
 
-export type ReasoningEffort = "low" | "medium" | "high";
+export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
+export type ImageSize = "auto" | "1024x1024" | "1024x1536" | "1536x1024";
+export type ImageQuality = "auto" | "low" | "medium" | "high";
+export type ModelTestOptions = {
+  reasoning_effort?: ReasoningEffort | null;
+  size?: ImageSize | null;
+  quality?: ImageQuality | null;
+};
 
 function withEtag<T>(response: AxiosResponse<T>): WithEtag<T> {
   return { data: response.data, etag: String(response.headers?.etag ?? "") };
@@ -287,12 +296,19 @@ export async function getModelTestFeatureStatus(): Promise<{ enabled: boolean }>
 export async function createModelTest(
   modelId: string,
   prompt: string,
-  reasoningEffort: ReasoningEffort | null,
+  options: ModelTestOptions,
   modelEtag: string,
   idempotencyKey: string,
 ): Promise<ModelTestRead> {
-  const body: { prompt: string; reasoning_effort?: ReasoningEffort } = { prompt };
-  if (reasoningEffort !== null) body.reasoning_effort = reasoningEffort;
+  const body: {
+    prompt: string;
+    reasoning_effort?: ReasoningEffort;
+    size?: ImageSize;
+    quality?: ImageQuality;
+  } = { prompt };
+  if (options.reasoning_effort) body.reasoning_effort = options.reasoning_effort;
+  if (options.size) body.size = options.size;
+  if (options.quality) body.quality = options.quality;
   const response = await apiClient.post<ModelTestRead>(
     `/models/${modelId}/tests`,
     body,

@@ -81,7 +81,7 @@ describe("model test dialog", () => {
     expect(api.createModelTest).toHaveBeenCalledWith(
       model.supplier_model_id,
       "一只白色陶瓷杯放在木桌上，柔和自然光，简洁写实，无文字",
-      null,
+      {},
       '"model-image-model-1-2"',
       "model-test-key-1",
     );
@@ -98,7 +98,12 @@ describe("model test dialog", () => {
       display_name: "GPT-5.6",
       provider_model_name: "gpt-5.6",
       capability: "text",
-      definition: { constraints: { reasoning_effort: "medium" } },
+      definition: {
+        constraints: {
+          reasoning_effort: "medium",
+          supported_reasoning_efforts: ["none", "low", "medium", "high", "xhigh", "max"],
+        },
+      },
     } as SupplierModelRead;
     api.createModelTest.mockResolvedValue({
       test_run_id: "run-text-1",
@@ -106,24 +111,99 @@ describe("model test dialog", () => {
       capability: "text",
       status: "completed",
       output: "连接测试成功",
-      reasoning_effort: "high",
+      reasoning_effort: "max",
       elapsed_ms: 420,
       created_at: "2026-07-17T00:00:00Z",
     });
 
     renderDialog(true, textSupplier, textModel);
     expect(screen.getByLabelText("本次思考深度")).toHaveValue("");
-    fireEvent.change(screen.getByLabelText("本次思考深度"), { target: { value: "high" } });
+    expect(screen.getByRole("option", { name: "最大" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("本次思考深度"), { target: { value: "max" } });
     fireEvent.click(screen.getByRole("button", { name: "确认并测试" }));
 
     await waitFor(() => expect(api.createModelTest).toHaveBeenCalledWith(
       textModel.supplier_model_id,
       "请只回复：连接测试成功",
-      "high",
+      { reasoning_effort: "max" },
       '"model-text-model-1-2"',
       "model-test-key-1",
     ));
-    expect(await screen.findByText("实际思考深度：高")).toBeInTheDocument();
+    expect(await screen.findByText("实际思考深度：最大")).toBeInTheDocument();
+  });
+
+  test("limits GPT-5.5 reasoning options to its declared model capability", () => {
+    const textModel = {
+      ...model,
+      supplier_model_id: "text-model-55",
+      display_name: "GPT-5.5",
+      provider_model_name: "gpt-5.5",
+      capability: "text",
+      definition: {
+        constraints: {
+          reasoning_effort: "medium",
+          supported_reasoning_efforts: ["none", "low", "medium", "high", "xhigh"],
+        },
+      },
+    } as SupplierModelRead;
+
+    renderDialog(true, supplier, textModel);
+
+    expect(screen.getByRole("option", { name: "超高" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "最大" })).not.toBeInTheDocument();
+  });
+
+  test("submits and restores declared GPT Image 2 size and quality overrides", async () => {
+    const imageSupplier = {
+      ...supplier,
+      config_values: { image_size: "1024x1024", image_quality: "auto" },
+    } as SupplierRead;
+    const imageModel = {
+      ...model,
+      supplier_model_id: "gpt-image-model-2",
+      display_name: "GPT Image 2",
+      provider_model_name: "gpt-image-2",
+      definition: {
+        default_size: "1024x1024",
+        constraints: {
+          supported_sizes: ["auto", "1024x1024", "1024x1536", "1536x1024"],
+          default_quality: "auto",
+          supported_qualities: ["auto", "low", "medium", "high"],
+        },
+      },
+    } as SupplierModelRead;
+    api.createModelTest.mockResolvedValue({
+      test_run_id: "run-image-2",
+      supplier_model_id: imageModel.supplier_model_id,
+      capability: "image",
+      status: "completed",
+      size: "1024x1536",
+      quality: "high",
+      media_type: "image/png",
+      byte_size: 2048,
+      elapsed_ms: 900,
+      created_at: "2026-07-19T00:00:00Z",
+    });
+    api.getModelTestContent.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
+
+    renderDialog(true, imageSupplier, imageModel);
+    expect(screen.getByLabelText("本次图片尺寸")).toHaveValue("");
+    expect(screen.getByLabelText("本次图片质量")).toHaveValue("");
+    expect(screen.queryByRole("option", { name: /2K/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /4K/ })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("本次图片尺寸"), { target: { value: "1024x1536" } });
+    fireEvent.change(screen.getByLabelText("本次图片质量"), { target: { value: "high" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认并测试" }));
+
+    await waitFor(() => expect(api.createModelTest).toHaveBeenCalledWith(
+      imageModel.supplier_model_id,
+      "一只白色陶瓷杯放在木桌上，柔和自然光，简洁写实，无文字",
+      { size: "1024x1536", quality: "high" },
+      '"model-gpt-image-model-2-2"',
+      "model-test-key-1",
+    ));
+    expect(await screen.findByText("实际尺寸：1024 × 1536")).toBeInTheDocument();
+    expect(screen.getByText("实际质量：高")).toBeInTheDocument();
   });
 
   test("restores and locks the reasoning override with the idempotent request", async () => {

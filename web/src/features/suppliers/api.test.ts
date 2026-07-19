@@ -157,8 +157,14 @@ describe("supplier management API", () => {
     post.mockResolvedValue({ data: { test_run_id: "run-1", status: "queued" }, headers: {} });
 
     await getModelTestFeatureStatus();
-    await createModelTest("model-1", "hello", null, '"model-model-1-2"', "test-key-1");
-    await createModelTest("model-1", "hello", "high", '"model-model-1-2"', "test-key-2");
+    await createModelTest("model-1", "hello", {}, '"model-model-1-2"', "test-key-1");
+    await createModelTest(
+      "model-1",
+      "hello",
+      { reasoning_effort: "max", size: "1536x1024", quality: "high" },
+      '"model-model-1-2"',
+      "test-key-2",
+    );
     await recoverModelTest("model-1", "test-key-1");
     await getModelTest("run-1");
     await getModelTestContent("run-1");
@@ -173,7 +179,7 @@ describe("supplier management API", () => {
     expect(post).toHaveBeenNthCalledWith(
       2,
       "/models/model-1/tests",
-      { prompt: "hello", reasoning_effort: "high" },
+      { prompt: "hello", reasoning_effort: "max", size: "1536x1024", quality: "high" },
       { headers: { "Idempotency-Key": "test-key-2", "If-Match": '"model-model-1-2"' } },
     );
     expect(get).toHaveBeenNthCalledWith(2, "/models/model-1/tests/by-idempotency-key", {

@@ -6,7 +6,10 @@ import {
   getModelTestContent,
   newIdempotencyKey,
   recoverModelTest,
+  type ImageQuality,
+  type ImageSize,
   type ModelTestRead,
+  type ModelTestOptions,
   type ReasoningEffort,
   type SupplierModelRead,
   type SupplierRead,
@@ -28,21 +31,93 @@ type StoredRun = {
   idempotencyKey: string;
   testRunId?: string;
   reasoningEffort?: ReasoningEffort | null;
+  imageSize?: ImageSize | null;
+  imageQuality?: ImageQuality | null;
 };
 
 const REASONING_LABELS: Record<ReasoningEffort, string> = {
+  none: "无额外推理",
+  low: "低",
+  medium: "中",
+  high: "高",
+  xhigh: "超高",
+  max: "最大",
+};
+const REASONING_VALUES = Object.keys(REASONING_LABELS) as ReasoningEffort[];
+const IMAGE_SIZE_LABELS: Record<ImageSize, string> = {
+  auto: "自动",
+  "1024x1024": "方形 1024 × 1024",
+  "1024x1536": "竖版 1024 × 1536",
+  "1536x1024": "横版 1536 × 1024",
+};
+const IMAGE_SIZE_VALUES = Object.keys(IMAGE_SIZE_LABELS) as ImageSize[];
+const IMAGE_QUALITY_LABELS: Record<ImageQuality, string> = {
+  auto: "自动",
   low: "低",
   medium: "中",
   high: "高",
 };
+const IMAGE_QUALITY_VALUES = Object.keys(IMAGE_QUALITY_LABELS) as ImageQuality[];
 
-function modelReasoningEffort(model: SupplierModelRead): ReasoningEffort {
+function modelConstraints(model: SupplierModelRead): Record<string, unknown> {
   const constraints = model.definition?.constraints;
-  if (constraints && !Array.isArray(constraints) && typeof constraints === "object") {
-    const value = (constraints as Record<string, unknown>).reasoning_effort;
-    if (value === "low" || value === "high") return value;
-  }
-  return "medium";
+  return constraints && !Array.isArray(constraints) && typeof constraints === "object"
+    ? constraints as Record<string, unknown>
+    : {};
+}
+
+function declaredValues<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  fallback: readonly T[] = [],
+): T[] {
+  if (!Array.isArray(value)) return [...fallback];
+  const supported = value.filter((item): item is T => (
+    typeof item === "string" && allowed.includes(item as T)
+  ));
+  return supported.length === value.length && supported.length > 0
+    ? [...new Set(supported)]
+    : [...fallback];
+}
+
+function supportedReasoningEfforts(model: SupplierModelRead): ReasoningEffort[] {
+  return declaredValues(
+    modelConstraints(model).supported_reasoning_efforts,
+    REASONING_VALUES,
+    ["low", "medium", "high"],
+  );
+}
+
+function modelReasoningEffort(supplier: SupplierRead, model: SupplierModelRead): ReasoningEffort {
+  const supported = supportedReasoningEfforts(model);
+  const values = [supplier.config_values?.reasoning_effort, modelConstraints(model).reasoning_effort];
+  return values.find((value): value is ReasoningEffort => (
+    typeof value === "string" && supported.includes(value as ReasoningEffort)
+  )) ?? (supported.includes("medium") ? "medium" : supported[0]);
+}
+
+function supportedImageSizes(model: SupplierModelRead): ImageSize[] {
+  return declaredValues(modelConstraints(model).supported_sizes, IMAGE_SIZE_VALUES);
+}
+
+function supportedImageQualities(model: SupplierModelRead): ImageQuality[] {
+  return declaredValues(modelConstraints(model).supported_qualities, IMAGE_QUALITY_VALUES);
+}
+
+function modelImageSize(supplier: SupplierRead, model: SupplierModelRead): ImageSize {
+  const supported = supportedImageSizes(model);
+  const values = [supplier.config_values?.image_size, model.definition?.default_size];
+  return values.find((value): value is ImageSize => (
+    typeof value === "string" && supported.includes(value as ImageSize)
+  )) ?? supported[0];
+}
+
+function modelImageQuality(supplier: SupplierRead, model: SupplierModelRead): ImageQuality {
+  const supported = supportedImageQualities(model);
+  const values = [supplier.config_values?.image_quality, modelConstraints(model).default_quality];
+  return values.find((value): value is ImageQuality => (
+    typeof value === "string" && supported.includes(value as ImageQuality)
+  )) ?? supported[0];
 }
 
 export function modelTestStorageKey(modelId: string): string {
@@ -66,6 +141,8 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
   const [prompt, setPrompt] = useState(model.capability === "image" ? DEFAULT_IMAGE_PROMPT : DEFAULT_TEXT_PROMPT);
   const [run, setRun] = useState<ModelTestRead | null>(null);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort | null>(null);
+  const [imageSize, setImageSize] = useState<ImageSize | null>(null);
+  const [imageQuality, setImageQuality] = useState<ImageQuality | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [recovering, setRecovering] = useState(storedRunPresent);
   const [error, setError] = useState("");
@@ -103,6 +180,8 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
     setPrompt(model.capability === "image" ? DEFAULT_IMAGE_PROMPT : DEFAULT_TEXT_PROMPT);
     setRun(null);
     setReasoningEffort(null);
+    setImageSize(null);
+    setImageQuality(null);
     setError("");
     setPollAttempt(0);
     const raw = sessionStorage.getItem(modelTestStorageKey(model.supplier_model_id));
@@ -123,6 +202,8 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
       return;
     }
     setReasoningEffort(stored.reasoningEffort ?? null);
+    setImageSize(stored.imageSize ?? null);
+    setImageQuality(stored.imageQuality ?? null);
     let cancelled = false;
     let retryTimer: number | undefined;
     const recover = async () => {
@@ -168,21 +249,33 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
     setError("");
     const idempotencyKey = newIdempotencyKey("model-test");
     const selectedReasoningEffort = model.capability === "text" ? reasoningEffort : null;
+    const selectedImageSize = model.capability === "image" ? imageSize : null;
+    const selectedImageQuality = model.capability === "image" ? imageQuality : null;
+    const options: ModelTestOptions = {};
+    if (selectedReasoningEffort) options.reasoning_effort = selectedReasoningEffort;
+    if (selectedImageSize) options.size = selectedImageSize;
+    if (selectedImageQuality) options.quality = selectedImageQuality;
+    const storedOptions = {
+      idempotencyKey,
+      reasoningEffort: selectedReasoningEffort,
+      imageSize: selectedImageSize,
+      imageQuality: selectedImageQuality,
+    };
     sessionStorage.setItem(
       modelTestStorageKey(model.supplier_model_id),
-      JSON.stringify({ idempotencyKey, reasoningEffort: selectedReasoningEffort }),
+      JSON.stringify(storedOptions),
     );
     try {
       const created = await createModelTest(
         model.supplier_model_id,
         prompt.trim(),
-        selectedReasoningEffort,
+        options,
         modelEtag(model),
         idempotencyKey,
       );
       sessionStorage.setItem(
         modelTestStorageKey(model.supplier_model_id),
-        JSON.stringify({ idempotencyKey, testRunId: created.test_run_id, reasoningEffort: selectedReasoningEffort }),
+        JSON.stringify({ ...storedOptions, testRunId: created.test_run_id }),
       );
       await acceptRun(created);
     } catch (caught) {
@@ -198,7 +291,7 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
         const recovered = await recoverModelTest(model.supplier_model_id, idempotencyKey);
         sessionStorage.setItem(
           modelTestStorageKey(model.supplier_model_id),
-          JSON.stringify({ idempotencyKey, testRunId: recovered.test_run_id, reasoningEffort: selectedReasoningEffort }),
+          JSON.stringify({ ...storedOptions, testRunId: recovered.test_run_id }),
         );
         await acceptRun(recovered);
       } catch {
@@ -213,6 +306,9 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
   const terminal = run && !ACTIVE_STATUSES.has(run.status);
   const locked = storedRunPresent || recovering || submitting || submitLock.current
     || Boolean(run && ACTIVE_STATUSES.has(run.status));
+  const reasoningOptions = supportedReasoningEfforts(model);
+  const imageSizeOptions = supportedImageSizes(model);
+  const imageQualityOptions = supportedImageQualities(model);
 
   return (
     <Modal
@@ -255,12 +351,44 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
               )}
               disabled={locked}
             >
-              <option value="">跟随模型默认（当前：{REASONING_LABELS[modelReasoningEffort(model)]}）</option>
-              <option value="low">低</option>
-              <option value="medium">中</option>
-              <option value="high">高</option>
+              <option value="">跟随供应商默认（当前：{REASONING_LABELS[modelReasoningEffort(supplier, model)]}）</option>
+              {reasoningOptions.map((value) => (
+                <option key={value} value={value}>{REASONING_LABELS[value]}</option>
+              ))}
             </select>
           </label>
+        ) : null}
+        {model.capability === "image" && imageSizeOptions.length ? (
+          <div className="model-test-options-grid">
+            <label className="model-test-prompt">
+              <span>本次图片尺寸</span>
+              <select
+                aria-label="本次图片尺寸"
+                value={imageSize ?? ""}
+                onChange={(event) => setImageSize(event.target.value ? event.target.value as ImageSize : null)}
+                disabled={locked}
+              >
+                <option value="">跟随供应商默认（当前：{IMAGE_SIZE_LABELS[modelImageSize(supplier, model)]}）</option>
+                {imageSizeOptions.map((value) => (
+                  <option key={value} value={value}>{IMAGE_SIZE_LABELS[value]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="model-test-prompt">
+              <span>本次图片质量</span>
+              <select
+                aria-label="本次图片质量"
+                value={imageQuality ?? ""}
+                onChange={(event) => setImageQuality(event.target.value ? event.target.value as ImageQuality : null)}
+                disabled={locked}
+              >
+                <option value="">跟随供应商默认（当前：{IMAGE_QUALITY_LABELS[modelImageQuality(supplier, model)]}）</option>
+                {imageQualityOptions.map((value) => (
+                  <option key={value} value={value}>{IMAGE_QUALITY_LABELS[value]}</option>
+                ))}
+              </select>
+            </label>
+          </div>
         ) : null}
         <Alert type="warning" showIcon message="将向真实供应商提交 1 次生成请求，可能产生费用。" />
         {run && ACTIVE_STATUSES.has(run.status) ? (
@@ -276,6 +404,8 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
               <div><dt>耗时</dt><dd>{run.elapsed_ms ?? 0} ms</dd></div>
               {run.usage && Object.keys(run.usage).length ? <div><dt>Token</dt><dd>{JSON.stringify(run.usage)}</dd></div> : null}
               {run.capability === "text" && run.reasoning_effort && run.reasoning_effort in REASONING_LABELS ? <div><dt>思考深度</dt><dd>实际思考深度：{REASONING_LABELS[run.reasoning_effort as ReasoningEffort]}</dd></div> : null}
+              {run.capability === "image" && run.size && run.size in IMAGE_SIZE_LABELS ? <div><dt>图片尺寸</dt><dd>实际尺寸：{IMAGE_SIZE_LABELS[run.size as ImageSize].replace(/^[^ ]+ /, "")}</dd></div> : null}
+              {run.capability === "image" && run.quality && run.quality in IMAGE_QUALITY_LABELS ? <div><dt>图片质量</dt><dd>实际质量：{IMAGE_QUALITY_LABELS[run.quality as ImageQuality]}</dd></div> : null}
             </dl>
           </div>
         ) : null}

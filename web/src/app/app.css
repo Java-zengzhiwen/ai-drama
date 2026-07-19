@@ -1711,6 +1711,33 @@ body {
   gap: 6px;
 }
 
+.model-test-prompt select {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  color: #1e293b;
+  background: #fff;
+  border: 1px solid #d9dee8;
+  border-radius: 6px;
+}
+
+.model-test-prompt select:focus {
+  border-color: #2f6fed;
+  outline: 2px solid rgb(47 111 237 / 14%);
+}
+
+.model-test-options-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+@media (max-width: 640px) {
+  .model-test-options-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .model-test-progress {
   display: flex;
   align-items: center;
