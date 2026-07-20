@@ -3171,6 +3171,31 @@ class ProductStore:
                     error_code=runtime_run.error_code or runtime_run.status,
                     evidence_object_id=session["evidence_object_id"],
                 )
+        unresolved = [
+            dict(row)
+            for row in self.conn.execute(
+                """
+                SELECT * FROM script_generation_runs
+                WHERE status IN ('submitting','streaming','finalizing')
+                """
+            ).fetchall()
+        ]
+        for session in unresolved:
+            failed_event = self.conn.execute(
+                """
+                SELECT 1 FROM script_generation_events
+                WHERE run_id = ? AND event_type = 'failed'
+                """,
+                (session["run_id"],),
+            ).fetchone()
+            if failed_event is None:
+                current = self.get_script_generation_run(session["run_id"])
+                self.append_script_generation_event(
+                    session["run_id"],
+                    sequence=current["last_sequence"] + 1,
+                    event_type="failed",
+                    payload={"error_code": "SUBMISSION_OUTCOME_UNKNOWN"},
+                )
         with self.conn:
             cursor = self.conn.execute(
                 """

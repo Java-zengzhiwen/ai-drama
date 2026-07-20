@@ -201,3 +201,23 @@ def test_recovery_emits_terminal_failure_for_a_rejected_candidate(tmp_path):
     assert session["status"] == "failed"
     assert session["revision_id"] == ""
     assert store.list_script_generation_events("session-1")[-1]["event_type"] == "failed"
+
+
+def test_recovery_emits_terminal_event_when_validation_outcome_is_unknown(tmp_path):
+    _repo_root, runtime, store, prepared = _runner_fixture(tmp_path)
+    store.transition_script_generation_run(
+        "session-1", expected_statuses=("prepared",), status="finalizing"
+    )
+    runtime.update_run(prepared.run_id, status="VALIDATING")
+
+    report = store.recover_script_generation_runs()
+
+    assert report == {"unknown_outcome": 1}
+    session = store.get_script_generation_run("session-1")
+    assert session["status"] == "unknown_outcome"
+    assert session["error_code"] == "SUBMISSION_OUTCOME_UNKNOWN"
+    events = store.list_script_generation_events("session-1")
+    assert events[-1]["event_type"] == "failed"
+    payload = runtime.read_text(events[-1]["payload_object_id"])
+    assert "SUBMISSION_OUTCOME_UNKNOWN" in payload
+    assert runtime.revisions_for_artifact(prepared.artifact_id) == []
