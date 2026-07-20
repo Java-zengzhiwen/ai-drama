@@ -10,6 +10,7 @@ from ai_drama_web.services.script_generation_stream import (
 )
 from ai_drama_web.services.script_workflow import SCRIPT_SKILL_REF
 from ai_drama_web.store import ProductStore
+from ai_drama_web.suppliers.snapshots import SupplierRuntimeUnavailable
 
 
 class FakeStreamingGateway:
@@ -41,6 +42,12 @@ class InvalidStreamingGateway:
         yield {"type": "started", "sequence": 0}
         yield {"type": "text_delta", "sequence": 1, "text": "# 第一场\n太短"}
         yield {"type": "completed", "sequence": 2, "evidence": {}}
+
+
+class RuntimeUnavailableGateway:
+    def invoke_stream(self, snapshot_hash, operation, request):
+        raise SupplierRuntimeUnavailable("SUPPLIER_RUNTIME_UNAVAILABLE")
+        yield
 
 
 def _runner_fixture(tmp_path):
@@ -139,6 +146,20 @@ def test_required_validation_failure_never_enters_formal_revision_chain(tmp_path
     assert session["status"] == "failed"
     assert session["revision_id"] == ""
     assert store.list_script_generation_events("session-1")[-1]["event_type"] == "failed"
+
+
+def test_runtime_unavailable_keeps_its_stable_error_code(tmp_path):
+    repo_root, runtime, store, _prepared = _runner_fixture(tmp_path)
+    runner = ScriptGenerationRunner(
+        store, runtime, repo_root=repo_root, gateway=RuntimeUnavailableGateway()
+    )
+
+    result = runner.run_cycle()
+
+    assert result.failed == 1
+    session = store.get_script_generation_run("session-1")
+    assert session["status"] == "failed"
+    assert session["error_code"] == "SUPPLIER_RUNTIME_UNAVAILABLE"
 
 
 def test_stream_display_waits_for_a_markdown_heading_and_hides_wrappers():

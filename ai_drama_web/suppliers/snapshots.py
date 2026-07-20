@@ -13,7 +13,9 @@ from .worker import (
 
 
 class SupplierRuntimeUnavailable(RuntimeError):
-    pass
+    def __init__(self, code="SUPPLIER_RUNTIME_UNAVAILABLE"):
+        super().__init__(code)
+        self.code = code
 
 
 @dataclass(frozen=True)
