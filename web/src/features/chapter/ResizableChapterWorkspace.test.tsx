@@ -15,6 +15,27 @@ function renderWorkspace() {
   );
 }
 
+function renderWorkspacePair() {
+  return render(
+    <>
+      <ResizableChapterWorkspace
+        center={<div>原文中央</div>}
+        left={<div>原文章节</div>}
+        leftDrawerTitle="原文章节导航"
+        right={<div>原文状态</div>}
+        rightDrawerTitle="原文详情"
+      />
+      <ResizableChapterWorkspace
+        center={<div>剧本中央</div>}
+        left={<div>剧本章节</div>}
+        leftDrawerTitle="剧本章节导航"
+        right={<div>剧本状态</div>}
+        rightDrawerTitle="剧本详情"
+      />
+    </>,
+  );
+}
+
 function setViewportWidth(width: number) {
   Object.defineProperty(window, "innerWidth", { configurable: true, value: width, writable: true });
 }
@@ -46,9 +67,9 @@ describe("ResizableChapterWorkspace", () => {
     renderWorkspace();
 
     const workspace = screen.getByTestId("resizable-chapter-workspace");
-    expect(workspace.style.getPropertyValue("--workspace-left")).toBe("11fr");
-    expect(workspace.style.getPropertyValue("--workspace-center")).toBe("73fr");
-    expect(workspace.style.getPropertyValue("--workspace-right")).toBe("16fr");
+    expect(workspace.style.getPropertyValue("--workspace-left")).toBe("11%");
+    expect(workspace.style.getPropertyValue("--workspace-center")).toBe("73%");
+    expect(workspace.style.getPropertyValue("--workspace-right")).toBe("16%");
   });
 
   test("persists keyboard changes and resets on double click", () => {
@@ -56,11 +77,11 @@ describe("ResizableChapterWorkspace", () => {
 
     const divider = screen.getByRole("separator", { name: "调整章节导航宽度" });
     fireEvent.keyDown(divider, { key: "ArrowRight" });
-    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-left")).toBe("12fr");
+    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-left")).toBe("12%");
     expect(JSON.parse(window.localStorage.getItem(WORKSPACE_RATIO_STORAGE_KEY) ?? "{}")).toMatchObject({ left: 12 });
 
     fireEvent.doubleClick(divider);
-    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-left")).toBe("11fr");
+    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-left")).toBe("11%");
   });
 
   test("exposes bounded separators and supports the complete keyboard contract", () => {
@@ -91,7 +112,7 @@ describe("ResizableChapterWorkspace", () => {
     const divider = screen.getByRole("separator", { name: "调整章节导航宽度" });
     fireEvent.pointerDown(divider, { clientX: 110, pointerId: 1 });
     fireEvent.pointerMove(divider, { clientX: 160, pointerId: 1 });
-    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-left")).toBe("16fr");
+    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-left")).toBe("16%");
     expect(setItem).not.toHaveBeenCalled();
     fireEvent.pointerUp(divider, { clientX: 160, pointerId: 1 });
 
@@ -99,11 +120,48 @@ describe("ResizableChapterWorkspace", () => {
     expect(JSON.parse(window.localStorage.getItem(WORKSPACE_RATIO_STORAGE_KEY) ?? "{}")).toMatchObject({ left: 16 });
   });
 
+  test("cancels an interrupted pointer drag without persisting the preview", () => {
+    const setItem = vi.spyOn(window.localStorage, "setItem");
+    renderWorkspace();
+
+    const divider = screen.getByRole("separator", { name: "调整章节导航宽度" });
+    fireEvent.pointerDown(divider, { clientX: 110, pointerId: 1 });
+    fireEvent.pointerMove(divider, { clientX: 160, pointerId: 1 });
+    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-left")).toBe("16%");
+
+    fireEvent.pointerCancel(divider, { pointerId: 1 });
+
+    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-left")).toBe("11%");
+    expect(setItem).not.toHaveBeenCalled();
+  });
+
   test("restores one global preference", () => {
     window.localStorage.setItem(WORKSPACE_RATIO_STORAGE_KEY, JSON.stringify({ version: 1, left: 13, right: 18 }));
     renderWorkspace();
 
-    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-left")).toBe("13fr");
+    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-left")).toBe("13%");
+  });
+
+  test("synchronizes a committed global preference across mounted workspaces", () => {
+    renderWorkspacePair();
+
+    const sourceDivider = screen.getAllByRole("separator", { name: "调整章节导航宽度" })[0];
+    fireEvent.keyDown(sourceDivider, { key: "ArrowRight" });
+
+    const workspaces = screen.getAllByTestId("resizable-chapter-workspace");
+    expect(workspaces[0].style.getPropertyValue("--workspace-left")).toBe("12%");
+    expect(workspaces[1].style.getPropertyValue("--workspace-left")).toBe("12%");
+  });
+
+  test("reports the maximum currently reachable value to assistive technology", () => {
+    window.localStorage.setItem(
+      WORKSPACE_RATIO_STORAGE_KEY,
+      JSON.stringify({ version: 1, left: 20, right: 12 }),
+    );
+    renderWorkspace();
+
+    expect(screen.getByRole("separator", { name: "调整详情栏宽度" }))
+      .toHaveAttribute("aria-valuemax", "25");
   });
 
   test("uses center-first drawers below 1024px", () => {
@@ -150,8 +208,8 @@ describe("ResizableChapterWorkspace", () => {
 
     setViewportWidth(1920);
     fireEvent(window, new Event("resize"));
-    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-left")).toBe("13fr");
-    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-right")).toBe("18fr");
+    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-left")).toBe("13%");
+    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-right")).toBe("18%");
   });
 
   test("falls back to defaults when local storage cannot be read", () => {
@@ -160,6 +218,6 @@ describe("ResizableChapterWorkspace", () => {
     });
 
     expect(() => renderWorkspace()).not.toThrow();
-    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-center")).toBe("73fr");
+    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-center")).toBe("73%");
   });
 });

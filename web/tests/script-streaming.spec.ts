@@ -70,13 +70,13 @@ if (runningInVitest) {
           approval_status: "pending",
           current: false,
           content: longScript,
-          validation_results: [{
-            validation_id: "validation-stream-1",
-            validator_id: "script_markdown_contract",
+          validation_results: Array.from({ length: 24 }, (_, index) => ({
+            validation_id: `validation-stream-${index + 1}`,
+            validator_id: `script_contract_${index + 1}`,
             status: "PASS",
             required: true,
             error_code: "",
-          }],
+          })),
         }] : []);
       }
       if (path === "/api/chapters/chapter-stream-2/script/revisions") return json([]);
@@ -185,8 +185,13 @@ if (runningInVitest) {
     await verifyDesktopViewports(page, "source");
 
     await page.setViewportSize({ width: 1440, height: 900 });
+    await page.getByRole("tab", { name: "剧本" }).click();
+    await page.getByRole("tab", { name: "原文" }).click();
     await dragLeftDividerToRatio(page, 15);
     await expectActiveLeftRatio(page, 15);
+    await page.getByRole("tab", { name: "剧本" }).click();
+    await expectActiveLeftRatio(page, 15);
+    await page.getByRole("tab", { name: "原文" }).click();
     await page.reload();
     await expectActiveLeftRatio(page, 15);
 
@@ -197,8 +202,16 @@ if (runningInVitest) {
     await page.getByRole("separator", { name: "调整章节导航宽度" }).dblclick();
     await expectActiveLeftRatio(page, 11);
 
+    await page.setViewportSize({ width: 1024, height: 800 });
+    await page.getByRole("separator", { name: "调整章节导航宽度" }).press("Home");
+    await page.getByRole("separator", { name: "调整详情栏宽度" }).press("Home");
+    await expectSideActionsContained(page);
+    await page.getByRole("separator", { name: "调整章节导航宽度" }).press("End");
+    await page.getByRole("separator", { name: "调整详情栏宽度" }).press("End");
+    await expectWorkspaceInsideViewport(page, "source at constrained 1024x800");
+
     await page.setViewportSize({ width: 768, height: 1024 });
-    await expectCompactWorkspace(page);
+    await expectCompactWorkspace(page, "原文转剧本");
 
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.getByRole("button", { name: "保存并生成剧本" }).click();
@@ -209,6 +222,9 @@ if (runningInVitest) {
     await expect(page.getByText("实时草稿")).toBeVisible();
     await expect(page.locator("span[aria-live='polite']")).toHaveText(/正在生成|正在重新连接/);
     await verifyDesktopViewports(page, "streaming");
+    await page.setViewportSize({ width: 768, height: 1024 });
+    await expectCompactWorkspace(page, "剧本详情");
+    await page.setViewportSize({ width: 1920, height: 1080 });
     await page.reload();
     await expect(page.getByRole("tab", { name: "剧本" })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByLabel("实时剧本内容")).toHaveValue(longScript);
@@ -221,6 +237,9 @@ if (runningInVitest) {
     await expect(page.getByLabel("实时剧本内容")).toHaveValue(partialScript);
     await expect(page.getByText("生成中断 · 该内容尚未保存为正式剧本版本")).toBeVisible();
     await verifyDesktopViewports(page, "failed");
+    await page.setViewportSize({ width: 768, height: 1024 });
+    await expectCompactWorkspace(page, "剧本详情");
+    await page.setViewportSize({ width: 1920, height: 1080 });
     if (qaDirectory) await captureQaState(page, qaDirectory, "failed");
 
     streamMode = "completed";
@@ -228,6 +247,8 @@ if (runningInVitest) {
     await page.reload();
     await expect(page.getByLabel("剧本内容")).toHaveValue(longScript);
     await verifyDesktopViewports(page, "completed");
+    await page.setViewportSize({ width: 768, height: 1024 });
+    await expectCompactWorkspace(page, "剧本详情");
     if (qaDirectory) await captureQaState(page, qaDirectory, "completed");
     expect(generationStartCount).toBe(1);
   });
@@ -244,10 +265,17 @@ async function activeWorkspace(page: import("@playwright/test").Page) {
 }
 
 async function verifyDesktopViewports(page: import("@playwright/test").Page, state: string) {
+  const requiredPanes = state === "source" || state === "completed"
+    ? ["left", "center", "right"]
+    : ["left", "center"];
   for (const viewport of desktopViewports) {
     await page.setViewportSize(viewport);
     await expectWorkspaceInsideViewport(page, `${state} at ${viewport.width}x${viewport.height}`);
-    await expectPaneScrollingDoesNotMoveDocument(page, `${state} at ${viewport.width}x${viewport.height}`);
+    await expectPaneScrollingDoesNotMoveDocument(
+      page,
+      `${state} at ${viewport.width}x${viewport.height}`,
+      requiredPanes,
+    );
   }
 }
 
@@ -271,35 +299,89 @@ async function expectWorkspaceInsideViewport(page: import("@playwright/test").Pa
   expect(metrics.bodyOverflowX, `${context} horizontal document overflow`).toBeLessThanOrEqual(1);
   expect(metrics.bodyOverflowY, `${context} vertical document overflow`).toBeLessThanOrEqual(1);
   expect(metrics.bottom, `${context} workspace bottom`).toBeLessThanOrEqual(metrics.viewportHeight + 1);
-  expect(metrics.centerRatio, `${context} center ratio`).toBeGreaterThanOrEqual(0.55);
+  // Grid tracks round to device pixels; allow at most one tenth of one percentage point.
+  expect(metrics.centerRatio, `${context} center ratio`).toBeGreaterThanOrEqual(0.549);
 }
 
-async function expectPaneScrollingDoesNotMoveDocument(page: import("@playwright/test").Page, context: string) {
-  const result = await page.evaluate(() => {
+async function expectPaneScrollingDoesNotMoveDocument(
+  page: import("@playwright/test").Page,
+  context: string,
+  requiredPanes: string[],
+) {
+  const result = await page.evaluate((paneNames) => {
     window.scrollTo(0, 0);
     const workspace = document.querySelector<HTMLElement>(
       ".ant-tabs-tabpane-active [data-testid='resizable-chapter-workspace']",
     );
     if (!workspace) throw new Error("active workspace is missing");
-    const targets = Array.from(workspace.querySelectorAll<HTMLElement>([
-      ".source-chapter-list",
-      ".source-manuscript-textarea",
-      ".source-inspector-scroll",
-      ".script-live-editor textarea",
-      ".script-editor-workspace textarea",
-      ".script-inspector-scroll",
-    ].join(",")));
-    let scrollableCount = 0;
-    for (const target of targets) {
-      if (target.scrollHeight > target.clientHeight + 1) {
-        scrollableCount += 1;
-        target.scrollTop = Math.min(64, target.scrollHeight - target.clientHeight);
-      }
+    const selectors: Record<string, string[]> = {
+      left: [".source-chapter-list", "[data-workspace-pane='left']"],
+      center: [".source-manuscript-textarea", ".script-live-editor textarea", ".script-editor-workspace textarea", "[data-workspace-pane='center']"],
+      right: [
+        ".source-inspector-scroll",
+        ".source-conversion-inspector",
+        ".script-inspector-scroll",
+        ".script-inspector-scroll > div[style*='overflow-x']",
+        ".script-inspector-pane",
+        "[data-workspace-pane='right']",
+      ],
+    };
+    const scrolled: Record<string, number> = {};
+    const diagnostics: Record<string, Array<{ selector: string; scrollHeight: number; clientHeight: number }>> = {};
+    for (const paneName of paneNames) {
+      diagnostics[paneName] = selectors[paneName].map((selector) => {
+        const candidate = workspace.querySelector<HTMLElement>(selector);
+        return {
+          clientHeight: candidate?.clientHeight ?? -1,
+          scrollHeight: candidate?.scrollHeight ?? -1,
+          selector,
+        };
+      });
+      const target = selectors[paneName]
+        .map((selector) => workspace.querySelector<HTMLElement>(selector))
+        .find((candidate) => candidate && candidate.scrollHeight > candidate.clientHeight + 1);
+      if (!target) continue;
+      target.scrollTop = 0;
+      target.scrollTop = Math.min(64, target.scrollHeight - target.clientHeight);
+      scrolled[paneName] = target.scrollTop;
     }
-    return { documentScrollY: window.scrollY, scrollableCount };
-  });
-  expect(result.scrollableCount, `${context} internal scroll targets`).toBeGreaterThanOrEqual(1);
+    return { diagnostics, documentScrollY: window.scrollY, scrolled };
+  }, requiredPanes);
+  expect(
+    Object.keys(result.scrolled).sort(),
+    `${context} independently scrollable panes ${JSON.stringify(result.diagnostics)}`,
+  )
+    .toEqual([...requiredPanes].sort());
+  for (const [pane, scrollTop] of Object.entries(result.scrolled)) {
+    expect(scrollTop, `${context} ${pane} scroll position`).toBeGreaterThan(0);
+  }
   expect(result.documentScrollY, `${context} document scroll`).toBe(0);
+}
+
+async function expectSideActionsContained(page: import("@playwright/test").Page) {
+  const result = await page.evaluate(() => {
+    const workspace = document.querySelector<HTMLElement>(
+      ".ant-tabs-tabpane-active [data-testid='resizable-chapter-workspace']",
+    );
+    const rightPane = workspace?.querySelector<HTMLElement>("[data-workspace-pane='right']");
+    if (!rightPane) throw new Error("right workspace pane is missing");
+    const paneRect = rightPane.getBoundingClientRect();
+    const buttons = Array.from(rightPane.querySelectorAll<HTMLElement>(".source-inspector-actions button"));
+    return {
+      buttons: buttons.map((button) => {
+        const rect = button.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, width: rect.width };
+      }),
+      paneLeft: paneRect.left,
+      paneRight: paneRect.right,
+    };
+  });
+  expect(result.buttons).toHaveLength(2);
+  for (const button of result.buttons) {
+    expect(button.width).toBeGreaterThan(0);
+    expect(button.left).toBeGreaterThanOrEqual(result.paneLeft - 1);
+    expect(button.right).toBeLessThanOrEqual(result.paneRight + 1);
+  }
 }
 
 async function dragLeftDividerToRatio(page: import("@playwright/test").Page, targetRatio: number) {
@@ -327,7 +409,7 @@ async function expectActiveLeftRatio(page: import("@playwright/test").Page, expe
   )).toBeCloseTo(expectedRatio, 1);
 }
 
-async function expectCompactWorkspace(page: import("@playwright/test").Page) {
+async function expectCompactWorkspace(page: import("@playwright/test").Page, rightDrawerTitle: string) {
   const workspace = await activeWorkspace(page);
   await expect(workspace.getByRole("separator")).toHaveCount(0);
   const overflow = await page.evaluate(() =>
@@ -335,14 +417,14 @@ async function expectCompactWorkspace(page: import("@playwright/test").Page) {
   );
   expect(overflow).toBeLessThanOrEqual(1);
   const leftTrigger = workspace.getByRole("button", { name: "打开章节导航" });
-  const rightTrigger = workspace.getByRole("button", { name: "打开原文转剧本" });
+  const rightTrigger = workspace.getByRole("button", { name: `打开${rightDrawerTitle}` });
   await leftTrigger.click();
   await expect(page.getByRole("dialog", { name: "章节导航" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog", { name: "章节导航" })).toBeHidden();
   await expect(leftTrigger).toBeFocused();
   await rightTrigger.click();
-  await expect(page.getByRole("dialog", { name: "原文转剧本" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: rightDrawerTitle })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(rightTrigger).toBeFocused();
 }

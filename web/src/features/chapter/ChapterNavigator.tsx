@@ -43,13 +43,11 @@ export function ChapterNavigator({ chapter, currentStateLabel }: ChapterNavigato
         {filteredChapters.map((item) => {
           const current = item.chapter_id === chapter.chapter_id;
           const complete = Boolean(item.current_source_revision_id);
-          const stateLabel = current && currentStateLabel
+          const stateLabel = complete && current && currentStateLabel
             ? currentStateLabel
             : complete
               ? "原文已确认"
-              : current
-                ? "原文处理中"
-                : "未开始";
+              : "未开始";
           const chapterLinkContent = (
             <>
               <span className="source-chapter-position">{String(item.position).padStart(2, "0")}</span>

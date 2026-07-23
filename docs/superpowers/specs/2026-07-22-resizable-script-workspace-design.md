@@ -4,9 +4,9 @@
 
 分支：`docs/resizable-script-workspace-design`
 
-状态：`APPROVED_IN_DIALOGUE_PENDING_WRITTEN_SPEC_REVIEW`
+状态：`APPROVED_AND_IMPLEMENTED`
 
-实施状态：`false`
+实施状态：`true`
 
 ## 1. 背景
 

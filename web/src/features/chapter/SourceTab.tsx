@@ -226,9 +226,10 @@ export function SourceTab({ chapter, onLegacyScriptGenerated, onScriptGeneration
   const modelSelectionReady = Boolean(selectedModel)
     && !bindingsQuery.isLoading
     && !modelCatalogQuery.isLoading;
+  const sourceFormId = `source-conversion-form-${chapter.chapter_id}`;
 
   return (
-    <form aria-label="原文编辑" className="source-conversion-layout" onSubmit={submit}>
+    <form aria-label="原文编辑" className="source-conversion-layout" id={sourceFormId} onSubmit={submit}>
       <ResizableChapterWorkspace
         center={(
           <section aria-label="原文编辑区" className="source-manuscript">
@@ -402,6 +403,7 @@ export function SourceTab({ chapter, onLegacyScriptGenerated, onScriptGeneration
         <div className="source-inspector-actions">
           <Button
             disabled={!normalizedDraft || mutationPending}
+            form={sourceFormId}
             htmlType="submit"
             icon={<SaveOutlined aria-hidden="true" />}
             loading={saveMutation.isPending && !generateMutation.isPending}

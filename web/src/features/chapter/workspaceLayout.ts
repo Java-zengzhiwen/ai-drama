@@ -58,7 +58,18 @@ export function parseStoredPaneRatios(raw: string | null): PaneRatios | null {
     if (value.version !== 1 || !Number.isFinite(value.left) || !Number.isFinite(value.right)) {
       return null;
     }
-    return { left: Number(value.left), right: Number(value.right) };
+    const left = Number(value.left);
+    const right = Number(value.right);
+    if (
+      left < MIN_LEFT_RATIO
+      || left > MAX_LEFT_RATIO
+      || right < MIN_RIGHT_RATIO
+      || right > MAX_RIGHT_RATIO
+      || left + right > 100 - MIN_CENTER_RATIO
+    ) {
+      return null;
+    }
+    return { left, right };
   } catch {
     return null;
   }

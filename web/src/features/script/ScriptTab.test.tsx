@@ -428,7 +428,7 @@ describe("chapter source and script workspace tabs", () => {
 
     expect(await screen.findByRole("region", { name: "流程门" })).toHaveAttribute("data-expanded", "false");
     const workspace = await screen.findByTestId("resizable-chapter-workspace");
-    expect(workspace.style.getPropertyValue("--workspace-center")).toBe("73fr");
+    expect(workspace.style.getPropertyValue("--workspace-center")).toBe("73%");
     expect(screen.getByRole("complementary", { name: "章节导航" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "原文编辑区" })).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "原文转剧本" })).toBeInTheDocument();
@@ -650,6 +650,28 @@ describe("chapter source and script workspace tabs", () => {
     expect(mockedPost).not.toHaveBeenCalledWith("/chapters/chapter-1/script/generate");
   });
 
+  test("saves source from the compact inspector drawer", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 768,
+      writable: true,
+    });
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("小说原文"), {
+      target: { value: "第一章正文。沈清荷醒来。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "打开原文转剧本" }));
+    const inspector = await screen.findByRole("dialog", { name: "原文转剧本" });
+    fireEvent.click(within(inspector).getByRole("button", { name: "仅保存原文" }));
+
+    await waitFor(() =>
+      expect(mockedPost).toHaveBeenCalledWith("/chapters/chapter-1/source-revisions", {
+        content: "第一章正文。沈清荷醒来。",
+      }),
+    );
+  });
+
   test("shows backend error codes when script generation fails", async () => {
     mockedPost.mockImplementation(async (url: string, payload?: unknown) => {
       if (url === "/chapters/chapter-1/source-revisions") {
@@ -718,6 +740,10 @@ describe("chapter source and script workspace tabs", () => {
     expect(await screen.findByText("CHAPTER_STATUS_FAILED")).toBeInTheDocument();
     expect(screen.getByText("chapter status unavailable")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /重\s*试/ })).toBeInTheDocument();
+    expect(screen.getByTestId("workflow-status-band")).toContainElement(
+      screen.getByText("CHAPTER_STATUS_FAILED").closest(".ant-alert"),
+    );
+    expect(screen.queryByRole("region", { name: "流程门" })).not.toBeInTheDocument();
   });
 
   test("shows backend error codes and can retry source save failures", async () => {

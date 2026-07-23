@@ -40,6 +40,9 @@ describe("workspace pane ratios", () => {
     "not-json",
     JSON.stringify({ version: 2, left: 11, right: 16 }),
     JSON.stringify({ version: 1, left: "11", right: 16 }),
+    JSON.stringify({ version: 1, left: 7, right: 16 }),
+    JSON.stringify({ version: 1, left: 11, right: 29 }),
+    JSON.stringify({ version: 1, left: 20, right: 26 }),
   ])("rejects invalid stored preferences: %s", (raw) => {
     expect(parseStoredPaneRatios(raw)).toBeNull();
   });

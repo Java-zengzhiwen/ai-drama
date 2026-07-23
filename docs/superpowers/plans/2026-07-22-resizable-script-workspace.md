@@ -909,13 +909,25 @@ git commit -m "test: verify resizable script workspace"
 
 ### Acceptance Evidence (2026-07-23)
 
-- Focused workspace unit suites: `27 passed`; focused layout suite: `18 passed`.
-- Backend regression: `774 passed, 1 skipped`; Web unit regression: `153 passed, 5 skipped`; Worker: `37 passed`.
+- Focused post-review workspace suites: `47 passed`.
+- Backend regression: `774 passed, 1 skipped`; Web unit regression: `161 passed, 5 skipped`; Worker: `37 passed`.
 - Web production build: PASS; focused mocked streaming E2E: PASS; complete Playwright regression: `12 passed`.
 - M3, M4, M6B, M6C, M6D, migration, and clean-worktree Storyboard verifiers: PASS.
 - M6 supplier/model management semantic checks `M6E-001` through `M6E-018`: PASS.
 - `git diff --check`: PASS; tracked secret scan found no real credential; production supplier execution remained disabled.
 - Real Provider requests: text `0`, image `0`, video `0`.
+
+### Independent Review Remediation (2026-07-23)
+
+- Synchronized committed pane preferences across every mounted source/script workspace and across browser documents.
+- Bound the compact Drawer save action to its owning source form and verified the real Portal interaction.
+- Rejected out-of-range stored preferences instead of silently clamping corrupted data.
+- Replaced fixed separator tracks with overlay hit areas so the declared three percentages consume exactly the workspace width.
+- Added container-responsive side-pane controls for legal minimum widths and browser coverage at `1024x800`.
+- Collapsed status-error and normal gate rendering into one explicit workflow status row.
+- Strengthened E2E to verify pane-specific scrolling, same-page tab synchronization, boundary geometry, and compact source/live/failed/formal states.
+- Corrected empty-chapter navigation semantics and exposed dynamically reachable ARIA maxima.
+- Removed collapsed gate details from the accessibility tree and restored ratios on interrupted pointer capture.
 
 ## Definition Of Done
 

@@ -21,7 +21,7 @@ export function WorkflowGateBar({ details, summary }: WorkflowGateBarProps) {
       ) : null}
       {!expanded && details.length ? (
         <>
-          {details.map((detail) => <span className="visually-hidden" key={detail}>{detail}</span>)}
+          {details.map((detail) => <span hidden key={detail}>{detail}</span>)}
         </>
       ) : null}
       {expanded ? <ul>{details.map((detail) => <li key={detail}>{detail}</li>)}</ul> : null}

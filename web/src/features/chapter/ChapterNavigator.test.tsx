@@ -33,6 +33,19 @@ function renderNavigator() {
   );
 }
 
+function renderEmptyNavigator() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const emptyChapter = { ...currentChapter, current_source_revision_id: "" };
+  listChapters.mockResolvedValue([emptyChapter]);
+  render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <ChapterNavigator chapter={emptyChapter} currentStateLabel="原文已确认" />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
 describe("ChapterNavigator", () => {
   beforeEach(() => {
     listChapters.mockResolvedValue([
@@ -66,5 +79,12 @@ describe("ChapterNavigator", () => {
 
     expect(await screen.findByText("正在生成")).toBeVisible();
     expect(screen.getByRole("link", { name: /第一章/ })).toHaveAttribute("aria-current", "page");
+  });
+
+  test("does not label an empty current chapter as source confirmed", async () => {
+    renderEmptyNavigator();
+
+    expect(await screen.findByText("未开始")).toBeVisible();
+    expect(screen.queryByText("原文已确认")).not.toBeInTheDocument();
   });
 });

@@ -136,16 +136,24 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
         ))}
       </div>
 
-      {statusQuery.isError ? (
+      {activeTab === "source" || activeTab === "script" ? (
+        <div className="workflow-status-band" data-testid="workflow-status-band">
+          {statusQuery.isError ? (
+            <WorkflowErrorAlert
+              error={statusQuery.error}
+              fallbackMessage="流程状态加载失败。请重试。"
+              onRetry={() => void statusQuery.refetch()}
+            />
+          ) : (
+            <WorkflowGateBar details={workflowGate.details} summary={workflowGate.summary} />
+          )}
+        </div>
+      ) : statusQuery.isError ? (
         <WorkflowErrorAlert
           error={statusQuery.error}
           fallbackMessage="流程状态加载失败。请重试。"
           onRetry={() => void statusQuery.refetch()}
         />
-      ) : null}
-
-      {activeTab === "source" || activeTab === "script" ? (
-        <WorkflowGateBar details={workflowGate.details} summary={workflowGate.summary} />
       ) : null}
 
       {chapterQuery.isLoading || !chapter ? (

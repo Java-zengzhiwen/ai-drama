@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   MAX_LEFT_RATIO,
   MAX_RIGHT_RATIO,
+  MIN_CENTER_RATIO,
   MIN_LEFT_RATIO,
   MIN_RIGHT_RATIO,
   centerRatio,
@@ -110,10 +111,12 @@ export function ResizableChapterWorkspace({
   }
 
   function handlePointerCancel(event: PointerEvent<HTMLButtonElement>) {
-    if (!dragRef.current) return;
+    const drag = dragRef.current;
+    if (!drag) return;
     dragRef.current = null;
     delete event.currentTarget.dataset.dragging;
-    commit(ratiosRef.current);
+    ratiosRef.current = drag.startRatios;
+    preview(drag.startRatios);
   }
 
   function handleKeyDown(divider: WorkspaceDivider, event: KeyboardEvent<HTMLButtonElement>) {
@@ -191,9 +194,9 @@ export function ResizableChapterWorkspace({
   }
 
   const style: WorkspaceStyle = {
-    "--workspace-left": `${ratios.left}fr`,
-    "--workspace-center": `${centerRatio(ratios)}fr`,
-    "--workspace-right": `${ratios.right}fr`,
+    "--workspace-left": `${ratios.left}%`,
+    "--workspace-center": `${centerRatio(ratios)}%`,
+    "--workspace-right": `${ratios.right}%`,
   };
 
   return (
@@ -208,9 +211,11 @@ export function ResizableChapterWorkspace({
         onKeyDown={handleKeyDown}
         onPointerDown={handlePointerDown}
         onPointerCancel={handlePointerCancel}
+        onLostPointerCapture={handlePointerCancel}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         value={ratios.left}
+        maximum={Math.min(MAX_LEFT_RATIO, 100 - MIN_CENTER_RATIO - ratios.right)}
       />
       <div className="chapter-workspace-center" data-workspace-pane="center">
         {center}
@@ -222,9 +227,11 @@ export function ResizableChapterWorkspace({
         onKeyDown={handleKeyDown}
         onPointerDown={handlePointerDown}
         onPointerCancel={handlePointerCancel}
+        onLostPointerCapture={handlePointerCancel}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         value={ratios.right}
+        maximum={Math.min(MAX_RIGHT_RATIO, 100 - MIN_CENTER_RATIO - ratios.left)}
       />
       <aside aria-label={rightDrawerTitle} className="chapter-workspace-right" data-workspace-pane="right">
         {right}
@@ -240,9 +247,11 @@ type WorkspaceSeparatorProps = {
   onKeyDown: (divider: WorkspaceDivider, event: KeyboardEvent<HTMLButtonElement>) => void;
   onPointerDown: (divider: WorkspaceDivider, event: PointerEvent<HTMLButtonElement>) => void;
   onPointerCancel: (event: PointerEvent<HTMLButtonElement>) => void;
+  onLostPointerCapture: (event: PointerEvent<HTMLButtonElement>) => void;
   onPointerMove: (event: PointerEvent<HTMLButtonElement>) => void;
   onPointerUp: (event: PointerEvent<HTMLButtonElement>) => void;
   value: number;
+  maximum: number;
 };
 
 function WorkspaceSeparator({
@@ -252,12 +261,13 @@ function WorkspaceSeparator({
   onKeyDown,
   onPointerDown,
   onPointerCancel,
+  onLostPointerCapture,
   onPointerMove,
   onPointerUp,
   value,
+  maximum,
 }: WorkspaceSeparatorProps) {
   const minimum = divider === "left" ? MIN_LEFT_RATIO : MIN_RIGHT_RATIO;
-  const maximum = divider === "left" ? MAX_LEFT_RATIO : MAX_RIGHT_RATIO;
   return (
     <button
       aria-label={label}
@@ -266,10 +276,12 @@ function WorkspaceSeparator({
       aria-valuemin={minimum}
       aria-valuenow={value}
       className="workspace-separator"
+      data-divider={divider}
       onDoubleClick={onDoubleClick}
       onKeyDown={(event) => onKeyDown(divider, event)}
       onPointerDown={(event) => onPointerDown(divider, event)}
       onPointerCancel={onPointerCancel}
+      onLostPointerCapture={onLostPointerCapture}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       role="separator"
