@@ -212,6 +212,40 @@ describe("ResizableChapterWorkspace", () => {
     expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-right")).toBe("18%");
   });
 
+  test("uses each desktop breakpoint default after a compact first load without a preference", () => {
+    setViewportWidth(768);
+    renderWorkspace();
+
+    setViewportWidth(1180);
+    fireEvent(window, new Event("resize"));
+    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-left")).toBe("14%");
+    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-right")).toBe("20%");
+
+    setViewportWidth(1920);
+    fireEvent(window, new Event("resize"));
+    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-left")).toBe("11%");
+    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-right")).toBe("16%");
+  });
+
+  test("returns to breakpoint defaults when another document removes the preference", () => {
+    window.localStorage.setItem(
+      WORKSPACE_RATIO_STORAGE_KEY,
+      JSON.stringify({ version: 1, left: 13, right: 18 }),
+    );
+    setViewportWidth(768);
+    renderWorkspace();
+
+    fireEvent(window, new StorageEvent("storage", {
+      key: WORKSPACE_RATIO_STORAGE_KEY,
+      newValue: null,
+    }));
+    setViewportWidth(1180);
+    fireEvent(window, new Event("resize"));
+
+    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-left")).toBe("14%");
+    expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue("--workspace-right")).toBe("20%");
+  });
+
   test("falls back to defaults when local storage cannot be read", () => {
     vi.spyOn(window.localStorage, "getItem").mockImplementation(() => {
       throw new Error("storage unavailable");

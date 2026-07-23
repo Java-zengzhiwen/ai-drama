@@ -9,9 +9,10 @@ if (runningInVitest) {
   const { test: vitestTest } = await import("vitest");
   vitestTest.skip("streaming script Playwright acceptance runs through npm run test:e2e", () => undefined);
 } else {
-  test("shows streamed script text in the central editor", async ({ page }) => {
-    const qaDirectory = process.env.AI_DRAMA_QA_SCREENSHOT_DIR ?? "";
-    let delayFirstStream = Boolean(qaDirectory);
+  test("shows streamed script text in the central editor", async ({ page }, testInfo) => {
+    const qaDirectory = process.env.AI_DRAMA_QA_SCREENSHOT_DIR
+      ?? testInfo.outputPath("workspace-qa");
+    let delayFirstStream = true;
     let revisionAvailable = false;
     let generationStartCount = 0;
     let streamMode: "streaming" | "failed" | "completed" = "streaming";
@@ -205,7 +206,9 @@ if (runningInVitest) {
     await page.setViewportSize({ width: 1024, height: 800 });
     await page.getByRole("separator", { name: "调整章节导航宽度" }).press("Home");
     await page.getByRole("separator", { name: "调整详情栏宽度" }).press("Home");
-    await expectSideActionsContained(page);
+    await expectSourceControlsContained(page);
+    await page.getByLabel("目标时长").selectOption("4");
+    await expect(page.getByLabel("目标时长")).toHaveValue("4");
     await page.getByRole("separator", { name: "调整章节导航宽度" }).press("End");
     await page.getByRole("separator", { name: "调整详情栏宽度" }).press("End");
     await expectWorkspaceInsideViewport(page, "source at constrained 1024x800");
@@ -217,7 +220,7 @@ if (runningInVitest) {
     await page.getByRole("button", { name: "保存并生成剧本" }).click();
 
     await expect(page.getByRole("tab", { name: "剧本" })).toHaveAttribute("aria-selected", "true");
-    if (qaDirectory) await captureQaState(page, qaDirectory, "starting");
+    await captureQaState(page, qaDirectory, "starting");
     await expect(page.getByLabel("实时剧本内容")).toHaveValue(longScript);
     await expect(page.getByText("实时草稿")).toBeVisible();
     await expect(page.locator("span[aria-live='polite']")).toHaveText(/正在生成|正在重新连接/);
@@ -229,7 +232,7 @@ if (runningInVitest) {
     await expect(page.getByRole("tab", { name: "剧本" })).toHaveAttribute("aria-selected", "true");
     await expect(page.getByLabel("实时剧本内容")).toHaveValue(longScript);
     expect(generationStartCount).toBe(1);
-    if (qaDirectory) await captureQaState(page, qaDirectory, "streaming");
+    await captureQaState(page, qaDirectory, "streaming");
 
     streamMode = "failed";
     revisionAvailable = false;
@@ -240,7 +243,7 @@ if (runningInVitest) {
     await page.setViewportSize({ width: 768, height: 1024 });
     await expectCompactWorkspace(page, "剧本详情");
     await page.setViewportSize({ width: 1920, height: 1080 });
-    if (qaDirectory) await captureQaState(page, qaDirectory, "failed");
+    await captureQaState(page, qaDirectory, "failed");
 
     streamMode = "completed";
     revisionAvailable = false;
@@ -249,7 +252,7 @@ if (runningInVitest) {
     await verifyDesktopViewports(page, "completed");
     await page.setViewportSize({ width: 768, height: 1024 });
     await expectCompactWorkspace(page, "剧本详情");
-    if (qaDirectory) await captureQaState(page, qaDirectory, "completed");
+    await captureQaState(page, qaDirectory, "completed");
     expect(generationStartCount).toBe(1);
   });
 }
@@ -265,9 +268,8 @@ async function activeWorkspace(page: import("@playwright/test").Page) {
 }
 
 async function verifyDesktopViewports(page: import("@playwright/test").Page, state: string) {
-  const requiredPanes = state === "source" || state === "completed"
-    ? ["left", "center", "right"]
-    : ["left", "center"];
+  const requiredPanes = ["left", "center"];
+  let rightPaneScrolled = false;
   for (const viewport of desktopViewports) {
     await page.setViewportSize(viewport);
     await expectWorkspaceInsideViewport(page, `${state} at ${viewport.width}x${viewport.height}`);
@@ -276,6 +278,14 @@ async function verifyDesktopViewports(page: import("@playwright/test").Page, sta
       `${state} at ${viewport.width}x${viewport.height}`,
       requiredPanes,
     );
+    rightPaneScrolled = await expectRightPaneScrollContract(
+      page,
+      `${state} at ${viewport.width}x${viewport.height}`,
+      state,
+    ) || rightPaneScrolled;
+  }
+  if (state === "source" || state === "completed") {
+    expect(rightPaneScrolled, `${state} right pane must be wheel-scrollable when its fixture overflows`).toBe(true);
   }
 }
 
@@ -308,57 +318,72 @@ async function expectPaneScrollingDoesNotMoveDocument(
   context: string,
   requiredPanes: string[],
 ) {
-  const result = await page.evaluate((paneNames) => {
-    window.scrollTo(0, 0);
-    const workspace = document.querySelector<HTMLElement>(
-      ".ant-tabs-tabpane-active [data-testid='resizable-chapter-workspace']",
-    );
-    if (!workspace) throw new Error("active workspace is missing");
-    const selectors: Record<string, string[]> = {
-      left: [".source-chapter-list", "[data-workspace-pane='left']"],
-      center: [".source-manuscript-textarea", ".script-live-editor textarea", ".script-editor-workspace textarea", "[data-workspace-pane='center']"],
-      right: [
-        ".source-inspector-scroll",
-        ".source-conversion-inspector",
-        ".script-inspector-scroll",
-        ".script-inspector-scroll > div[style*='overflow-x']",
-        ".script-inspector-pane",
-        "[data-workspace-pane='right']",
-      ],
-    };
-    const scrolled: Record<string, number> = {};
-    const diagnostics: Record<string, Array<{ selector: string; scrollHeight: number; clientHeight: number }>> = {};
-    for (const paneName of paneNames) {
-      diagnostics[paneName] = selectors[paneName].map((selector) => {
-        const candidate = workspace.querySelector<HTMLElement>(selector);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const workspace = await activeWorkspace(page);
+  const selectors: Record<string, string[]> = {
+    left: [".source-chapter-list"],
+    center: [".source-manuscript-textarea", ".script-live-editor textarea", ".script-editor-workspace textarea"],
+    right: [".source-inspector-scroll", ".script-inspector-scroll"],
+  };
+  for (const paneName of requiredPanes) {
+    let target: import("@playwright/test").Locator | undefined;
+    const diagnostics: Array<Record<string, unknown>> = [];
+    for (const selector of selectors[paneName]) {
+      const candidate = workspace.locator(selector).first();
+      if (await candidate.count() === 0) continue;
+      const metrics = await candidate.evaluate((element) => {
+        const node = element as HTMLElement;
+        const overflowY = getComputedStyle(node).overflowY;
         return {
-          clientHeight: candidate?.clientHeight ?? -1,
-          scrollHeight: candidate?.scrollHeight ?? -1,
-          selector,
+          clientHeight: node.clientHeight,
+          overflowY,
+          scrollHeight: node.scrollHeight,
         };
       });
-      const target = selectors[paneName]
-        .map((selector) => workspace.querySelector<HTMLElement>(selector))
-        .find((candidate) => candidate && candidate.scrollHeight > candidate.clientHeight + 1);
-      if (!target) continue;
-      target.scrollTop = 0;
-      target.scrollTop = Math.min(64, target.scrollHeight - target.clientHeight);
-      scrolled[paneName] = target.scrollTop;
+      diagnostics.push({ selector, ...metrics });
+      if (["auto", "scroll"].includes(metrics.overflowY)
+        && metrics.scrollHeight > metrics.clientHeight + 1) {
+        target = candidate;
+        break;
+      }
     }
-    return { diagnostics, documentScrollY: window.scrollY, scrolled };
-  }, requiredPanes);
-  expect(
-    Object.keys(result.scrolled).sort(),
-    `${context} independently scrollable panes ${JSON.stringify(result.diagnostics)}`,
-  )
-    .toEqual([...requiredPanes].sort());
-  for (const [pane, scrollTop] of Object.entries(result.scrolled)) {
-    expect(scrollTop, `${context} ${pane} scroll position`).toBeGreaterThan(0);
+    expect(target, `${context} ${paneName} real scroll target ${JSON.stringify(diagnostics)}`).toBeDefined();
+    await target!.evaluate((element) => { (element as HTMLElement).scrollTop = 0; });
+    await target!.hover();
+    await page.mouse.wheel(0, 180);
+    await expect.poll(
+      () => target!.evaluate((element) => (element as HTMLElement).scrollTop),
+      { message: `${context} ${paneName} wheel scrolling` },
+    ).toBeGreaterThan(0);
   }
-  expect(result.documentScrollY, `${context} document scroll`).toBe(0);
+  expect(await page.evaluate(() => window.scrollY), `${context} document scroll`).toBe(0);
 }
 
-async function expectSideActionsContained(page: import("@playwright/test").Page) {
+async function expectRightPaneScrollContract(
+  page: import("@playwright/test").Page,
+  context: string,
+  state: string,
+) {
+  const workspace = await activeWorkspace(page);
+  const target = workspace.locator(state === "source" ? ".source-inspector-scroll" : ".script-inspector-scroll");
+  await expect(target, `${context} right scroll region`).toHaveCSS("overflow-y", "auto");
+  const overflows = await target.evaluate((element) => {
+    const node = element as HTMLElement;
+    return node.scrollHeight > node.clientHeight + 1;
+  });
+  if (!overflows) return false;
+  await target.evaluate((element) => { (element as HTMLElement).scrollTop = 0; });
+  await target.hover();
+  await page.mouse.wheel(0, 180);
+  await expect.poll(
+    () => target.evaluate((element) => (element as HTMLElement).scrollTop),
+    { message: `${context} right pane wheel scrolling` },
+  ).toBeGreaterThan(0);
+  expect(await page.evaluate(() => window.scrollY), `${context} document scroll`).toBe(0);
+  return true;
+}
+
+async function expectSourceControlsContained(page: import("@playwright/test").Page) {
   const result = await page.evaluate(() => {
     const workspace = document.querySelector<HTMLElement>(
       ".ant-tabs-tabpane-active [data-testid='resizable-chapter-workspace']",
@@ -366,21 +391,28 @@ async function expectSideActionsContained(page: import("@playwright/test").Page)
     const rightPane = workspace?.querySelector<HTMLElement>("[data-workspace-pane='right']");
     if (!rightPane) throw new Error("right workspace pane is missing");
     const paneRect = rightPane.getBoundingClientRect();
-    const buttons = Array.from(rightPane.querySelectorAll<HTMLElement>(".source-inspector-actions button"));
+    const controls = Array.from(rightPane.querySelectorAll<HTMLElement>(
+      ".source-model-select, .source-duration-control select, .source-inspector-actions button",
+    ));
     return {
-      buttons: buttons.map((button) => {
-        const rect = button.getBoundingClientRect();
-        return { left: rect.left, right: rect.right, width: rect.width };
+      controls: controls.map((control) => {
+        const rect = control.getBoundingClientRect();
+        return {
+          label: control.getAttribute("aria-label") || control.textContent?.trim() || control.className,
+          left: rect.left,
+          right: rect.right,
+          width: rect.width,
+        };
       }),
       paneLeft: paneRect.left,
       paneRight: paneRect.right,
     };
   });
-  expect(result.buttons).toHaveLength(2);
-  for (const button of result.buttons) {
-    expect(button.width).toBeGreaterThan(0);
-    expect(button.left).toBeGreaterThanOrEqual(result.paneLeft - 1);
-    expect(button.right).toBeLessThanOrEqual(result.paneRight + 1);
+  expect(result.controls).toHaveLength(4);
+  for (const control of result.controls) {
+    expect(control.width, `${control.label} width`).toBeGreaterThan(0);
+    expect(control.left, `${control.label} left edge`).toBeGreaterThanOrEqual(result.paneLeft - 1);
+    expect(control.right, `${control.label} right edge`).toBeLessThanOrEqual(result.paneRight + 1);
   }
 }
 
@@ -434,6 +466,7 @@ async function captureQaState(
   directory: string,
   state: string,
 ) {
+  const originalViewport = page.viewportSize();
   mkdirSync(directory, { recursive: true });
   for (const viewport of [
     { width: 1440, height: 1024 },
@@ -450,4 +483,5 @@ async function captureQaState(
       path: join(directory, `${state}-${viewport.width}x${viewport.height}.png`),
     });
   }
+  if (originalViewport) await page.setViewportSize(originalViewport);
 }

@@ -910,7 +910,7 @@ git commit -m "test: verify resizable script workspace"
 ### Acceptance Evidence (2026-07-23)
 
 - Focused post-review workspace suites: `47 passed`.
-- Backend regression: `774 passed, 1 skipped`; Web unit regression: `161 passed, 5 skipped`; Worker: `37 passed`.
+- Backend regression: `774 passed, 1 skipped`; Web unit regression: `163 passed, 5 skipped`; Worker: `37 passed`.
 - Web production build: PASS; focused mocked streaming E2E: PASS; complete Playwright regression: `12 passed`.
 - M3, M4, M6B, M6C, M6D, migration, and clean-worktree Storyboard verifiers: PASS.
 - M6 supplier/model management semantic checks `M6E-001` through `M6E-018`: PASS.
@@ -928,6 +928,9 @@ git commit -m "test: verify resizable script workspace"
 - Strengthened E2E to verify pane-specific scrolling, same-page tab synchronization, boundary geometry, and compact source/live/failed/formal states.
 - Corrected empty-chapter navigation semantics and exposed dynamically reachable ARIA maxima.
 - Removed collapsed gate details from the accessibility tree and restored ratios on interrupted pointer capture.
+- Kept the absence of a stored preference distinct from compact ratios, so compact-first sessions recover the correct default at every desktop breakpoint.
+- Constrained narrow inspector grid tracks and stacked the duration control so every source configuration control remains operable at the legal 12% right-pane minimum.
+- Replaced synthetic scroll-position assignment with wheel-driven checks against explicit `overflow: auto` business regions, and made the source/stream/failure/completed screenshot matrix deterministic in Playwright output.
 
 ## Definition Of Done
 

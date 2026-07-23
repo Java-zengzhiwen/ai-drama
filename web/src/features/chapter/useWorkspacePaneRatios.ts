@@ -12,9 +12,8 @@ const WORKSPACE_RATIO_CHANGE_EVENT = "ai-drama:workspace-pane-ratios:change";
 
 export function useWorkspacePaneRatios() {
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
-  const [rawRatios, setRawRatios] = useState<PaneRatios>(() =>
-    parseStoredPaneRatios(readStoredRatios())
-      ?? defaultPaneRatios(window.innerWidth),
+  const [rawRatios, setRawRatios] = useState<PaneRatios | null>(() =>
+    parseStoredPaneRatios(readStoredRatios()),
   );
 
   useEffect(() => {
@@ -34,7 +33,7 @@ export function useWorkspacePaneRatios() {
     };
     const applyStoredPreference = (event: StorageEvent) => {
       if (event.key !== WORKSPACE_RATIO_STORAGE_KEY) return;
-      setRawRatios(parseStoredPaneRatios(event.newValue) ?? defaultPaneRatios(window.innerWidth));
+      setRawRatios(parseStoredPaneRatios(event.newValue));
     };
     window.addEventListener(WORKSPACE_RATIO_CHANGE_EVENT, applySharedPreference);
     window.addEventListener("storage", applyStoredPreference);
@@ -45,7 +44,9 @@ export function useWorkspacePaneRatios() {
   }, []);
 
   const ratios = useMemo(
-    () => clampPaneRatios(rawRatios, viewportWidth),
+    () => rawRatios
+      ? clampPaneRatios(rawRatios, viewportWidth)
+      : defaultPaneRatios(viewportWidth),
     [rawRatios, viewportWidth],
   );
 

@@ -579,7 +579,7 @@ function ValidationTable({ rows }: { rows: ValidationResultRead[] }) {
   }
 
   return (
-    <div style={{ overflowX: "auto" }}>
+    <div className="script-validation-table">
       <table
         aria-label="剧本 QC"
         style={{
