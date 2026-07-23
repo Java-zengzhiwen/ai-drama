@@ -812,7 +812,7 @@ git commit -m "fix: harden workspace resize accessibility"
 - Modify: `web/tests/script-streaming.spec.ts`
 - Modify: `docs/superpowers/plans/2026-07-22-resizable-script-workspace.md` (checkboxes and evidence only)
 
-- [ ] **Step 1: Extend the local mocked E2E fixture**
+- [x] **Step 1: Extend the local mocked E2E fixture**
 
 Preserve the existing network mocks and add:
 
@@ -821,7 +821,7 @@ Preserve the existing network mocks and add:
 - deterministic SSE chunks, success, failure, retry, and revision payloads;
 - explicit failure for any unmatched external request.
 
-- [ ] **Step 2: Add desktop viewport assertions**
+- [x] **Step 2: Add desktop viewport assertions**
 
 For `1920x1080`, `1440x900`, and `1180x800`, test source, live, failed, and formal script states. Use this helper:
 
@@ -849,7 +849,7 @@ async function expectWorkspaceInsideViewport(page: Page) {
 
 Also scroll each pane independently and assert the document scroll position remains `0`.
 
-- [ ] **Step 3: Add drag, reset, persistence, and compact assertions**
+- [x] **Step 3: Add drag, reset, persistence, and compact assertions**
 
 At 1440px:
 
@@ -860,7 +860,7 @@ At 1440px:
 
 At `768x1024`, assert no horizontal document overflow, both panes are reachable by drawer buttons, the center occupies the available width, and closing a drawer restores focus.
 
-- [ ] **Step 4: Run the focused E2E suite**
+- [x] **Step 4: Run the focused E2E suite**
 
 ```bash
 npm --prefix web run test:e2e -- script-streaming.spec.ts
@@ -868,7 +868,7 @@ npm --prefix web run test:e2e -- script-streaming.spec.ts
 
 Expected: PASS with zero real Provider calls. Store temporary screenshots only in Playwright output; do not commit generated browser artifacts.
 
-- [ ] **Step 5: Run the complete regression matrix**
+- [x] **Step 5: Run the complete regression matrix**
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='-p no:cacheprovider' python3 -m pytest -q
@@ -888,7 +888,7 @@ git diff --check
 
 Expected: every command exits 0. Do not run historical or current real-provider smoke tests.
 
-- [ ] **Step 6: Perform final security and scope checks**
+- [x] **Step 6: Perform final security and scope checks**
 
 ```bash
 git diff --name-only origin/main...HEAD
@@ -898,7 +898,7 @@ git status --short
 
 Confirm the diff contains only the files listed in this plan, no secret match is a real credential, no backend contract changed, and no generated artifact is tracked.
 
-- [ ] **Step 7: Commit acceptance evidence**
+- [x] **Step 7: Commit acceptance evidence**
 
 Update only this plan's checkboxes and concise command results, then:
 
@@ -906,6 +906,16 @@ Update only this plan's checkboxes and concise command results, then:
 git add web/tests/script-streaming.spec.ts docs/superpowers/plans/2026-07-22-resizable-script-workspace.md
 git commit -m "test: verify resizable script workspace"
 ```
+
+### Acceptance Evidence (2026-07-23)
+
+- Focused workspace unit suites: `27 passed`; focused layout suite: `18 passed`.
+- Backend regression: `774 passed, 1 skipped`; Web unit regression: `153 passed, 5 skipped`; Worker: `37 passed`.
+- Web production build: PASS; focused mocked streaming E2E: PASS; complete Playwright regression: `12 passed`.
+- M3, M4, M6B, M6C, M6D, migration, and clean-worktree Storyboard verifiers: PASS.
+- M6 supplier/model management semantic checks `M6E-001` through `M6E-018`: PASS.
+- `git diff --check`: PASS; tracked secret scan found no real credential; production supplier execution remained disabled.
+- Real Provider requests: text `0`, image `0`, video `0`.
 
 ## Definition Of Done
 
