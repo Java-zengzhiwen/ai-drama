@@ -211,7 +211,7 @@ git commit -m "feat: add chapter workspace ratio contract"
 - Modify: `web/src/app/app.css`
 - Modify: `web/src/test/setup.ts`
 
-- [ ] **Step 1: Add deterministic pointer primitives to test setup**
+- [x] **Step 1: Add deterministic pointer primitives to test setup**
 
 Append to `web/src/test/setup.ts` while preserving network denial and existing `matchMedia` behavior:
 
@@ -226,7 +226,7 @@ Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
 });
 ```
 
-- [ ] **Step 2: Write failing component tests**
+- [x] **Step 2: Write failing component tests**
 
 Create `web/src/features/chapter/ResizableChapterWorkspace.test.tsx` with these cases:
 
@@ -293,7 +293,7 @@ describe("ResizableChapterWorkspace", () => {
 });
 ```
 
-- [ ] **Step 3: Run the component test and verify red**
+- [x] **Step 3: Run the component test and verify red**
 
 ```bash
 npm --prefix web run test -- --run src/features/chapter/ResizableChapterWorkspace.test.tsx
@@ -301,7 +301,7 @@ npm --prefix web run test -- --run src/features/chapter/ResizableChapterWorkspac
 
 Expected: FAIL because the hook and component do not exist.
 
-- [ ] **Step 4: Implement the ratio hook**
+- [x] **Step 4: Implement the ratio hook**
 
 Create `web/src/features/chapter/useWorkspacePaneRatios.ts`:
 
@@ -342,7 +342,7 @@ export function useWorkspacePaneRatios() {
 }
 ```
 
-- [ ] **Step 5: Implement the workspace and separators**
+- [x] **Step 5: Implement the workspace and separators**
 
 Create `web/src/features/chapter/ResizableChapterWorkspace.tsx`. Its public props are:
 
@@ -378,7 +378,7 @@ return (
 
 Implement pointer movement as `deltaPercent = (clientX - startX) / rootWidth * 100`, call `preview(moveDivider(...))` on `pointermove`, and call `commit(latestRatios)` exactly once on `pointerup`. Keyboard arrows call `moveDivider` with 1%; Shift uses 5%. Double click calls `reset`. Compact rendering must show the center plus two buttons and Ant Design left/right `Drawer` components; it must not render separators.
 
-- [ ] **Step 6: Add shared structural CSS**
+- [x] **Step 6: Add shared structural CSS**
 
 Append to `web/src/app/app.css`:
 
@@ -423,7 +423,7 @@ Append to `web/src/app/app.css`:
 }
 ```
 
-- [ ] **Step 7: Run focused tests and build**
+- [x] **Step 7: Run focused tests and build**
 
 ```bash
 npm --prefix web run test -- --run src/features/chapter/workspaceLayout.test.ts src/features/chapter/ResizableChapterWorkspace.test.tsx
@@ -432,7 +432,7 @@ npm --prefix web run build
 
 Expected: PASS and build succeeds.
 
-- [ ] **Step 8: Commit the shared workspace**
+- [x] **Step 8: Commit the shared workspace**
 
 ```bash
 git add web/src/features/chapter web/src/app/app.css web/src/test/setup.ts

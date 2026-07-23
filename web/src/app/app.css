@@ -271,6 +271,69 @@ body {
   height: 100%;
 }
 
+.resizable-chapter-workspace {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, var(--workspace-left)) 8px minmax(0, var(--workspace-center)) 8px minmax(0, var(--workspace-right));
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.chapter-workspace-left,
+.chapter-workspace-center,
+.chapter-workspace-right {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-separator {
+  position: relative;
+  z-index: 1;
+  min-width: 8px;
+  padding: 0;
+  cursor: col-resize;
+  touch-action: none;
+  border: 0;
+  background: transparent;
+}
+
+.workspace-separator::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 3px;
+  bottom: 0;
+  left: 3px;
+  background: var(--border-soft);
+}
+
+.workspace-separator:hover::after,
+.workspace-separator:focus-visible::after {
+  background: var(--primary);
+}
+
+.chapter-workspace-compact {
+  min-height: 0;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+}
+
+.chapter-workspace-compact-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workspace-pane-drawer .ant-drawer-body {
+  min-height: 0;
+  overflow: auto;
+}
+
 .production-workbench {
   display: grid;
   gap: 12px;
