@@ -930,7 +930,7 @@ git commit -m "test: verify resizable script workspace"
 - Removed collapsed gate details from the accessibility tree and restored ratios on interrupted pointer capture.
 - Kept the absence of a stored preference distinct from compact ratios, so compact-first sessions recover the correct default at every desktop breakpoint.
 - Constrained narrow inspector grid tracks and stacked the duration control so every source configuration control remains operable at the legal 12% right-pane minimum.
-- Replaced synthetic scroll-position assignment with wheel-driven checks against explicit `overflow: auto` business regions, and made the source/stream/failure/completed screenshot matrix deterministic in Playwright output.
+- Replaced synthetic scroll-position assignment with wheel-driven checks against explicit `overflow: auto` business regions, and made the `source / starting / streaming / failed / completed` screenshot matrix deterministic at `1920×1080 / 1440×900 / 1180×800 / 768×1024` in Playwright output.
 
 ## Definition Of Done
 

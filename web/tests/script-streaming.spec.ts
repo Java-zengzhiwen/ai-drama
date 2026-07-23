@@ -12,7 +12,11 @@ if (runningInVitest) {
   test("shows streamed script text in the central editor", async ({ page }, testInfo) => {
     const qaDirectory = process.env.AI_DRAMA_QA_SCREENSHOT_DIR
       ?? testInfo.outputPath("workspace-qa");
-    let delayFirstStream = true;
+    let releaseFirstStream: (() => void) | undefined;
+    const firstStreamGate = new Promise<void>((resolve) => {
+      releaseFirstStream = resolve;
+    });
+    let waitForFirstStream = true;
     let revisionAvailable = false;
     let generationStartCount = 0;
     let streamMode: "streaming" | "failed" | "completed" = "streaming";
@@ -133,9 +137,9 @@ if (runningInVitest) {
         });
       }
       if (path === "/api/script-generation-runs/stream-run-browser-1/events") {
-        if (delayFirstStream) {
-          delayFirstStream = false;
-          await new Promise((resolve) => setTimeout(resolve, 1500));
+        if (waitForFirstStream) {
+          waitForFirstStream = false;
+          await firstStreamGate;
         }
         if (streamMode === "failed") {
           return route.fulfill({
@@ -184,6 +188,7 @@ if (runningInVitest) {
     await page.goto("/projects/project-stream-1/chapters/chapter-stream-1");
     await expect(page.getByLabel("文本模型")).toHaveValue("model-stream-1");
     await verifyDesktopViewports(page, "source");
+    await captureQaState(page, qaDirectory, "source");
 
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.getByRole("tab", { name: "剧本" }).click();
@@ -221,6 +226,7 @@ if (runningInVitest) {
 
     await expect(page.getByRole("tab", { name: "剧本" })).toHaveAttribute("aria-selected", "true");
     await captureQaState(page, qaDirectory, "starting");
+    releaseFirstStream?.();
     await expect(page.getByLabel("实时剧本内容")).toHaveValue(longScript);
     await expect(page.getByText("实时草稿")).toBeVisible();
     await expect(page.locator("span[aria-live='polite']")).toHaveText(/正在生成|正在重新连接/);
@@ -469,7 +475,8 @@ async function captureQaState(
   const originalViewport = page.viewportSize();
   mkdirSync(directory, { recursive: true });
   for (const viewport of [
-    { width: 1440, height: 1024 },
+    { width: 1920, height: 1080 },
+    { width: 1440, height: 900 },
     { width: 1180, height: 800 },
     { width: 768, height: 1024 },
   ]) {
