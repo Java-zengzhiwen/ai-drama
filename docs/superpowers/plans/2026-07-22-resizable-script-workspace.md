@@ -53,7 +53,7 @@
 - Create: `web/src/features/chapter/workspaceLayout.ts`
 - Create: `web/src/features/chapter/workspaceLayout.test.ts`
 
-- [ ] **Step 1: Write the failing ratio tests**
+- [x] **Step 1: Write the failing ratio tests**
 
 Create `web/src/features/chapter/workspaceLayout.test.ts`:
 
@@ -106,7 +106,7 @@ describe("workspace pane ratios", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test and verify the expected red state**
+- [x] **Step 2: Run the test and verify the expected red state**
 
 ```bash
 npm --prefix web run test -- --run src/features/chapter/workspaceLayout.test.ts
@@ -114,7 +114,7 @@ npm --prefix web run test -- --run src/features/chapter/workspaceLayout.test.ts
 
 Expected: FAIL because `workspaceLayout.ts` does not exist.
 
-- [ ] **Step 3: Implement the pure ratio contract**
+- [x] **Step 3: Implement the pure ratio contract**
 
 Create `web/src/features/chapter/workspaceLayout.ts`:
 
@@ -187,7 +187,7 @@ function roundRatio(value: number) {
 }
 ```
 
-- [ ] **Step 4: Run the focused test**
+- [x] **Step 4: Run the focused test**
 
 ```bash
 npm --prefix web run test -- --run src/features/chapter/workspaceLayout.test.ts
@@ -195,7 +195,7 @@ npm --prefix web run test -- --run src/features/chapter/workspaceLayout.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the ratio contract**
+- [x] **Step 5: Commit the ratio contract**
 
 ```bash
 git add web/src/features/chapter/workspaceLayout.ts web/src/features/chapter/workspaceLayout.test.ts
