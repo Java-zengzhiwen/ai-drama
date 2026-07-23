@@ -449,7 +449,7 @@ git commit -m "feat: add resizable chapter workspace"
 - Modify: `web/src/features/chapter/ChapterWorkspace.tsx`
 - Modify: `web/src/app/app.css`
 
-- [ ] **Step 1: Write failing navigation and gate tests**
+- [x] **Step 1: Write failing navigation and gate tests**
 
 Use `MemoryRouter` and mocked `listChapters`. Assert:
 
@@ -463,7 +463,7 @@ fireEvent.click(screen.getByRole("button", { name: "查看原因" }));
 expect(screen.getByText("未确认剧本，不允许生成分镜。")).toBeVisible();
 ```
 
-- [ ] **Step 2: Run tests and verify red**
+- [x] **Step 2: Run tests and verify red**
 
 ```bash
 npm --prefix web run test -- --run src/features/chapter/ChapterNavigator.test.tsx src/features/chapter/WorkflowGateBar.test.tsx
@@ -471,7 +471,7 @@ npm --prefix web run test -- --run src/features/chapter/ChapterNavigator.test.ts
 
 Expected: FAIL because both components are missing.
 
-- [ ] **Step 3: Implement `ChapterNavigator`**
+- [x] **Step 3: Implement `ChapterNavigator`**
 
 Move the existing chapter query, search, sorting, link, state, and new-chapter markup from `SourceTab` into a component with this interface:
 
@@ -484,7 +484,7 @@ type ChapterNavigatorProps = {
 
 The current row uses `currentStateLabel` when supplied; other rows retain `原文已确认` or `未开始`. Preserve current routes and accessible names.
 
-- [ ] **Step 4: Implement `WorkflowGateBar` and replace `LockedReasons`**
+- [x] **Step 4: Implement `WorkflowGateBar` and replace `LockedReasons`**
 
 Create:
 
@@ -509,7 +509,7 @@ export function WorkflowGateBar({ details, summary }: { details: string[]; summa
 
 In `ChapterWorkspace`, derive one summary and a deduplicated details array from the existing gate helper functions. Render one gate for source/script tabs and delete the two full-width lock alerts.
 
-- [ ] **Step 5: Add compact gate CSS and rerun tests**
+- [x] **Step 5: Add compact gate CSS and rerun tests**
 
 ```css
 .workflow-gate-bar {
@@ -538,7 +538,7 @@ npm --prefix web run test -- --run src/features/chapter/ChapterNavigator.test.ts
 
 Expected: PASS; the reason text remains covered.
 
-- [ ] **Step 6: Commit navigation and gate**
+- [x] **Step 6: Commit navigation and gate**
 
 ```bash
 git add web/src/features/chapter web/src/features/script/ScriptTab.test.tsx web/src/app/app.css

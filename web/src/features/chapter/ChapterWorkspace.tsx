@@ -18,6 +18,7 @@ import {
 } from "../script/streaming";
 import { StoryboardTab } from "../storyboard/StoryboardTab";
 import { SourceTab } from "./SourceTab";
+import { WorkflowGateBar } from "./WorkflowGateBar";
 
 type ChapterWorkspaceProps = {
   chapterId: string;
@@ -74,6 +75,7 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
   const agnesOpen = Boolean(currentPromptRevision);
   const resultsOpen = (generationJobsQuery.data ?? []).length > 0;
   const rail = useWorkflowRail(status, statusQuery.isError, statusQuery.isLoading, agnesOpen, resultsOpen);
+  const workflowGate = useWorkflowGate(status, statusQuery.isError, statusQuery.isLoading, agnesOpen);
 
   if (chapterQuery.isError) {
     return (
@@ -138,9 +140,9 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
         />
       ) : null}
 
-      <div className={activeTab === "source" ? "visually-hidden" : undefined}>
-        <LockedReasons agnesOpen={agnesOpen} status={status} />
-      </div>
+      {activeTab === "source" || activeTab === "script" ? (
+        <WorkflowGateBar details={workflowGate.details} summary={workflowGate.summary} />
+      ) : null}
 
       {chapterQuery.isLoading || !chapter ? (
         <Tabs
@@ -366,23 +368,33 @@ function getApiErrorDetails(error: unknown, fallbackMessage: string) {
   };
 }
 
-function LockedReasons({ agnesOpen, status }: { agnesOpen: boolean; status?: ChapterStatus }) {
+function useWorkflowGate(
+  status: ChapterStatus | undefined,
+  statusUnavailable: boolean,
+  statusLoading: boolean,
+  agnesOpen: boolean,
+) {
+  return useMemo(() => {
+    if (statusUnavailable) {
+      return { details: ["流程状态加载失败。请重试。"], summary: "流程状态暂不可用" };
+    }
+    if (statusLoading) {
+      return { details: [], summary: "正在确认流程状态" };
+    }
+
   const storyboardReason = storyboardLockReason(status);
   const productionReason = productionLockReason(status);
+    const details = [
+      !storyboardUnlocked(status) ? storyboardReason : "",
+      !assetsUnlocked(status) ? productionReason : "",
+      assetsUnlocked(status) && !agnesOpen ? agnesBlockedReason : "",
+    ].filter((reason, index, reasons) => Boolean(reason) && reasons.indexOf(reason) === index);
 
-  return (
-    <div aria-label="locked tab reasons" style={{ display: "grid", gap: 8 }}>
-      {!storyboardUnlocked(status) ? (
-        <Alert message="分镜已锁定" description={storyboardReason} showIcon type="info" />
-      ) : null}
-      {!assetsUnlocked(status) ? (
-        <Alert message="后续生产步骤已锁定" description={productionReason} showIcon type="info" />
-      ) : null}
-      {assetsUnlocked(status) && !agnesOpen ? (
-        <Alert message="Agnes 生成已锁定" description={agnesBlockedReason} showIcon type="info" />
-      ) : null}
-    </div>
-  );
+    return {
+      details,
+      summary: details.length ? "完成当前确认后可解锁后续步骤" : "当前阶段可继续进行",
+    };
+  }, [agnesOpen, status, statusLoading, statusUnavailable]);
 }
 
 function productionLockReason(status?: ChapterStatus) {

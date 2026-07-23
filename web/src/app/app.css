@@ -334,6 +334,24 @@ body {
   overflow: auto;
 }
 
+.workflow-gate-bar {
+  min-height: 32px;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  color: #315d9f;
+  background: #eef5ff;
+  border: 1px solid #c9dcfb;
+  border-radius: 5px;
+}
+
+.workflow-gate-bar ul {
+  grid-column: 1 / -1;
+  margin: 2px 0 4px 30px;
+}
+
 .production-workbench {
   display: grid;
   gap: 12px;
