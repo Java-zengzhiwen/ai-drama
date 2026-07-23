@@ -553,7 +553,7 @@ git commit -m "refactor: share chapter navigation and workflow gate"
 - Modify: `web/src/features/script/ScriptTab.test.tsx`
 - Modify: `web/src/app/app.css`
 
-- [ ] **Step 1: Write a failing source-workspace regression test**
+- [x] **Step 1: Write a failing source-workspace regression test**
 
 Extend the existing source-tab cases in `web/src/features/script/ScriptTab.test.tsx` so the rendered source view must expose exactly one shared workspace and all three pane roles:
 
@@ -567,7 +567,7 @@ expect(screen.getByTestId("resizable-chapter-workspace").style.getPropertyValue(
 
 Also assert that the chapter list occurs only once after extraction from `SourceTab`.
 
-- [ ] **Step 2: Run the focused test and verify it is red**
+- [x] **Step 2: Run the focused test and verify it is red**
 
 ```bash
 npm --prefix web run test -- --run src/features/script/ScriptTab.test.tsx
@@ -575,7 +575,7 @@ npm --prefix web run test -- --run src/features/script/ScriptTab.test.tsx
 
 Expected: FAIL because the source view still owns fixed-width navigation and does not use `ResizableChapterWorkspace`.
 
-- [ ] **Step 3: Integrate the source content**
+- [x] **Step 3: Integrate the source content**
 
 In `SourceTab.tsx`:
 
@@ -597,7 +597,7 @@ return (
 
 Keep the existing `useInRouterContext` fallback so isolated component tests and non-router embeddings continue to render safely.
 
-- [ ] **Step 4: Establish the explicit full-height chain**
+- [x] **Step 4: Establish the explicit full-height chain**
 
 In `ChapterWorkspace.tsx`, add `data-editor-workspace="true"` when `activeTab` is `source` or `script`. In `app.css`, replace the source-only selector and minimum page height:
 
@@ -621,7 +621,7 @@ In `ChapterWorkspace.tsx`, add `data-editor-workspace="true"` when `activeTab` i
 
 Delete `.chapter-workspace:has(.source-conversion-layout)` and the fixed `height: max(864px, ...)` rule. Set source pane children to `min-width: 0; min-height: 0; overflow: auto;` and remove the old `230px / 390px` grid definition.
 
-- [ ] **Step 5: Verify source behavior and build**
+- [x] **Step 5: Verify source behavior and build**
 
 ```bash
 npm --prefix web run test -- --run src/features/chapter/ResizableChapterWorkspace.test.tsx src/features/chapter/ChapterNavigator.test.tsx src/features/script/ScriptTab.test.tsx
@@ -630,7 +630,7 @@ npm --prefix web run build
 
 Expected: PASS. Saving the source and starting mocked generation still call the same handlers.
 
-- [ ] **Step 6: Commit the source integration**
+- [x] **Step 6: Commit the source integration**
 
 ```bash
 git add web/src/features/chapter/SourceTab.tsx web/src/features/chapter/ChapterWorkspace.tsx web/src/features/script/ScriptTab.test.tsx web/src/app/app.css

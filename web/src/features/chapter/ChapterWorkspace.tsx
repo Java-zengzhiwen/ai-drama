@@ -91,7 +91,11 @@ export function ChapterWorkspace({ chapterId, projectId }: ChapterWorkspaceProps
   const chapter = chapterQuery.data;
 
   return (
-    <section aria-labelledby="chapter-workspace-title" className="chapter-workspace">
+    <section
+      aria-labelledby="chapter-workspace-title"
+      className="chapter-workspace"
+      data-editor-workspace={activeTab === "source" || activeTab === "script" ? "true" : undefined}
+    >
       <header className="chapter-heading">
         <div className="chapter-breadcrumb">
           {inRouterContext ? (

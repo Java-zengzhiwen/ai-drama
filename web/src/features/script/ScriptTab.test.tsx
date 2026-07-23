@@ -396,9 +396,19 @@ describe("chapter source and script workspace tabs", () => {
   });
 
   test("renders the approved source workbench and saves before generating a script", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 1920,
+      writable: true,
+    });
     render(<App />);
 
     expect(await screen.findByRole("region", { name: "流程门" })).toHaveAttribute("data-expanded", "false");
+    const workspace = await screen.findByTestId("resizable-chapter-workspace");
+    expect(workspace.style.getPropertyValue("--workspace-center")).toBe("73fr");
+    expect(screen.getByRole("complementary", { name: "章节导航" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "原文编辑区" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "原文转剧本" })).toBeInTheDocument();
     expect(await screen.findByRole("navigation", { name: "章节导航" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "原文转剧本" })).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: /第二章/ })).toHaveAttribute(
