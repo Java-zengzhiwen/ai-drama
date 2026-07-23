@@ -58,6 +58,21 @@ export function ResizableChapterWorkspace({
     if (compact) setOpenDrawer(null);
   }, [compact]);
 
+  useEffect(() => {
+    if (!compact || openDrawer === null) return;
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      const closingDrawer = openDrawer;
+      setOpenDrawer(null);
+      window.requestAnimationFrame(() => {
+        (closingDrawer === "left" ? leftTriggerRef.current : rightTriggerRef.current)?.focus();
+      });
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [compact, openDrawer]);
+
   function setDrawer(next: WorkspaceDivider | null) {
     const previous = openDrawer;
     setOpenDrawer(next);
@@ -72,6 +87,7 @@ export function ResizableChapterWorkspace({
     const rootWidth = rootRef.current?.getBoundingClientRect().width ?? 0;
     if (!rootWidth) return;
     dragRef.current = { divider, startRatios: ratiosRef.current, startX: event.clientX };
+    event.currentTarget.dataset.dragging = "true";
     event.currentTarget.setPointerCapture(event.pointerId);
   }
 
@@ -80,13 +96,23 @@ export function ResizableChapterWorkspace({
     const rootWidth = rootRef.current?.getBoundingClientRect().width ?? 0;
     if (!drag || !rootWidth) return;
     const delta = ((event.clientX - drag.startX) / rootWidth) * 100;
-    preview(moveDivider(drag.startRatios, drag.divider, delta, viewportWidth));
+    const next = moveDivider(drag.startRatios, drag.divider, delta, viewportWidth);
+    ratiosRef.current = next;
+    preview(next);
   }
 
   function handlePointerUp(event: PointerEvent<HTMLButtonElement>) {
     if (!dragRef.current) return;
     dragRef.current = null;
+    delete event.currentTarget.dataset.dragging;
     event.currentTarget.releasePointerCapture(event.pointerId);
+    commit(ratiosRef.current);
+  }
+
+  function handlePointerCancel(event: PointerEvent<HTMLButtonElement>) {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    delete event.currentTarget.dataset.dragging;
     commit(ratiosRef.current);
   }
 
@@ -181,6 +207,7 @@ export function ResizableChapterWorkspace({
         onDoubleClick={reset}
         onKeyDown={handleKeyDown}
         onPointerDown={handlePointerDown}
+        onPointerCancel={handlePointerCancel}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         value={ratios.left}
@@ -194,6 +221,7 @@ export function ResizableChapterWorkspace({
         onDoubleClick={reset}
         onKeyDown={handleKeyDown}
         onPointerDown={handlePointerDown}
+        onPointerCancel={handlePointerCancel}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         value={ratios.right}
@@ -211,6 +239,7 @@ type WorkspaceSeparatorProps = {
   onDoubleClick: () => void;
   onKeyDown: (divider: WorkspaceDivider, event: KeyboardEvent<HTMLButtonElement>) => void;
   onPointerDown: (divider: WorkspaceDivider, event: PointerEvent<HTMLButtonElement>) => void;
+  onPointerCancel: (event: PointerEvent<HTMLButtonElement>) => void;
   onPointerMove: (event: PointerEvent<HTMLButtonElement>) => void;
   onPointerUp: (event: PointerEvent<HTMLButtonElement>) => void;
   value: number;
@@ -222,6 +251,7 @@ function WorkspaceSeparator({
   onDoubleClick,
   onKeyDown,
   onPointerDown,
+  onPointerCancel,
   onPointerMove,
   onPointerUp,
   value,
@@ -239,6 +269,7 @@ function WorkspaceSeparator({
       onDoubleClick={onDoubleClick}
       onKeyDown={(event) => onKeyDown(divider, event)}
       onPointerDown={(event) => onPointerDown(divider, event)}
+      onPointerCancel={onPointerCancel}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       role="separator"

@@ -749,7 +749,7 @@ git commit -m "feat: stabilize script generation workspace"
 - Modify: `web/src/features/chapter/useWorkspacePaneRatios.ts`
 - Modify: `web/src/app/app.css`
 
-- [ ] **Step 1: Add failing accessibility and compact-mode tests**
+- [x] **Step 1: Add failing accessibility and compact-mode tests**
 
 Add tests that assert:
 
@@ -765,7 +765,7 @@ expect(JSON.parse(localStorage.getItem(WORKSPACE_RATIO_STORAGE_KEY)!)).toMatchOb
 
 At `window.innerWidth = 768`, assert separators are absent, `章节导航` and `剧本详情` toolbar buttons open one Ant Design drawer at a time, Escape closes it, and focus returns to the button that opened it.
 
-- [ ] **Step 2: Run the tests and verify the expected red state**
+- [x] **Step 2: Run the tests and verify the expected red state**
 
 ```bash
 npm --prefix web run test -- --run src/features/chapter/ResizableChapterWorkspace.test.tsx
@@ -773,7 +773,7 @@ npm --prefix web run test -- --run src/features/chapter/ResizableChapterWorkspac
 
 Expected: FAIL until ARIA values, focus restoration, and compact drawer exclusivity are complete.
 
-- [ ] **Step 3: Complete keyboard and drawer behavior**
+- [x] **Step 3: Complete keyboard and drawer behavior**
 
 Implement these exact rules:
 
@@ -785,7 +785,7 @@ Implement these exact rules:
 - Only one compact drawer can be open; closing restores focus to its trigger.
 - A resize crossing 1024px closes open drawers and reclamps the stored preference without overwriting the wide preference with `{ left: 0, right: 0 }`.
 
-- [ ] **Step 4: Finish interaction CSS**
+- [x] **Step 4: Finish interaction CSS**
 
 Add a 12px invisible pointer hit area around the 1px visual divider, clear `:focus-visible`, `cursor: col-resize`, selected-drag state, internal drawer scrolling, and:
 
@@ -798,7 +798,7 @@ Add a 12px invisible pointer hit area around the 1px visual divider, clear `:foc
 }
 ```
 
-- [ ] **Step 5: Rerun focused tests and commit**
+- [x] **Step 5: Rerun focused tests and commit**
 
 ```bash
 npm --prefix web run test -- --run src/features/chapter/workspaceLayout.test.ts src/features/chapter/ResizableChapterWorkspace.test.tsx

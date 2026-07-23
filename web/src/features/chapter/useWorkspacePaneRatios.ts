@@ -11,7 +11,7 @@ import {
 export function useWorkspacePaneRatios() {
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [rawRatios, setRawRatios] = useState<PaneRatios>(() =>
-    parseStoredPaneRatios(window.localStorage.getItem(WORKSPACE_RATIO_STORAGE_KEY))
+    parseStoredPaneRatios(readStoredRatios())
       ?? defaultPaneRatios(window.innerWidth),
   );
 
@@ -51,4 +51,12 @@ export function useWorkspacePaneRatios() {
     reset,
     viewportWidth,
   };
+}
+
+function readStoredRatios() {
+  try {
+    return window.localStorage.getItem(WORKSPACE_RATIO_STORAGE_KEY);
+  } catch {
+    return null;
+  }
 }
