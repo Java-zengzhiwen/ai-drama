@@ -19,6 +19,11 @@ export function WorkflowGateBar({ details, summary }: WorkflowGateBarProps) {
           {expanded ? "收起原因" : "查看原因"}
         </Button>
       ) : null}
+      {!expanded && details.length ? (
+        <>
+          {details.map((detail) => <span className="visually-hidden" key={detail}>{detail}</span>)}
+        </>
+      ) : null}
       {expanded ? <ul>{details.map((detail) => <li key={detail}>{detail}</li>)}</ul> : null}
     </section>
   );

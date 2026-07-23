@@ -14,7 +14,7 @@ describe("WorkflowGateBar", () => {
     const gate = screen.getByRole("region", { name: "流程门" });
     expect(gate).toHaveAttribute("data-expanded", "false");
     expect(screen.getByText("确认剧本后可继续分镜")).toBeVisible();
-    expect(screen.queryByText("未确认剧本，不允许生成分镜。")).not.toBeInTheDocument();
+    expect(screen.getByText("未确认剧本，不允许生成分镜。")).toHaveClass("visually-hidden");
 
     fireEvent.click(screen.getByRole("button", { name: "查看原因" }));
     expect(gate).toHaveAttribute("data-expanded", "true");
