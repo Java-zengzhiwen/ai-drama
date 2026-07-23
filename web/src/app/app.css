@@ -796,8 +796,7 @@ body {
   padding: 9px 10px !important;
 }
 
-.source-workbench,
-.script-editor-panel {
+.source-workbench {
   display: grid;
   gap: 12px;
   max-width: 1080px;
@@ -808,6 +807,127 @@ body {
   font-family: ui-serif, Georgia, "Songti SC", serif;
   font-size: 15px;
   line-height: 1.85;
+}
+
+.script-editor-workspace,
+.script-inspector-pane {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+}
+
+.script-editor-workspace {
+  background: #fff;
+}
+
+.script-editor-panel,
+.script-editor-field {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: grid;
+}
+
+.script-editor-panel {
+  padding: 14px 18px;
+}
+
+.script-editor-field {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.script-editor-workspace textarea {
+  width: 100%;
+  min-height: 100%;
+  resize: none;
+}
+
+.script-empty-editor,
+.script-editor-loading {
+  min-height: 100%;
+  display: grid;
+  place-content: center;
+  gap: 8px;
+  padding: 32px;
+  text-align: center;
+  background: linear-gradient(180deg, #fff, #fbfdff);
+}
+
+.script-empty-editor .ant-typography {
+  margin: 0 !important;
+}
+
+.script-inspector-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: #f7faff;
+  border-left: 1px solid #d8e4f5;
+}
+
+.script-inspector-header {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 14px;
+  color: #17335d;
+  background: #edf4ff;
+  border-bottom: 1px solid #d8e4f5;
+}
+
+.script-inspector-scroll {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 14px;
+  overflow: auto;
+}
+
+.script-revision-section,
+.script-run-inspector {
+  display: grid;
+  gap: 10px;
+}
+
+.script-run-status {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  color: #40516c;
+  background: #fff;
+  border: 1px solid #c9dcfb;
+  border-radius: 6px;
+}
+
+.script-run-status > strong {
+  color: #245dbb;
+}
+
+.script-run-status dl {
+  margin: 0;
+  display: grid;
+  gap: 7px;
+}
+
+.script-run-status dl div {
+  display: grid;
+  grid-template-columns: minmax(64px, 0.7fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.script-run-status dt,
+.script-run-status dd {
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.script-run-status dt {
+  color: #667085;
 }
 
 .chapter-workspace[data-editor-workspace="true"] > .chapter-tabs > .ant-tabs-content-holder {
@@ -1331,9 +1451,10 @@ body {
 }
 
 .script-live-panel {
-  min-height: 560px;
+  min-height: 0;
+  height: 100%;
   display: grid;
-  grid-template-rows: auto minmax(420px, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   background: #fff;
   border: 1px solid #cddbef;
@@ -1394,7 +1515,7 @@ body {
 .script-live-editor textarea {
   width: 100%;
   height: 100%;
-  min-height: 420px;
+  min-height: 0;
   padding: 0;
   color: #293342;
   background: transparent;

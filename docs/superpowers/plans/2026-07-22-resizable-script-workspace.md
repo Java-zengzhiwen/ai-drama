@@ -644,7 +644,7 @@ git commit -m "feat: use resizable workspace for source editing"
 - Modify: `web/src/features/script/ScriptTab.test.tsx`
 - Modify: `web/src/app/app.css`
 
-- [ ] **Step 1: Write failing layout-stability tests**
+- [x] **Step 1: Write failing layout-stability tests**
 
 Add one assertion helper to `ScriptTab.test.tsx`:
 
@@ -667,7 +667,7 @@ Call it in existing tests for:
 
 Assert that a transition from live to failed or completed keeps the same `resizable-chapter-workspace` DOM node and the stored ratio string unchanged.
 
-- [ ] **Step 2: Run the focused test and verify it is red**
+- [x] **Step 2: Run the focused test and verify it is red**
 
 ```bash
 npm --prefix web run test -- --run src/features/script/ScriptTab.test.tsx
@@ -675,7 +675,7 @@ npm --prefix web run test -- --run src/features/script/ScriptTab.test.tsx
 
 Expected: FAIL because current live, failed, and revision branches render different wrappers and widths.
 
-- [ ] **Step 3: Normalize `ScriptTab` into pane content**
+- [x] **Step 3: Normalize `ScriptTab` into pane content**
 
 Keep all existing mutations, stream subscription, recovery, validation, revision, approval, save, reject, and retry logic. Refactor only presentation:
 
@@ -705,7 +705,7 @@ Derive `rightContent` from data already available to the frontend:
 
 Do not label the current project model as the frozen run model. `ScriptGenerationRunRead` does not expose a snapshot model or target duration; show those fields only if a future typed API adds them.
 
-- [ ] **Step 4: Remove fixed script widths and make only panes scroll**
+- [x] **Step 4: Remove fixed script widths and make only panes scroll**
 
 In `app.css`:
 
@@ -725,7 +725,7 @@ In `app.css`:
 
 Remove the `.script-editor-panel` `max-width: 1080px`, `.script-live-panel` `min-height: 560px`, and state-specific fixed height rules. Replace the `autoSize` textarea prop with a height-filling textarea controlled by the center pane.
 
-- [ ] **Step 5: Verify all script states and build**
+- [x] **Step 5: Verify all script states and build**
 
 ```bash
 npm --prefix web run test -- --run src/features/script/ScriptTab.test.tsx src/features/chapter/ResizableChapterWorkspace.test.tsx
@@ -734,7 +734,7 @@ npm --prefix web run build
 
 Expected: PASS. Existing stream, failure retention, revision selection, and approval expectations remain green.
 
-- [ ] **Step 6: Commit the script integration**
+- [x] **Step 6: Commit the script integration**
 
 ```bash
 git add web/src/features/script/ScriptTab.tsx web/src/features/script/ScriptTab.test.tsx web/src/app/app.css
