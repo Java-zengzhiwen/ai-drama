@@ -204,7 +204,7 @@ test("provider result download is one-shot GET bytes without request metadata", 
 });
 
 
-test("operation media validation requires images but preserves frozen video fetch", () => {
+test("operation media validation requires valid images and MP4 video fetches", () => {
   const png = Buffer.from(VALID_PNG_BASE64, "base64");
   const mp4 = Buffer.from("000000186674797069736f6d00000000", "hex");
   assert.equal(validateOperationMediaBuffer(png, "image/png", "imageRequest"), png);
@@ -213,6 +213,14 @@ test("operation media validation requires images but preserves frozen video fetc
     error => error.code === "PROVIDER_RESPONSE_MALFORMED",
   );
   assert.equal(validateOperationMediaBuffer(mp4, "video/mp4", "videoFetch"), mp4);
+  assert.throws(
+    () => validateOperationMediaBuffer(Buffer.from("not-a-video"), "video/mp4", "videoFetch"),
+    error => error.code === "PROVIDER_RESPONSE_MALFORMED",
+  );
+  assert.throws(
+    () => validateOperationMediaBuffer(mp4, "text/plain", "videoFetch"),
+    error => error.code === "PROVIDER_RESPONSE_MALFORMED",
+  );
 });
 
 

@@ -159,6 +159,27 @@ describe("supplier models panel", () => {
     expect(screen.getByText(/128000/)).toBeInTheDocument();
   });
 
+  test("directs video model verification to the project Shot workflow", async () => {
+    const video = {
+      ...models[1],
+      supplier_model_id: "stable-video",
+      current_model_revision_id: "revision-video-1",
+      model_revision_id: "revision-video-1",
+      display_name: "Video Model",
+      provider_model_name: "video-provider-v1",
+      capability: "video",
+    };
+    get.mockResolvedValue({
+      data: [...models, video],
+      headers: { etag: '"model-catalog-4"' },
+    });
+
+    renderPanel();
+    fireEvent.click(await screen.findByRole("button", { name: "查看 Video Model" }));
+
+    expect(screen.getByText("视频模型请前往项目 Shot 生成流程进行验证。")).toBeInTheDocument();
+  });
+
   test("creates a new overlay with catalog preconditions", async () => {
     post.mockResolvedValue({
       data: { ...models[1], supplier_model_id: "new-overlay-video", capability: "video" },

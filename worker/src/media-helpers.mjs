@@ -20,12 +20,22 @@ export function validateImageBuffer(buffer, mediaType) {
 }
 
 export function validateOperationMediaBuffer(buffer, mediaType, operation) {
-  if (operation !== "imageRequest") return buffer;
   const normalized = String(mediaType || "").split(";", 1)[0].toLowerCase();
-  if (!/^image\/(?:png|jpeg|webp)$/.test(normalized)) {
-    throw codedError("PROVIDER_RESPONSE_MALFORMED");
+  if (operation === "imageRequest") {
+    if (!/^image\/(?:png|jpeg|webp)$/.test(normalized)) {
+      throw codedError("PROVIDER_RESPONSE_MALFORMED");
+    }
+    return validateImageBuffer(buffer, normalized);
   }
-  return validateImageBuffer(buffer, normalized);
+  if (operation === "videoFetch") {
+    const validMp4 = (
+      normalized === "video/mp4"
+      && buffer.length >= 12
+      && buffer.subarray(4, 8).toString("ascii") === "ftyp"
+    );
+    if (!validMp4) throw codedError("PROVIDER_RESPONSE_MALFORMED");
+  }
+  return buffer;
 }
 
 export function decodeBase64(value, mediaType, maxBytes) {

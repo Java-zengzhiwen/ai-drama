@@ -24,6 +24,9 @@ export function ModelInspector({ model }: { model: SupplierModelRead | null }) {
         <dt>影响范围</dt><dd>{model.binding_count ? `已绑定 ${model.binding_count} 处` : "尚未绑定"}</dd>
         <dt>模式与约束</dt><dd><pre>{JSON.stringify(model.definition, null, 2)}</pre></dd>
       </dl>
+      {model.capability === "video" ? (
+        <p className="model-inspector-note">视频模型请前往项目 Shot 生成流程进行验证。</p>
+      ) : null}
     </aside>
   );
 }

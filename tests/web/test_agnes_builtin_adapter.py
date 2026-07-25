@@ -112,6 +112,7 @@ def test_manifest_preserves_model_identity_and_declares_image_options(artifact):
             "constraints": {
                 "supported_sizes": [
                     "1K", "2K", "3K", "4K", "1024x768", "1024x1024", "768x1024",
+                    "1024x1536", "1536x1024",
                 ],
                 "supported_ratios": [
                     "1:1", "3:4", "4:3", "16:9", "9:16", "2:3", "3:2", "21:9",
@@ -203,6 +204,62 @@ def test_video_submit_and_poll_use_only_video_id(artifact):
     assert submitted["result"] == {"video_id": "video-official-1", "status": "queued"}
     assert polled["result"] == {"video_id": "video-official-1", "status": "polling"}
     assert polled["calls"][0]["query"] == {"video_id": "video-official-1"}
+
+
+@pytest.mark.parametrize(
+    "provider_response",
+    [
+        {"id": "generic-id"},
+        {"task_id": "task-id"},
+    ],
+)
+def test_video_submit_rejects_responses_without_video_id(
+    artifact, provider_response
+):
+    result = invoke(
+        artifact,
+        "videoSubmit",
+        payload(
+            "agnes-video-v2.0",
+            request={"prompt": "move slowly", "input_images": []},
+        ),
+        [provider_response],
+    )
+
+    assert result["ok"] is False
+    assert result["error_code"] == "PROVIDER_VIDEO_ID_MISSING"
+
+
+@pytest.mark.parametrize(
+    ("parameters", "error_code"),
+    [
+        ({"num_frames": 0}, "INVALID_VIDEO_NUM_FRAMES"),
+        ({"num_frames": 2}, "INVALID_VIDEO_NUM_FRAMES"),
+        ({"num_frames": 442}, "INVALID_VIDEO_NUM_FRAMES"),
+        ({"num_frames": 121.5}, "INVALID_VIDEO_NUM_FRAMES"),
+        ({"frame_rate": 0}, "INVALID_VIDEO_FRAME_RATE"),
+        ({"frame_rate": 61}, "INVALID_VIDEO_FRAME_RATE"),
+        ({"frame_rate": 24.5}, "INVALID_VIDEO_FRAME_RATE"),
+    ],
+)
+def test_video_submit_rejects_invalid_parameters_before_network(
+    artifact, parameters, error_code
+):
+    result = invoke(
+        artifact,
+        "videoSubmit",
+        payload(
+            "agnes-video-v2.0",
+            request={
+                "prompt": "move slowly",
+                "input_images": [],
+                "parameters": parameters,
+            },
+        ),
+        [],
+    )
+
+    assert result == {"ok": False, "error_code": error_code, "calls": []}
 
 
 def test_video_poll_rejects_unknown_status(artifact):

@@ -49,17 +49,17 @@ AGNES_SOURCE = f'''
  * 保持 providerModelName、错误码和规范化状态不变，未知状态必须失败关闭。
  */
 export const vendor = {{
-  id:"agnes", version:"m6c-3-image-video-contract", name:"Agnes", author:"AI Drama",
+  id:"agnes", version:"m6c-4-image-video-contract", name:"Agnes", author:"AI Drama",
   adapterContractVersion:"ai-drama-supplier-v1", helperApiVersion:"ai-drama-helper-v1",
   rateLimitBucketKey:"agnes-generation", inputs:[], inputValues:{{}},
   models:[
-    {{supplierModelId:"{_model_id('agnes','image')}",providerModelName:"agnes-image-2.1-flash",displayName:"Agnes Image",capability:"image",default_size:"1K",default_ratio:"1:1",constraints:{{supported_sizes:["1K","2K","3K","4K","1024x768","1024x1024","768x1024"],supported_ratios:["1:1","3:4","4:3","16:9","9:16","2:3","3:2","21:9"]}}}},
+    {{supplierModelId:"{_model_id('agnes','image')}",providerModelName:"agnes-image-2.1-flash",displayName:"Agnes Image",capability:"image",default_size:"1K",default_ratio:"1:1",constraints:{{supported_sizes:["1K","2K","3K","4K","1024x768","1024x1024","768x1024","1024x1536","1536x1024"],supported_ratios:["1:1","3:4","4:3","16:9","9:16","2:3","3:2","21:9"]}}}},
     {{supplierModelId:"{_model_id('agnes','video')}",providerModelName:"agnes-video-v2.0",displayName:"Agnes Video",capability:"video"}}
   ]
 }};
 const headers = payload => ({{Authorization:`Bearer ${{payload.credential}}`,"Content-Type":"application/json"}});
 const fail = code => {{ throw Object.assign(new Error(code), {{code}}); }};
-const imageSizes = new Set(["1K","2K","3K","4K","1024x768","1024x1024","768x1024"]);
+const imageSizes = new Set(["1K","2K","3K","4K","1024x768","1024x1024","768x1024","1024x1536","1536x1024"]);
 const imageRatios = new Set(["1:1","3:4","4:3","16:9","9:16","2:3","3:2","21:9"]);
 export async function imageRequest(payload, helpers) {{
   const size = payload.request.size || payload.constraints?.size || "1K";
@@ -79,13 +79,19 @@ export async function videoSubmit(payload, helpers) {{
   const mode = payload.request.parameters?.mode;
   if (mode === "keyframes" ? (images.length < 2 || images.length > 3) : images.length > 1)
     throw Object.assign(new Error("INVALID_INPUT_IMAGES"),{{code:"INVALID_INPUT_IMAGES"}});
+  const numFrames = payload.request.parameters?.num_frames;
+  if (numFrames !== undefined && (!Number.isInteger(numFrames) || numFrames < 1 || numFrames > 441 || (numFrames - 1) % 8 !== 0))
+    fail("INVALID_VIDEO_NUM_FRAMES");
+  const frameRate = payload.request.parameters?.frame_rate;
+  if (frameRate !== undefined && (!Number.isInteger(frameRate) || frameRate < 1 || frameRate > 60))
+    fail("INVALID_VIDEO_FRAME_RATE");
   const body = {{model:payload.model,prompt:payload.request.prompt}};
   if (payload.request.negative_prompt) body.negative_prompt=payload.request.negative_prompt;
   for (const key of ["frame_rate","num_frames","seed"]) if (payload.request.parameters?.[key] !== undefined) body[key]=payload.request.parameters[key];
   if (images.length === 1) body.image=images[0];
   if (mode === "keyframes") body.extra_body={{image:images,mode}};
   const raw = await helpers.http.request({{method:"POST",url:payload.config.video_endpoint,headers:headers(payload),body}});
-  const video_id = raw.video_id || raw.id || raw.data?.video_id;
+  const video_id = raw.video_id || raw.data?.video_id;
   if (!video_id) throw Object.assign(new Error("PROVIDER_VIDEO_ID_MISSING"),{{code:"PROVIDER_VIDEO_ID_MISSING"}});
   return {{video_id:String(video_id),status:"queued"}};
 }}
