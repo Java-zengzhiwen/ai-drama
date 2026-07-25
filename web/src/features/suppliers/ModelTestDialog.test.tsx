@@ -206,6 +206,51 @@ describe("model test dialog", () => {
     expect(screen.getByText("实际质量：高")).toBeInTheDocument();
   });
 
+  test("submits and restores Agnes image tier and ratio overrides", async () => {
+    const agnesModel = {
+      ...model,
+      definition: {
+        default_size: "1K",
+        default_ratio: "1:1",
+        constraints: {
+          supported_sizes: ["1K", "2K", "3K", "4K"],
+          supported_ratios: ["1:1", "16:9", "9:16"],
+        },
+      },
+    } as SupplierModelRead;
+    api.createModelTest.mockResolvedValue({
+      test_run_id: "run-agnes-image",
+      supplier_model_id: agnesModel.supplier_model_id,
+      capability: "image",
+      status: "completed",
+      size: "2K",
+      ratio: "16:9",
+      media_type: "image/png",
+      byte_size: 2048,
+      elapsed_ms: 900,
+      created_at: "2026-07-25T00:00:00Z",
+    });
+    api.getModelTestContent.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
+
+    renderDialog(true, supplier, agnesModel);
+    expect(screen.getByRole("option", { name: "2K" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "16:9" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("本次图片质量")).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("本次图片尺寸"), { target: { value: "2K" } });
+    fireEvent.change(screen.getByLabelText("本次画幅比例"), { target: { value: "16:9" } });
+    fireEvent.click(screen.getByRole("button", { name: "确认并测试" }));
+
+    await waitFor(() => expect(api.createModelTest).toHaveBeenCalledWith(
+      agnesModel.supplier_model_id,
+      "一只白色陶瓷杯放在木桌上，柔和自然光，简洁写实，无文字",
+      { size: "2K", ratio: "16:9" },
+      '"model-image-model-1-2"',
+      "model-test-key-1",
+    ));
+    expect(await screen.findByText("实际尺寸：2K")).toBeInTheDocument();
+    expect(screen.getByText("实际比例：16:9")).toBeInTheDocument();
+  });
+
   test("restores and locks the reasoning override with the idempotent request", async () => {
     const textModel = {
       ...model,

@@ -42,6 +42,7 @@ async def create_model_test(
             reasoning_effort=payload.reasoning_effort,
             size=payload.size,
             quality=payload.quality,
+            ratio=payload.ratio,
             idempotency_key=idempotency_key,
             expected_model_revision=revision,
         )
@@ -124,6 +125,7 @@ def _model_test_error(exc):
         "INVALID_REASONING_EFFORT",
         "INVALID_IMAGE_SIZE",
         "INVALID_IMAGE_QUALITY",
+        "INVALID_IMAGE_RATIO",
         "MODEL_TEST_REASONING_UNSUPPORTED",
         "MODEL_TEST_IMAGE_OPTIONS_UNSUPPORTED",
     }:
@@ -149,6 +151,7 @@ def _safe_message(code):
         "INVALID_REASONING_EFFORT": "当前模型不支持所选思考深度。",
         "INVALID_IMAGE_SIZE": "当前图片模型不支持所选尺寸。",
         "INVALID_IMAGE_QUALITY": "当前图片模型不支持所选质量。",
+        "INVALID_IMAGE_RATIO": "当前图片模型不支持所选画幅比例。",
         "MODEL_TEST_REASONING_UNSUPPORTED": "当前模型能力不支持思考深度。",
         "MODEL_TEST_IMAGE_OPTIONS_UNSUPPORTED": "当前模型能力不支持图片尺寸或质量。",
     }

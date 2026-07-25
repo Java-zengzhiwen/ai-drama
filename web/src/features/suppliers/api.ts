@@ -118,15 +118,18 @@ export type ModelTestRead = {
   reasoning_effort?: string;
   size?: string;
   quality?: string;
+  ratio?: string;
 };
 
 export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
-export type ImageSize = "auto" | "1024x1024" | "1024x1536" | "1536x1024";
+export type ImageSize = "auto" | "1K" | "2K" | "3K" | "4K" | "1024x768" | "1024x1024" | "768x1024" | "1024x1536" | "1536x1024";
 export type ImageQuality = "auto" | "low" | "medium" | "high";
+export type ImageRatio = "1:1" | "3:4" | "4:3" | "16:9" | "9:16" | "2:3" | "3:2" | "21:9";
 export type ModelTestOptions = {
   reasoning_effort?: ReasoningEffort | null;
   size?: ImageSize | null;
   quality?: ImageQuality | null;
+  ratio?: ImageRatio | null;
 };
 
 function withEtag<T>(response: AxiosResponse<T>): WithEtag<T> {
@@ -305,10 +308,12 @@ export async function createModelTest(
     reasoning_effort?: ReasoningEffort;
     size?: ImageSize;
     quality?: ImageQuality;
+    ratio?: ImageRatio;
   } = { prompt };
   if (options.reasoning_effort) body.reasoning_effort = options.reasoning_effort;
   if (options.size) body.size = options.size;
   if (options.quality) body.quality = options.quality;
+  if (options.ratio) body.ratio = options.ratio;
   const response = await apiClient.post<ModelTestRead>(
     `/models/${modelId}/tests`,
     body,

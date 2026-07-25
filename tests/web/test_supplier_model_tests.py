@@ -455,6 +455,79 @@ def test_image_model_test_override_is_frozen_and_auditable(tmp_path):
     runtime.close()
 
 
+def test_image_ratio_override_is_frozen_and_auditable(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(
+        tmp_path, capability="image"
+    )
+    supplier = store.get_supplier(snapshot.supplier_id)
+    model = store.get_supplier_model(snapshot.supplier_model_id)
+    revision = store.get_supplier_model_revision(model.current_model_revision_id)
+    ModelCatalogService(store).revise_model(
+        model.supplier_model_id,
+        provider_model_name=revision.provider_model_name,
+        display_name=revision.display_name,
+        capability="image",
+        definition={
+            "default_size": "1K",
+            "default_ratio": "1:1",
+            "constraints": {
+                "supported_sizes": ["1K", "2K", "3K", "4K"],
+                "supported_ratios": ["1:1", "16:9", "9:16"],
+            },
+        },
+        expected_catalog_revision=supplier.model_catalog_revision,
+        expected_model_revision=model.revision,
+        acknowledged_binding_count=0,
+    )
+    current = store.get_supplier_model(model.supplier_model_id)
+
+    run, created = ModelTestService(store).create_model_test(
+        supplier_model_id=model.supplier_model_id,
+        prompt="cinematic frame",
+        size="2K",
+        ratio="16:9",
+        idempotency_key="image-ratio",
+        expected_model_revision=current.revision,
+    )
+
+    assert created is True
+    persisted = load_snapshot(store, run["snapshot_hash"])
+    assert persisted.resolved_constraints == {
+        "size": "2K",
+        "quality": "auto",
+        "ratio": "16:9",
+    }
+    assert json.loads(runtime.read_text(run["request_object_id"])) == {
+        "prompt": "cinematic frame",
+        "quality": "auto",
+        "ratio": "16:9",
+        "size": "2K",
+        "test_contract_version": "model-test-v1",
+    }
+    assert ModelTestService(store).safe_read(run["test_run_id"])["ratio"] == "16:9"
+    runtime.close()
+
+
+def test_invalid_image_ratio_is_rejected_before_writing_run(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(
+        tmp_path, capability="image"
+    )
+
+    with pytest.raises(ModelTestError, match="INVALID_IMAGE_RATIO"):
+        ModelTestService(store).create_model_test(
+            supplier_model_id=snapshot.supplier_model_id,
+            prompt="a cup",
+            ratio="5:4",
+            idempotency_key="invalid-image-ratio",
+            expected_model_revision=1,
+        )
+
+    assert store.conn.execute(
+        "SELECT count(*) FROM supplier_model_test_runs"
+    ).fetchone()[0] == 0
+    runtime.close()
+
+
 def test_text_model_test_rejects_image_options_before_writing_run(tmp_path):
     runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
 
@@ -464,6 +537,24 @@ def test_text_model_test_rejects_image_options_before_writing_run(tmp_path):
             prompt="hello",
             size="1024x1024",
             idempotency_key="text-image-options",
+            expected_model_revision=1,
+        )
+
+    assert store.conn.execute(
+        "SELECT count(*) FROM supplier_model_test_runs"
+    ).fetchone()[0] == 0
+    runtime.close()
+
+
+def test_text_model_test_rejects_image_ratio_before_writing_run(tmp_path):
+    runtime, store, snapshot, _credentials = _store_and_snapshot(tmp_path)
+
+    with pytest.raises(ModelTestError, match="MODEL_TEST_IMAGE_OPTIONS_UNSUPPORTED"):
+        ModelTestService(store).create_model_test(
+            supplier_model_id=snapshot.supplier_model_id,
+            prompt="hello",
+            ratio="16:9",
+            idempotency_key="text-image-ratio",
             expected_model_revision=1,
         )
 

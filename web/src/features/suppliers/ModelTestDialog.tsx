@@ -7,6 +7,7 @@ import {
   newIdempotencyKey,
   recoverModelTest,
   type ImageQuality,
+  type ImageRatio,
   type ImageSize,
   type ModelTestRead,
   type ModelTestOptions,
@@ -33,6 +34,7 @@ type StoredRun = {
   reasoningEffort?: ReasoningEffort | null;
   imageSize?: ImageSize | null;
   imageQuality?: ImageQuality | null;
+  imageRatio?: ImageRatio | null;
 };
 
 const REASONING_LABELS: Record<ReasoningEffort, string> = {
@@ -46,7 +48,13 @@ const REASONING_LABELS: Record<ReasoningEffort, string> = {
 const REASONING_VALUES = Object.keys(REASONING_LABELS) as ReasoningEffort[];
 const IMAGE_SIZE_LABELS: Record<ImageSize, string> = {
   auto: "自动",
+  "1K": "1K",
+  "2K": "2K",
+  "3K": "3K",
+  "4K": "4K",
+  "1024x768": "横版 1024 × 768",
   "1024x1024": "方形 1024 × 1024",
+  "768x1024": "竖版 768 × 1024",
   "1024x1536": "竖版 1024 × 1536",
   "1536x1024": "横版 1536 × 1024",
 };
@@ -58,6 +66,11 @@ const IMAGE_QUALITY_LABELS: Record<ImageQuality, string> = {
   high: "高",
 };
 const IMAGE_QUALITY_VALUES = Object.keys(IMAGE_QUALITY_LABELS) as ImageQuality[];
+const IMAGE_RATIO_LABELS: Record<ImageRatio, string> = {
+  "1:1": "1:1", "3:4": "3:4", "4:3": "4:3", "16:9": "16:9",
+  "9:16": "9:16", "2:3": "2:3", "3:2": "3:2", "21:9": "21:9",
+};
+const IMAGE_RATIO_VALUES = Object.keys(IMAGE_RATIO_LABELS) as ImageRatio[];
 
 function modelConstraints(model: SupplierModelRead): Record<string, unknown> {
   const constraints = model.definition?.constraints;
@@ -104,6 +117,10 @@ function supportedImageQualities(model: SupplierModelRead): ImageQuality[] {
   return declaredValues(modelConstraints(model).supported_qualities, IMAGE_QUALITY_VALUES);
 }
 
+function supportedImageRatios(model: SupplierModelRead): ImageRatio[] {
+  return declaredValues(modelConstraints(model).supported_ratios, IMAGE_RATIO_VALUES);
+}
+
 function modelImageSize(supplier: SupplierRead, model: SupplierModelRead): ImageSize {
   const supported = supportedImageSizes(model);
   const values = [supplier.config_values?.image_size, model.definition?.default_size];
@@ -117,6 +134,14 @@ function modelImageQuality(supplier: SupplierRead, model: SupplierModelRead): Im
   const values = [supplier.config_values?.image_quality, modelConstraints(model).default_quality];
   return values.find((value): value is ImageQuality => (
     typeof value === "string" && supported.includes(value as ImageQuality)
+  )) ?? supported[0];
+}
+
+function modelImageRatio(supplier: SupplierRead, model: SupplierModelRead): ImageRatio {
+  const supported = supportedImageRatios(model);
+  const values = [supplier.config_values?.image_ratio, model.definition?.default_ratio];
+  return values.find((value): value is ImageRatio => (
+    typeof value === "string" && supported.includes(value as ImageRatio)
   )) ?? supported[0];
 }
 
@@ -143,6 +168,7 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort | null>(null);
   const [imageSize, setImageSize] = useState<ImageSize | null>(null);
   const [imageQuality, setImageQuality] = useState<ImageQuality | null>(null);
+  const [imageRatio, setImageRatio] = useState<ImageRatio | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [recovering, setRecovering] = useState(storedRunPresent);
   const [error, setError] = useState("");
@@ -182,6 +208,7 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
     setReasoningEffort(null);
     setImageSize(null);
     setImageQuality(null);
+    setImageRatio(null);
     setError("");
     setPollAttempt(0);
     const raw = sessionStorage.getItem(modelTestStorageKey(model.supplier_model_id));
@@ -204,6 +231,7 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
     setReasoningEffort(stored.reasoningEffort ?? null);
     setImageSize(stored.imageSize ?? null);
     setImageQuality(stored.imageQuality ?? null);
+    setImageRatio(stored.imageRatio ?? null);
     let cancelled = false;
     let retryTimer: number | undefined;
     const recover = async () => {
@@ -251,15 +279,18 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
     const selectedReasoningEffort = model.capability === "text" ? reasoningEffort : null;
     const selectedImageSize = model.capability === "image" ? imageSize : null;
     const selectedImageQuality = model.capability === "image" ? imageQuality : null;
+    const selectedImageRatio = model.capability === "image" ? imageRatio : null;
     const options: ModelTestOptions = {};
     if (selectedReasoningEffort) options.reasoning_effort = selectedReasoningEffort;
     if (selectedImageSize) options.size = selectedImageSize;
     if (selectedImageQuality) options.quality = selectedImageQuality;
+    if (selectedImageRatio) options.ratio = selectedImageRatio;
     const storedOptions = {
       idempotencyKey,
       reasoningEffort: selectedReasoningEffort,
       imageSize: selectedImageSize,
       imageQuality: selectedImageQuality,
+      imageRatio: selectedImageRatio,
     };
     sessionStorage.setItem(
       modelTestStorageKey(model.supplier_model_id),
@@ -309,6 +340,7 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
   const reasoningOptions = supportedReasoningEfforts(model);
   const imageSizeOptions = supportedImageSizes(model);
   const imageQualityOptions = supportedImageQualities(model);
+  const imageRatioOptions = supportedImageRatios(model);
 
   return (
     <Modal
@@ -358,9 +390,9 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
             </select>
           </label>
         ) : null}
-        {model.capability === "image" && imageSizeOptions.length ? (
+        {model.capability === "image" && (imageSizeOptions.length || imageQualityOptions.length || imageRatioOptions.length) ? (
           <div className="model-test-options-grid">
-            <label className="model-test-prompt">
+            {imageSizeOptions.length ? <label className="model-test-prompt">
               <span>本次图片尺寸</span>
               <select
                 aria-label="本次图片尺寸"
@@ -373,8 +405,22 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
                   <option key={value} value={value}>{IMAGE_SIZE_LABELS[value]}</option>
                 ))}
               </select>
-            </label>
-            <label className="model-test-prompt">
+            </label> : null}
+            {imageRatioOptions.length ? <label className="model-test-prompt">
+              <span>本次画幅比例</span>
+              <select
+                aria-label="本次画幅比例"
+                value={imageRatio ?? ""}
+                onChange={(event) => setImageRatio(event.target.value ? event.target.value as ImageRatio : null)}
+                disabled={locked}
+              >
+                <option value="">跟随供应商默认（当前：{IMAGE_RATIO_LABELS[modelImageRatio(supplier, model)]}）</option>
+                {imageRatioOptions.map((value) => (
+                  <option key={value} value={value}>{IMAGE_RATIO_LABELS[value]}</option>
+                ))}
+              </select>
+            </label> : null}
+            {imageQualityOptions.length ? <label className="model-test-prompt">
               <span>本次图片质量</span>
               <select
                 aria-label="本次图片质量"
@@ -387,7 +433,7 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
                   <option key={value} value={value}>{IMAGE_QUALITY_LABELS[value]}</option>
                 ))}
               </select>
-            </label>
+            </label> : null}
           </div>
         ) : null}
         <Alert type="warning" showIcon message="将向真实供应商提交 1 次生成请求，可能产生费用。" />
@@ -406,6 +452,7 @@ export function ModelTestDialog({ supplier, model, open, onClose }: Props) {
               {run.capability === "text" && run.reasoning_effort && run.reasoning_effort in REASONING_LABELS ? <div><dt>思考深度</dt><dd>实际思考深度：{REASONING_LABELS[run.reasoning_effort as ReasoningEffort]}</dd></div> : null}
               {run.capability === "image" && run.size && run.size in IMAGE_SIZE_LABELS ? <div><dt>图片尺寸</dt><dd>实际尺寸：{IMAGE_SIZE_LABELS[run.size as ImageSize].replace(/^[^ ]+ /, "")}</dd></div> : null}
               {run.capability === "image" && run.quality && run.quality in IMAGE_QUALITY_LABELS ? <div><dt>图片质量</dt><dd>实际质量：{IMAGE_QUALITY_LABELS[run.quality as ImageQuality]}</dd></div> : null}
+              {run.capability === "image" && run.ratio && run.ratio in IMAGE_RATIO_LABELS ? <div><dt>画幅比例</dt><dd>实际比例：{IMAGE_RATIO_LABELS[run.ratio as ImageRatio]}</dd></div> : null}
             </dl>
           </div>
         ) : null}

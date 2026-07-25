@@ -41,6 +41,7 @@ class AssetGenerateImageRequest(BaseModel):
     name: str
     prompt: str
     size: str
+    ratio: str | None = None
     input_asset_ids: list[str] = Field(default_factory=list)
     input_images: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -50,6 +51,11 @@ class AssetGenerateImageRequest(BaseModel):
     @classmethod
     def validate_required_text(cls, value: str) -> str:
         return _not_blank(value)
+
+    @field_validator("ratio")
+    @classmethod
+    def validate_optional_ratio(cls, value: str | None) -> str | None:
+        return _not_blank(value) if value is not None else value
 
     @field_validator("input_asset_ids", "input_images")
     @classmethod

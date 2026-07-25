@@ -56,7 +56,7 @@ class AssetGenerationService:
             input_images.append(asset_data_uri(input_asset.media_type, self.runtime_store.read_bytes_object(input_asset.object_id)))
 
         if self.supplier_execution_enabled:
-            request_body = request.model_dump()
+            request_body = request.model_dump(exclude_none=True)
             request_body["input_images"] = input_images
             key = request.idempotency_key or __import__("hashlib").sha256(
                 json.dumps(request_body, sort_keys=True, separators=(",", ":")).encode()

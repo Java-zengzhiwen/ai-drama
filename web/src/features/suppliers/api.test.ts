@@ -161,7 +161,7 @@ describe("supplier management API", () => {
     await createModelTest(
       "model-1",
       "hello",
-      { reasoning_effort: "max", size: "1536x1024", quality: "high" },
+      { reasoning_effort: "max", size: "1536x1024", quality: "high", ratio: "16:9" },
       '"model-model-1-2"',
       "test-key-2",
     );
@@ -179,7 +179,7 @@ describe("supplier management API", () => {
     expect(post).toHaveBeenNthCalledWith(
       2,
       "/models/model-1/tests",
-      { prompt: "hello", reasoning_effort: "max", size: "1536x1024", quality: "high" },
+      { prompt: "hello", reasoning_effort: "max", size: "1536x1024", quality: "high", ratio: "16:9" },
       { headers: { "Idempotency-Key": "test-key-2", "If-Match": '"model-model-1-2"' } },
     );
     expect(get).toHaveBeenNthCalledWith(2, "/models/model-1/tests/by-idempotency-key", {

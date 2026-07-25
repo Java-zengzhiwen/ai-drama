@@ -296,8 +296,17 @@ async def test_restart_poller_resumes_same_provider_job_without_submit(tmp_path)
         execution_service=GenerationExecutionService(store, runtime, FakeGenerationBackend(), supplier_gateway=second_gateway, supplier_execution_enabled=True),
     )
     await restarted.run_cycle()
-    assert store.get_generation_job(job.job_id).internal_status == "completed"
-    assert [call[1] for call in first_gateway.calls + second_gateway.calls] == ["videoPoll", "videoPoll", "videoFetch"]
+    completed = store.get_generation_job(job.job_id)
+    all_calls = first_gateway.calls + second_gateway.calls
+    assert completed.internal_status == "completed"
+    assert [call[1] for call in all_calls] == ["videoPoll", "videoPoll", "videoFetch"]
+    assert [call[2] for call in all_calls] == [
+        {"video_id": "same-video-id"},
+        {"video_id": "same-video-id"},
+        {"video_id": "same-video-id"},
+    ]
+    result = store.get_generation_result(completed.provider_result_id)
+    assert runtime.read_bytes_object(result.object_id) == b"restart-video"
 
 
 def test_m6_video_enqueue_resolves_current_credential_before_creating_job(tmp_path):

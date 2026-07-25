@@ -49,17 +49,24 @@ AGNES_SOURCE = f'''
  * 保持 providerModelName、错误码和规范化状态不变，未知状态必须失败关闭。
  */
 export const vendor = {{
-  id:"agnes", version:"m6c-2-comments", name:"Agnes", author:"AI Drama",
+  id:"agnes", version:"m6c-3-image-video-contract", name:"Agnes", author:"AI Drama",
   adapterContractVersion:"ai-drama-supplier-v1", helperApiVersion:"ai-drama-helper-v1",
   rateLimitBucketKey:"agnes-generation", inputs:[], inputValues:{{}},
   models:[
-    {{supplierModelId:"{_model_id('agnes','image')}",providerModelName:"agnes-image-2.1-flash",displayName:"Agnes Image",capability:"image"}},
+    {{supplierModelId:"{_model_id('agnes','image')}",providerModelName:"agnes-image-2.1-flash",displayName:"Agnes Image",capability:"image",default_size:"1K",default_ratio:"1:1",constraints:{{supported_sizes:["1K","2K","3K","4K","1024x768","1024x1024","768x1024"],supported_ratios:["1:1","3:4","4:3","16:9","9:16","2:3","3:2","21:9"]}}}},
     {{supplierModelId:"{_model_id('agnes','video')}",providerModelName:"agnes-video-v2.0",displayName:"Agnes Video",capability:"video"}}
   ]
 }};
 const headers = payload => ({{Authorization:`Bearer ${{payload.credential}}`,"Content-Type":"application/json"}});
+const fail = code => {{ throw Object.assign(new Error(code), {{code}}); }};
+const imageSizes = new Set(["1K","2K","3K","4K","1024x768","1024x1024","768x1024"]);
+const imageRatios = new Set(["1:1","3:4","4:3","16:9","9:16","2:3","3:2","21:9"]);
 export async function imageRequest(payload, helpers) {{
-  const body = {{model:payload.model,prompt:payload.request.prompt,size:payload.request.size,extra_body:{{response_format:"url"}}}};
+  const size = payload.request.size || payload.constraints?.size || "1K";
+  const ratio = payload.request.ratio || payload.constraints?.ratio || "1:1";
+  if (!imageSizes.has(size)) fail("INVALID_IMAGE_SIZE");
+  if (!imageRatios.has(ratio)) fail("INVALID_IMAGE_RATIO");
+  const body = {{model:payload.model,prompt:payload.request.prompt,size,ratio,extra_body:{{response_format:"url"}}}};
   if (payload.request.input_images?.length) body.extra_body.image = payload.request.input_images;
   const raw = await helpers.http.request({{method:"POST",url:payload.config.image_endpoint,headers:headers(payload),body}});
   const url = raw.data?.[0]?.url;
@@ -91,7 +98,7 @@ export async function videoPoll(payload, helpers) {{
 }}
 export async function videoFetch(payload, helpers) {{
   const raw = await helpers.http.request({{method:"GET",url:payload.config.video_status_endpoint,headers:headers(payload),query:{{video_id:payload.request.video_id}}}});
-  const url=raw.url||raw.video_url||raw.data?.url||raw.data?.video_url;
+  const url=raw.metadata?.url||raw.url||raw.video_url||raw.data?.url||raw.data?.video_url;
   if (!url) throw Object.assign(new Error("RESULT_MISSING"),{{code:"RESULT_MISSING"}});
   const bytes=await helpers.http.request({{method:"GET",url,responseType:"bytes"}});
   return {{video_id:payload.request.video_id,url,...bytes}};

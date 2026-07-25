@@ -82,6 +82,80 @@ def test_generate_image_creates_draft_agnes_asset_and_persists_png_content(clien
     assert usable.json()["status"] == "usable"
 
 
+def test_m6_image_request_carries_optional_ratio_to_durable_coordinator(tmp_path):
+    app = create_app(data_root=tmp_path / "runtime-data", skills_root="skills")
+    coordinator = CapturingImageCoordinator()
+
+    with TestClient(app) as client:
+        app.state.settings.m6_supplier_execution_enabled = True
+        app.state.m6_generation_coordinator = coordinator
+        _, chapter = _create_project_and_chapter(client)
+        response = client.post(
+            f"/api/chapters/{chapter['chapter_id']}/assets/generate-image",
+            json={
+                "asset_type": "shot_keyframe",
+                "name": "宽银幕关键帧",
+                "prompt": "cinematic frame",
+                "size": "2K",
+                "ratio": "16:9",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert coordinator.calls[0]["request"]["size"] == "2K"
+    assert coordinator.calls[0]["request"]["ratio"] == "16:9"
+    assert coordinator.calls[0]["request"]["input_images"] == []
+
+
+def test_m6_legacy_image_request_omits_unset_optional_ratio(tmp_path):
+    app = create_app(data_root=tmp_path / "runtime-data", skills_root="skills")
+    coordinator = CapturingImageCoordinator()
+
+    with TestClient(app) as client:
+        app.state.settings.m6_supplier_execution_enabled = True
+        app.state.m6_generation_coordinator = coordinator
+        _, chapter = _create_project_and_chapter(client)
+        response = client.post(
+            f"/api/chapters/{chapter['chapter_id']}/assets/generate-image",
+            json={
+                "asset_type": "shot_keyframe",
+                "name": "旧版关键帧",
+                "prompt": "legacy frame",
+                "size": "1024x1024",
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert "ratio" not in coordinator.calls[0]["request"]
+
+
+class CapturingImageCoordinator:
+    def __init__(self):
+        self.calls = []
+
+    def generate_image(self, **kwargs):
+        self.calls.append(kwargs)
+        request = kwargs["request"]
+        return {
+            "asset_id": "asset-ratio-1",
+            "project_id": kwargs["project_id"],
+            "chapter_id": kwargs["chapter_id"],
+            "asset_type": request["asset_type"],
+            "name": request["name"],
+            "object_id": "object-ratio-1",
+            "media_type": "image/png",
+            "width": 0,
+            "height": 0,
+            "status": "draft",
+            "source_type": "agnes",
+            "source_job_id": "job-ratio-1",
+            "metadata": {},
+            "bindings": [],
+            "created_at": "2026-07-25T00:00:00Z",
+            "updated_at": "2026-07-25T00:00:00Z",
+        }
+
+
 def test_generate_image_converts_reference_assets_to_data_uris(client):
     _, chapter = _create_project_and_chapter(client)
     reference = _upload_png(client, chapter["chapter_id"])

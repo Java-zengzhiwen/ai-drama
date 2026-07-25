@@ -36,7 +36,7 @@ class ModelTestService:
 
     def create_model_test(
         self, *, supplier_model_id, prompt, idempotency_key, expected_model_revision,
-        reasoning_effort=None, size=None, quality=None,
+        reasoning_effort=None, size=None, quality=None, ratio=None,
     ):
         model = self.store.get_supplier_model(supplier_model_id)
         if model is None:
@@ -51,7 +51,9 @@ class ModelTestService:
             raise ModelTestError("MODEL_TEST_CAPABILITY_UNSUPPORTED")
         if capability != "text" and reasoning_effort is not None:
             raise ModelTestError("MODEL_TEST_REASONING_UNSUPPORTED")
-        if capability != "image" and (size is not None or quality is not None):
+        if capability != "image" and (
+            size is not None or quality is not None or ratio is not None
+        ):
             raise ModelTestError("MODEL_TEST_IMAGE_OPTIONS_UNSUPPORTED")
         max_prompt = 4000 if capability == "text" else 2000
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > max_prompt:
@@ -110,6 +112,8 @@ class ModelTestService:
                 image_request["size"] = size
             if quality is not None:
                 image_request["quality"] = quality
+            if ratio is not None:
+                image_request["ratio"] = ratio
             try:
                 resolved_constraints = resolve_image_options(
                     request=image_request,
@@ -219,6 +223,7 @@ class ModelTestService:
         elif run["capability"] == "image":
             result["size"] = str(snapshot.resolved_constraints.get("size") or "")
             result["quality"] = str(snapshot.resolved_constraints.get("quality") or "")
+            result["ratio"] = str(snapshot.resolved_constraints.get("ratio") or "")
         if run["normalized_result_object_id"]:
             normalized = self._read_json(run["normalized_result_object_id"])
             if run["capability"] == "text":

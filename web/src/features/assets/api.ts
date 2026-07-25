@@ -53,6 +53,7 @@ export type AssetGenerateImageRequest = {
   name: string;
   prompt: string;
   size: string;
+  ratio?: string;
   input_asset_ids: string[];
   input_images: string[];
   metadata: Record<string, unknown>;

@@ -1,5 +1,9 @@
-IMAGE_SIZES = frozenset({"auto", "1024x1024", "1024x1536", "1536x1024"})
+IMAGE_SIZES = frozenset({
+    "auto", "1K", "2K", "3K", "4K",
+    "1024x768", "1024x1024", "768x1024", "1024x1536", "1536x1024",
+})
 IMAGE_QUALITIES = frozenset({"auto", "low", "medium", "high"})
+IMAGE_RATIOS = frozenset({"1:1", "3:4", "4:3", "16:9", "9:16", "2:3", "3:2", "21:9"})
 
 
 class ImageOptionError(RuntimeError):
@@ -30,7 +34,20 @@ def resolve_image_options(*, request, model_definition, supplier_config):
     )
     _validate_size(size, constraints.get("supported_sizes"))
     _validate_quality(quality, constraints.get("supported_qualities"))
-    return {"size": size, "quality": quality}
+    result = {"size": size, "quality": quality}
+    declares_ratio = (
+        "default_ratio" in definition or "supported_ratios" in constraints
+    )
+    if "ratio" in request or declares_ratio:
+        ratio = _first_present(
+            request, "ratio",
+            config, "image_ratio",
+            definition, "default_ratio",
+            fallback="1:1",
+        )
+        _validate_ratio(ratio, constraints.get("supported_ratios"))
+        result["ratio"] = ratio
+    return result
 
 
 def _first_present(*parts, fallback):
@@ -61,6 +78,16 @@ def _validate_quality(value, declared):
     allowed = _declared_values(declared, IMAGE_QUALITIES, "INVALID_IMAGE_QUALITY")
     if value not in allowed:
         raise ImageOptionError("INVALID_IMAGE_QUALITY", value)
+
+
+def _validate_ratio(value, declared):
+    if not isinstance(value, str) or value not in IMAGE_RATIOS:
+        raise ImageOptionError("INVALID_IMAGE_RATIO", value)
+    if declared is None:
+        return
+    allowed = _declared_values(declared, IMAGE_RATIOS, "INVALID_IMAGE_RATIO")
+    if value not in allowed:
+        raise ImageOptionError("INVALID_IMAGE_RATIO", value)
 
 
 def _declared_values(value, safe_values, code):
