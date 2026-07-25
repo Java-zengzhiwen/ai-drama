@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Input, Skeleton, Tag, Typography } from "antd";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChapterNavigator } from "../chapter/ChapterNavigator";
+import { ResizableChapterWorkspace } from "../chapter/ResizableChapterWorkspace";
 import type { ChapterRead } from "../projects/api";
 import {
   approveScriptRevision,
@@ -153,6 +155,8 @@ export function ScriptTab({ activeRun = null, chapter, onGenerationCompleted, on
     saveMutation.isPending ||
     approveMutation.isPending ||
     rejectMutation.isPending;
+  const elapsedSeconds = useElapsedSeconds(stream.active && !stream.terminal, stream.startedAt);
+  const streamStatusLabel = getStreamStatusLabel(stream);
 
   function submitEdit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -172,175 +176,191 @@ export function ScriptTab({ activeRun = null, chapter, onGenerationCompleted, on
     setIsDraftDirty(false);
   }
 
-  if (revisionsQuery.isLoading && !stream.active) {
-    return <Skeleton active paragraph={{ rows: 6 }} />;
-  }
+  const chapterStateLabel = stream.active
+    ? streamStatusLabel
+    : selectedRevision
+      ? selectedRevision.approval_status === "approved" ? "剧本已确认" : "剧本待确认"
+      : "待生成剧本";
 
-  if (revisionsQuery.isError && !stream.active) {
-    return (
-      <WorkflowErrorAlert
-        error={revisionsQuery.error}
-        fallbackMessage="剧本加载失败。请重试。"
-        onRetry={() => void revisionsQuery.refetch()}
-      />
-    );
-  }
+  const centerContent = revisionsQuery.isLoading && !stream.active ? (
+    <div className="script-editor-loading"><Skeleton active paragraph={{ rows: 8 }} /></div>
+  ) : revisionsQuery.isError && !stream.active ? (
+    <WorkflowErrorAlert
+      error={revisionsQuery.error}
+      fallbackMessage="剧本加载失败。请重试。"
+      onRetry={() => void revisionsQuery.refetch()}
+    />
+  ) : stream.active ? (
+    <LiveScriptDraft elapsedSeconds={elapsedSeconds} statusLabel={streamStatusLabel} stream={stream} />
+  ) : selectedRevision ? (
+    <form
+      aria-label="剧本编辑"
+      className="script-editor-panel"
+      id="script-editor-form"
+      onSubmit={submitEdit}
+    >
+      <label className="editor-field script-editor-field">
+        <span>剧本内容</span>
+        <Input.TextArea
+          aria-label="剧本内容"
+          disabled={isScriptMutating}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setIsDraftDirty(true);
+          }}
+          value={draft}
+        />
+      </label>
+    </form>
+  ) : (
+    <div className="script-empty-editor">
+      <Typography.Title level={3}>等待生成剧本</Typography.Title>
+      <Typography.Text type="secondary">
+        暂无剧本。保存原文后生成剧本。
+      </Typography.Text>
+    </div>
+  );
+
+  const rightContent = (
+    <div className="script-inspector-pane">
+      <header className="script-inspector-header">
+        <strong>{stream.active ? "生成详情" : "剧本详情"}</strong>
+        {selectedRevision && !stream.active ? <StatusChip status={selectedRevision.approval_status} /> : null}
+      </header>
+
+      <div className="script-inspector-scroll">
+        {stream.active ? (
+          <ScriptRunInspector
+            elapsedSeconds={elapsedSeconds}
+            onRegenerateRequested={onRegenerateRequested}
+            statusLabel={streamStatusLabel}
+            stream={stream}
+          />
+        ) : (
+          <>
+            {!chapter.current_source_revision_id ? (
+              <Alert message="暂无剧本。保存原文后生成剧本。" showIcon type="info" />
+            ) : null}
+            <div className="production-command-bar">
+              <Button
+                disabled={!chapter.current_source_revision_id || isScriptMutating}
+                loading={generateMutation.isPending}
+                onClick={() => generateMutation.mutate()}
+                type="primary"
+              >
+                生成剧本
+              </Button>
+            </div>
+            {revisions.length > 0 ? (
+              <section className="script-revision-section">
+                <strong>版本历史</strong>
+                <div className="revision-strip">
+                  {revisions.map((revision) => (
+                    <Button
+                      disabled={isScriptMutating}
+                      key={revision.revision_id}
+                      onClick={() => loadRevisionForEditing(revision)}
+                      type={revision.revision_id === selectedRevision?.revision_id ? "primary" : "default"}
+                    >
+                      Revision {revision.number}
+                    </Button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+            {selectedRevision ? (
+              <>
+                <div className="production-action-footer">
+                  <Button
+                    disabled={!draft.trim() || isScriptMutating}
+                    form="script-editor-form"
+                    htmlType="submit"
+                    loading={saveMutation.isPending}
+                  >
+                    保存为新剧本版本
+                  </Button>
+                  <Button
+                    disabled={selectedRevision.approval_status === "approved" || isDraftDirty || isScriptMutating}
+                    loading={approveMutation.isPending}
+                    onClick={() => approveMutation.mutate(selectedRevision.revision_id)}
+                    type="primary"
+                  >
+                    确认剧本
+                  </Button>
+                  <Button
+                    disabled={selectedRevision.approval_status === "approved" || isDraftDirty || isScriptMutating}
+                    loading={rejectMutation.isPending}
+                    onClick={() => rejectMutation.mutate(selectedRevision.revision_id)}
+                  >
+                    拒绝剧本
+                  </Button>
+                </div>
+                <ValidationTable rows={selectedRevision.validation_results} />
+              </>
+            ) : null}
+          </>
+        )}
+
+        {generateMutation.isError ? (
+          <WorkflowErrorAlert
+            error={generateMutation.error}
+            fallbackMessage="剧本生成失败。请重试。"
+            onRetry={() => generateMutation.mutate()}
+          />
+        ) : null}
+        {saveMutation.isError ? (
+          <WorkflowErrorAlert
+            error={saveMutation.error}
+            fallbackMessage="剧本保存失败。请重试。"
+            onRetry={() => {
+              if (saveMutation.variables) saveMutation.mutate(saveMutation.variables);
+            }}
+          />
+        ) : null}
+        {approveMutation.isError ? (
+          <WorkflowErrorAlert
+            error={approveMutation.error}
+            fallbackMessage="剧本确认失败。请重试。"
+            onRetry={() => {
+              if (approveMutation.variables) approveMutation.mutate(approveMutation.variables);
+            }}
+          />
+        ) : null}
+        {rejectMutation.isError ? (
+          <WorkflowErrorAlert
+            error={rejectMutation.error}
+            fallbackMessage="剧本拒绝失败。请重试。"
+            onRetry={() => {
+              if (rejectMutation.variables) rejectMutation.mutate(rejectMutation.variables);
+            }}
+          />
+        ) : null}
+      </div>
+    </div>
+  );
 
   return (
-    <section aria-label="剧本工作台" className="production-workbench script-workbench">
-      {!chapter.current_source_revision_id ? (
-        <Alert message="暂无剧本。保存原文后生成剧本。" showIcon type="info" />
-      ) : null}
-
-      <div className="production-command-bar">
-        {!stream.active ? (
-          <Button
-            disabled={!chapter.current_source_revision_id || isScriptMutating}
-            loading={generateMutation.isPending}
-            onClick={() => generateMutation.mutate()}
-            type="primary"
-          >
-            生成剧本
-          </Button>
-        ) : null}
-        {selectedRevision ? <StatusChip status={selectedRevision.approval_status} /> : null}
-      </div>
-
-      {stream.active ? (
-        <LiveScriptDraft
-          onRegenerateRequested={onRegenerateRequested}
-          stream={stream}
-        />
-      ) : null}
-
-      {generateMutation.isError ? (
-        <WorkflowErrorAlert
-          error={generateMutation.error}
-          fallbackMessage="剧本生成失败。请重试。"
-          onRetry={() => generateMutation.mutate()}
-        />
-      ) : null}
-      {saveMutation.isError ? (
-        <WorkflowErrorAlert
-          error={saveMutation.error}
-          fallbackMessage="剧本保存失败。请重试。"
-          onRetry={() => {
-            if (saveMutation.variables) {
-              saveMutation.mutate(saveMutation.variables);
-            }
-          }}
-        />
-      ) : null}
-      {approveMutation.isError ? (
-        <WorkflowErrorAlert
-          error={approveMutation.error}
-          fallbackMessage="剧本确认失败。请重试。"
-          onRetry={() => {
-            if (approveMutation.variables) {
-              approveMutation.mutate(approveMutation.variables);
-            }
-          }}
-        />
-      ) : null}
-      {rejectMutation.isError ? (
-        <WorkflowErrorAlert
-          error={rejectMutation.error}
-          fallbackMessage="剧本拒绝失败。请重试。"
-          onRetry={() => {
-            if (rejectMutation.variables) {
-              rejectMutation.mutate(rejectMutation.variables);
-            }
-          }}
-        />
-      ) : null}
-
-      {stream.active ? null : revisions.length === 0 ? (
-        <Typography.Text type="secondary">暂无剧本。保存原文后生成剧本。</Typography.Text>
-      ) : (
-        <div className="revision-workspace">
-          <div className="revision-strip">
-            {revisions.map((revision) => (
-              <Button
-                disabled={isScriptMutating}
-                key={revision.revision_id}
-                onClick={() => loadRevisionForEditing(revision)}
-                type={revision.revision_id === selectedRevision?.revision_id ? "primary" : "default"}
-              >
-                Revision {revision.number}
-              </Button>
-            ))}
-          </div>
-
-          {selectedRevision ? (
-            <form aria-label="剧本编辑" className="script-editor-panel" onSubmit={submitEdit}>
-              <label className="editor-field">
-                <span>剧本内容</span>
-                <Input.TextArea
-                  aria-label="剧本内容"
-                  autoSize={{ minRows: 12 }}
-                  disabled={isScriptMutating}
-                  onChange={(event) => {
-                    setDraft(event.target.value);
-                    setIsDraftDirty(true);
-                  }}
-                  value={draft}
-                />
-              </label>
-              <div className="production-action-footer">
-                <Button disabled={!draft.trim() || isScriptMutating} htmlType="submit" loading={saveMutation.isPending}>
-                  保存为新剧本版本
-                </Button>
-                <Button
-                  disabled={selectedRevision.approval_status === "approved" || isDraftDirty || isScriptMutating}
-                  loading={approveMutation.isPending}
-                  onClick={() => approveMutation.mutate(selectedRevision.revision_id)}
-                  type="primary"
-                >
-                  确认剧本
-                </Button>
-                <Button
-                  disabled={selectedRevision.approval_status === "approved" || isDraftDirty || isScriptMutating}
-                  loading={rejectMutation.isPending}
-                  onClick={() => rejectMutation.mutate(selectedRevision.revision_id)}
-                >
-                  拒绝剧本
-                </Button>
-              </div>
-            </form>
-          ) : null}
-
-          <ValidationTable rows={selectedRevision?.validation_results ?? []} />
-        </div>
-      )}
-    </section>
+    <ResizableChapterWorkspace
+      center={<section aria-label="剧本编辑区" className="script-editor-workspace">{centerContent}</section>}
+      left={<ChapterNavigator chapter={chapter} currentStateLabel={chapterStateLabel} />}
+      leftDrawerTitle="章节导航"
+      right={rightContent}
+      rightDrawerTitle="剧本详情"
+    />
   );
 }
 
 function LiveScriptDraft({
-  onRegenerateRequested,
+  elapsedSeconds,
+  statusLabel,
   stream,
 }: {
-  onRegenerateRequested?: () => void;
+  elapsedSeconds: number;
+  statusLabel: string;
   stream: ReturnType<typeof useScriptGenerationStream>;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [followOutput, setFollowOutput] = useState(true);
-  const elapsedSeconds = useElapsedSeconds(stream.active && !stream.terminal, stream.startedAt);
-  const statusLabel = stream.reconnecting
-    ? "正在重新连接"
-    : stream.stage === "validating"
-      ? "正在校验并保存"
-      : stream.stage === "finalizing" || stream.status === "finalizing"
-        ? "正在整理完整剧本"
-      : stream.status === "completed"
-        ? "正在加载正式版本"
-      : stream.status === "failed"
-        ? "生成中断"
-        : stream.status === "unknown_outcome"
-          ? "生成状态待确认"
-          : stream.text
-            ? "正在生成"
-            : "正在等待模型响应";
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -398,7 +418,40 @@ function LiveScriptDraft({
           </Button>
         ) : null}
       </div>
-      {stream.status === "failed" || stream.status === "unknown_outcome" ? (
+      <div className="script-live-notice">
+        {stream.terminal
+          ? "当前内容尚未保存为正式剧本版本，可在右侧查看中断原因。"
+          : "生成完成并通过校验后，将自动保存为正式剧本版本。"}
+      </div>
+    </section>
+  );
+}
+
+function ScriptRunInspector({
+  elapsedSeconds,
+  onRegenerateRequested,
+  statusLabel,
+  stream,
+}: {
+  elapsedSeconds: number;
+  onRegenerateRequested?: () => void;
+  statusLabel: string;
+  stream: ReturnType<typeof useScriptGenerationStream>;
+}) {
+  const interrupted = stream.status === "failed" || stream.status === "unknown_outcome";
+  return (
+    <div className="script-run-inspector">
+      <section className="script-run-status" data-terminal={stream.terminal}>
+        <strong>{statusLabel}</strong>
+        <dl>
+          <div><dt>状态</dt><dd>{stream.status}</dd></div>
+          <div><dt>阶段</dt><dd>{stream.stage || "生成中"}</dd></div>
+          <div><dt>字符数</dt><dd>{stream.characterCount.toLocaleString("zh-CN")}</dd></div>
+          <div><dt>事件序号</dt><dd>{stream.lastSequence}</dd></div>
+          <div><dt>已用时间</dt><dd>{formatElapsed(elapsedSeconds)}</dd></div>
+        </dl>
+      </section>
+      {interrupted ? (
         <div className="script-live-failure">
           <Alert
             description={stream.errorCode || undefined}
@@ -416,10 +469,24 @@ function LiveScriptDraft({
           </div>
         </div>
       ) : (
-        <div className="script-live-notice">生成完成并通过校验后，将自动保存为正式剧本版本。</div>
+        <Alert
+          message="生成完成并通过校验后，将自动切换为正式剧本版本。"
+          showIcon
+          type="info"
+        />
       )}
-    </section>
+    </div>
   );
+}
+
+function getStreamStatusLabel(stream: ReturnType<typeof useScriptGenerationStream>) {
+  if (stream.reconnecting) return "正在重新连接";
+  if (stream.stage === "validating") return "正在校验并保存";
+  if (stream.stage === "finalizing" || stream.status === "finalizing") return "正在整理完整剧本";
+  if (stream.status === "completed") return "正在加载正式版本";
+  if (stream.status === "failed") return "生成中断";
+  if (stream.status === "unknown_outcome") return "生成状态待确认";
+  return stream.text ? "正在生成" : "正在等待模型响应";
 }
 
 function useElapsedSeconds(active: boolean, startedAt: number) {
@@ -512,7 +579,7 @@ function ValidationTable({ rows }: { rows: ValidationResultRead[] }) {
   }
 
   return (
-    <div style={{ overflowX: "auto" }}>
+    <div className="script-validation-table">
       <table
         aria-label="剧本 QC"
         style={{

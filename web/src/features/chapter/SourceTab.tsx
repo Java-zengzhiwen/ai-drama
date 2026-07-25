@@ -3,7 +3,6 @@ import {
   InfoCircleFilled,
   PlayCircleFilled,
   SaveOutlined,
-  SearchOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Input, Typography } from "antd";
@@ -12,7 +11,6 @@ import { Link, useInRouterContext } from "react-router-dom";
 import {
   getModelResolution,
   getProjectModelBindings,
-  listChapters,
   saveProjectModelBindings,
   type ChapterRead,
 } from "../projects/api";
@@ -30,6 +28,8 @@ import {
   type ScriptGenerationRunRead,
   type SourceRevisionRead,
 } from "../script/api";
+import { ChapterNavigator } from "./ChapterNavigator";
+import { ResizableChapterWorkspace } from "./ResizableChapterWorkspace";
 
 type SourceTabProps = {
   chapter: ChapterRead;
@@ -56,7 +56,6 @@ export function SourceTab({ chapter, onLegacyScriptGenerated, onScriptGeneration
   const inRouterContext = useInRouterContext();
   const [draft, setDraft] = useState(chapter.source_text ?? "");
   const [saved, setSaved] = useState(false);
-  const [chapterSearch, setChapterSearch] = useState("");
   const [lastRevision, setLastRevision] = useState<SourceRevisionRead | null>(null);
   const [selectedModelId, setSelectedModelId] = useState("");
   const [targetDurationMinutes, setTargetDurationMinutes] = useState(() =>
@@ -71,10 +70,6 @@ export function SourceTab({ chapter, onLegacyScriptGenerated, onScriptGeneration
     setTargetDurationMinutes(recommendedDurationMinutes(chapter.source_text ?? ""));
   }, [chapter.chapter_id, chapter.project_id]);
 
-  const chaptersQuery = useQuery({
-    queryKey: ["chapters", chapter.project_id],
-    queryFn: () => listChapters(chapter.project_id),
-  });
   const modelQuery = useQuery({
     queryKey: ["model-resolution", chapter.project_id, "script_adaptation"],
     queryFn: () => getModelResolution(chapter.project_id, "script_adaptation"),
@@ -124,14 +119,6 @@ export function SourceTab({ chapter, onLegacyScriptGenerated, onScriptGeneration
   const characterCount = countReadableCharacters(draft);
   const estimatedScenes = Math.max(1, Math.ceil(characterCount / 450));
   const previewRows = buildPreviewRows(estimatedScenes, characterCount);
-
-  const filteredChapters = useMemo(() => {
-    const chapters = chaptersQuery.data ?? [chapter];
-    const query = chapterSearch.trim().toLowerCase();
-    return chapters
-      .filter((item) => !query || item.title.toLowerCase().includes(query))
-      .sort((left, right) => left.position - right.position);
-  }, [chapter, chapterSearch, chaptersQuery.data]);
 
   const saveMutation = useMutation({
     mutationFn: (content: string) => createSourceRevision(chapter.chapter_id, { content }),
@@ -239,79 +226,13 @@ export function SourceTab({ chapter, onLegacyScriptGenerated, onScriptGeneration
   const modelSelectionReady = Boolean(selectedModel)
     && !bindingsQuery.isLoading
     && !modelCatalogQuery.isLoading;
+  const sourceFormId = `source-conversion-form-${chapter.chapter_id}`;
 
   return (
-    <form aria-label="原文编辑" className="source-conversion-layout" onSubmit={submit}>
-      <nav aria-label="章节导航" className="source-chapter-nav">
-        <div className="source-panel-heading">
-          <strong>章节导航</strong>
-          <span>{filteredChapters.length} 章</span>
-        </div>
-        <Input
-          allowClear
-          aria-label="搜索章节标题"
-          onChange={(event) => setChapterSearch(event.target.value)}
-          placeholder="搜索章节标题"
-          prefix={<SearchOutlined />}
-          value={chapterSearch}
-        />
-        <div className="source-chapter-list">
-          {filteredChapters.map((item) => {
-            const current = item.chapter_id === chapter.chapter_id;
-            const complete = Boolean(item.current_source_revision_id);
-            const chapterLinkContent = (
-              <>
-                <span className="source-chapter-position">
-                  {String(item.position).padStart(2, "0")}
-                </span>
-                <span className="source-chapter-title">{item.title}</span>
-                <span className="source-chapter-state" data-complete={complete}>
-                  <i aria-hidden="true" />
-                  {complete ? "原文已确认" : current ? "原文处理中" : "未开始"}
-                </span>
-              </>
-            );
-            const href = `/projects/${item.project_id}/chapters/${item.chapter_id}`;
-            return inRouterContext ? (
-              <Link
-                aria-current={current ? "page" : undefined}
-                className="source-chapter-link"
-                data-current={current}
-                key={item.chapter_id}
-                to={href}
-              >
-                {chapterLinkContent}
-              </Link>
-            ) : (
-              <a
-                aria-current={current ? "page" : undefined}
-                className="source-chapter-link"
-                data-current={current}
-                href={href}
-                key={item.chapter_id}
-              >
-                {chapterLinkContent}
-              </a>
-            );
-          })}
-          {!filteredChapters.length ? (
-            <Typography.Text className="source-chapter-empty" type="secondary">
-              没有匹配章节
-            </Typography.Text>
-          ) : null}
-        </div>
-        {inRouterContext ? (
-          <Link className="source-new-chapter" to={`/projects/${chapter.project_id}`}>
-            ＋ 新建章节
-          </Link>
-        ) : (
-          <a className="source-new-chapter" href={`/projects/${chapter.project_id}`}>
-            ＋ 新建章节
-          </a>
-        )}
-      </nav>
-
-      <section aria-label="原文编辑区" className="source-manuscript">
+    <form aria-label="原文编辑" className="source-conversion-layout" id={sourceFormId} onSubmit={submit}>
+      <ResizableChapterWorkspace
+        center={(
+          <section aria-label="原文编辑区" className="source-manuscript">
         <div className="source-editor-toolbar" aria-label="原文编辑工具栏">
           <span className="source-editor-mode">正文</span>
           <span>宋体</span>
@@ -344,9 +265,12 @@ export function SourceTab({ chapter, onLegacyScriptGenerated, onScriptGeneration
           <span>版本：{lastRevision ? `v${lastRevision.number}` : "当前"}</span>
           <span data-saved={sourceIsSaved}>{sourceIsSaved ? "已保存" : "待保存"}</span>
         </footer>
-      </section>
-
-      <aside aria-label="原文转剧本" className="source-conversion-inspector" role="region">
+          </section>
+        )}
+        left={<ChapterNavigator chapter={chapter} currentStateLabel="原文已确认" />}
+        leftDrawerTitle="章节导航"
+        right={(
+          <aside aria-label="原文转剧本" className="source-conversion-inspector" role="region">
         <header className="source-inspector-header">
           <strong>原文转剧本</strong>
           {inRouterContext ? (
@@ -479,6 +403,7 @@ export function SourceTab({ chapter, onLegacyScriptGenerated, onScriptGeneration
         <div className="source-inspector-actions">
           <Button
             disabled={!normalizedDraft || mutationPending}
+            form={sourceFormId}
             htmlType="submit"
             icon={<SaveOutlined aria-hidden="true" />}
             loading={saveMutation.isPending && !generateMutation.isPending}
@@ -495,7 +420,10 @@ export function SourceTab({ chapter, onLegacyScriptGenerated, onScriptGeneration
             保存并生成剧本
           </Button>
         </div>
-      </aside>
+          </aside>
+        )}
+        rightDrawerTitle="原文转剧本"
+      />
     </form>
   );
 }

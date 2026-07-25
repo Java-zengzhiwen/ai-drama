@@ -132,6 +132,17 @@ function sourceReadyChapter(): ChapterRead {
   };
 }
 
+function expectSharedScriptWorkspace() {
+  const activeScriptPanel = screen.queryByRole("tabpanel", { name: "剧本" });
+  const scope = activeScriptPanel ? within(activeScriptPanel) : screen;
+  const workspaces = scope.getAllByTestId("resizable-chapter-workspace");
+  expect(workspaces).toHaveLength(1);
+  expect(scope.getByRole("complementary", { name: "章节导航" })).toBeInTheDocument();
+  expect(scope.getByRole("region", { name: "剧本编辑区" })).toBeInTheDocument();
+  expect(scope.getByRole("complementary", { name: "剧本详情" })).toBeInTheDocument();
+  return workspaces[0];
+}
+
 function setupWorkspaceMocks() {
   let chapter: ChapterRead = { ...baseChapter };
   let revisions: ScriptRevisionRead[] = [];
@@ -310,6 +321,11 @@ function setupWorkspaceMocks() {
 
 describe("chapter source and script workspace tabs", () => {
   beforeEach(() => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 1920,
+      writable: true,
+    });
     window.sessionStorage.clear();
     mockedGet.mockReset();
     mockedPost.mockReset();
@@ -345,6 +361,13 @@ describe("chapter source and script workspace tabs", () => {
     );
     expect(await screen.findByText("原文已保存为新版本。")).toBeInTheDocument();
     expect(screen.getByDisplayValue("第一章正文。沈清荷醒来。")).toBeInTheDocument();
+  });
+
+  test("keeps the empty script state inside the shared workspace", async () => {
+    renderWithQueryClient(<ScriptTab chapter={sourceReadyChapter()} />);
+
+    expect(await screen.findByText("暂无剧本。保存原文后生成剧本。")).toBeInTheDocument();
+    expectSharedScriptWorkspace();
   });
 
   test("generates, validates, edits, and approves a script revision", async () => {
@@ -396,8 +419,19 @@ describe("chapter source and script workspace tabs", () => {
   });
 
   test("renders the approved source workbench and saves before generating a script", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 1920,
+      writable: true,
+    });
     render(<App />);
 
+    expect(await screen.findByRole("region", { name: "流程门" })).toHaveAttribute("data-expanded", "false");
+    const workspace = await screen.findByTestId("resizable-chapter-workspace");
+    expect(workspace.style.getPropertyValue("--workspace-center")).toBe("73%");
+    expect(screen.getByRole("complementary", { name: "章节导航" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "原文编辑区" })).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "原文转剧本" })).toBeInTheDocument();
     expect(await screen.findByRole("navigation", { name: "章节导航" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "原文转剧本" })).toBeInTheDocument();
     expect(await screen.findByRole("link", { name: /第二章/ })).toHaveAttribute(
@@ -506,6 +540,8 @@ describe("chapter source and script workspace tabs", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "保存并生成剧本" }));
     const liveEditor = await screen.findByLabelText("实时剧本内容");
+    const sharedWorkspace = expectSharedScriptWorkspace();
+    const ratioBeforeCompletion = sharedWorkspace.getAttribute("style");
     const source = FakeEventSource.instances[FakeEventSource.instances.length - 1];
     expect(source?.url).toContain("/api/script-generation-runs/stream-run-1/events?after_sequence=0");
 
@@ -515,12 +551,14 @@ describe("chapter source and script workspace tabs", () => {
       source?.emit("text_delta", { sequence: 2, text: "沈清荷推门入内。" });
     });
     expect(liveEditor).toHaveValue("# 第一场\n沈清荷推门入内。");
-    expect(screen.getByText("正在生成")).toBeInTheDocument();
+    expect(screen.getByText("正在生成", { selector: "span[aria-live='polite']" })).toBeInTheDocument();
 
     act(() => {
       source?.emit("revision_completed", { sequence: 3, revision_id: "script-1" });
     });
     await waitFor(() => expect(screen.getByLabelText("剧本内容")).toHaveValue(generatedScript.content));
+    expect(expectSharedScriptWorkspace()).toBe(sharedWorkspace);
+    expect(sharedWorkspace.getAttribute("style")).toBe(ratioBeforeCompletion);
     expect(screen.queryByLabelText("实时剧本内容")).not.toBeInTheDocument();
   });
 
@@ -545,6 +583,9 @@ describe("chapter source and script workspace tabs", () => {
       />,
     );
     const liveEditor = await screen.findByLabelText("实时剧本内容");
+    expectSharedScriptWorkspace();
+    const sharedWorkspace = screen.getByTestId("resizable-chapter-workspace");
+    const ratioBeforeFailure = sharedWorkspace.getAttribute("style");
     const source = FakeEventSource.instances[FakeEventSource.instances.length - 1];
     act(() => {
       source?.emit("text_delta", { sequence: 1, text: "已生成的部分剧本" });
@@ -556,6 +597,8 @@ describe("chapter source and script workspace tabs", () => {
     expect(screen.getByText("PROVIDER_RESPONSE_MALFORMED")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "复制部分草稿" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "返回原文重新生成" })).toBeInTheDocument();
+    expect(screen.getByTestId("resizable-chapter-workspace")).toBe(sharedWorkspace);
+    expect(sharedWorkspace.getAttribute("style")).toBe(ratioBeforeFailure);
     expect(screen.queryByRole("button", { name: "生成剧本" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "确认剧本" })).not.toBeInTheDocument();
   });
@@ -605,6 +648,28 @@ describe("chapter source and script workspace tabs", () => {
 
     await screen.findByText("原文已保存为新版本。");
     expect(mockedPost).not.toHaveBeenCalledWith("/chapters/chapter-1/script/generate");
+  });
+
+  test("saves source from the compact inspector drawer", async () => {
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 768,
+      writable: true,
+    });
+    render(<App />);
+
+    fireEvent.change(await screen.findByLabelText("小说原文"), {
+      target: { value: "第一章正文。沈清荷醒来。" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "打开原文转剧本" }));
+    const inspector = await screen.findByRole("dialog", { name: "原文转剧本" });
+    fireEvent.click(within(inspector).getByRole("button", { name: "仅保存原文" }));
+
+    await waitFor(() =>
+      expect(mockedPost).toHaveBeenCalledWith("/chapters/chapter-1/source-revisions", {
+        content: "第一章正文。沈清荷醒来。",
+      }),
+    );
   });
 
   test("shows backend error codes when script generation fails", async () => {
@@ -675,6 +740,10 @@ describe("chapter source and script workspace tabs", () => {
     expect(await screen.findByText("CHAPTER_STATUS_FAILED")).toBeInTheDocument();
     expect(screen.getByText("chapter status unavailable")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /重\s*试/ })).toBeInTheDocument();
+    expect(screen.getByTestId("workflow-status-band")).toContainElement(
+      screen.getByText("CHAPTER_STATUS_FAILED").closest(".ant-alert"),
+    );
+    expect(screen.queryByRole("region", { name: "流程门" })).not.toBeInTheDocument();
   });
 
   test("shows backend error codes and can retry source save failures", async () => {
@@ -765,6 +834,7 @@ describe("chapter source and script workspace tabs", () => {
     const queryClient = renderWithQueryClient(<ScriptTab chapter={sourceReadyChapter()} />);
 
     expect(await screen.findByText("Revision 1")).toBeInTheDocument();
+    expectSharedScriptWorkspace();
     fireEvent.change(screen.getByLabelText("剧本内容"), {
       target: { value: "# 第一场\n未保存草稿。" },
     });
