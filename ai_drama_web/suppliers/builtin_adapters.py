@@ -77,6 +77,8 @@ export async function imageRequest(payload, helpers) {{
 export async function videoSubmit(payload, helpers) {{
   const images = payload.request.input_images || [];
   const mode = payload.request.parameters?.mode;
+  if (mode !== undefined && !["std","pro","keyframes"].includes(mode))
+    fail("INVALID_VIDEO_MODE");
   if (mode === "keyframes" ? (images.length < 2 || images.length > 3) : images.length > 1)
     throw Object.assign(new Error("INVALID_INPUT_IMAGES"),{{code:"INVALID_INPUT_IMAGES"}});
   const numFrames = payload.request.parameters?.num_frames;

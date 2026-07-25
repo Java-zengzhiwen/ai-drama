@@ -233,6 +233,7 @@ def test_video_submit_rejects_responses_without_video_id(
 @pytest.mark.parametrize(
     ("parameters", "error_code"),
     [
+        ({"mode": "invalid-mode"}, "INVALID_VIDEO_MODE"),
         ({"num_frames": 0}, "INVALID_VIDEO_NUM_FRAMES"),
         ({"num_frames": 2}, "INVALID_VIDEO_NUM_FRAMES"),
         ({"num_frames": 442}, "INVALID_VIDEO_NUM_FRAMES"),
